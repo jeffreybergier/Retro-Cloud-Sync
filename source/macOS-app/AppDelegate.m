@@ -4,6 +4,7 @@
 //
 
 #import "AppDelegate.h"
+#import "PreferencesWindowController.h"
 
 @interface AppDelegate (Private)
 - (void)buildMainMenu;
@@ -14,8 +15,7 @@
 
 - (void)dealloc;
 {
-  [window_ setDelegate:nil];
-  [window_ release];
+  [preferencesWindowController_ release];
   [super dealloc];
 }
 
@@ -28,6 +28,8 @@
 - (void)applicationDidFinishLaunching:(NSNotification *)notification;
 {
   (void)notification;
+  preferencesWindowController_ =
+      [[PreferencesWindowController alloc] init];
   [self showWindow];
 }
 
@@ -38,15 +40,6 @@
   (void)hasVisibleWindows;
   [self showWindow];
   return YES;
-}
-
-- (void)windowWillClose:(NSNotification *)notification;
-{
-  if ([notification object] == window_) {
-    [window_ setDelegate:nil];
-    [window_ autorelease];
-    window_ = nil;
-  }
 }
 
 - (void)buildMainMenu;
@@ -99,28 +92,7 @@
 
 - (void)showWindow;
 {
-  unsigned int styleMask;
-  NSRect frame;
-
-  if (window_ != nil) {
-    [window_ makeKeyAndOrderFront:self];
-    return;
-  }
-
-  frame = NSMakeRect(0, 0, 480, 320);
-  styleMask = NSTitledWindowMask | NSClosableWindowMask |
-              NSMiniaturizableWindowMask | NSResizableWindowMask;
-  window_ = [[NSWindow alloc] initWithContentRect:frame
-                                       styleMask:styleMask
-                                         backing:NSBackingStoreBuffered
-                                           defer:NO];
-  [window_ setReleasedWhenClosed:NO];
-  [window_ setDelegate:self];
-  [window_ setTitle:@"Retro Cloud Sync"];
-  [window_ setBackgroundColor:
-      [NSColor colorWithCalibratedRed:0.82 green:0.91 blue:1.0 alpha:1.0]];
-  [window_ center];
-  [window_ makeKeyAndOrderFront:self];
+  [preferencesWindowController_ showWindow:self];
 }
 
 @end

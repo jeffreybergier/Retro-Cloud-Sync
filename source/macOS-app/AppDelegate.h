@@ -5,8 +5,10 @@
 
 #import <AppKit/AppKit.h>
 
+@class PreferencesWindowController;
+
 @interface AppDelegate : NSObject {
  @private
-  NSWindow *window_;
+  PreferencesWindowController *preferencesWindowController_;
 }
 @end

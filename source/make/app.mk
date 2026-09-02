@@ -3,7 +3,8 @@
 APP_NAME := RetroCloudSync
 APP_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-app
 APP_BUILD_ROOT := $(BUILD_ROOT)/macOS-app/$(CONFIG)
-APP_SOURCES := main.m AppDelegate.m
+APP_SOURCES := main.m AppDelegate.m PreferencesWindowController.m \
+	DaemonStatusView.m RCServiceController.m
 APP_SOURCE_PATHS := $(addprefix $(APP_SOURCE_ROOT)/,$(APP_SOURCES))
 APP_RESOURCES_ROOT := $(APP_SOURCE_ROOT)/Resources
 APP_INFO_PLIST := $(APP_RESOURCES_ROOT)/Info.plist
