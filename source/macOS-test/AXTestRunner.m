@@ -5,9 +5,15 @@
 
 #import "AXTestRunner.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 static NSString * const kRCTestDaemonName = @"RetroCloudSyncDaemon";
+static const unsigned short kRCTestIMAPPort = 1143;
+static const unsigned short kRCTestSMTPPort = 1587;
 
 @interface AXTestRunner (Private)
 - (BOOL)captureScreenshotNamed:(NSString *)name;
@@ -25,6 +31,8 @@ static NSString * const kRCTestDaemonName = @"RetroCloudSyncDaemon";
 - (BOOL)runTaskAtPath:(NSString *)path arguments:(NSArray *)arguments;
 - (BOOL)waitForDaemonRunning:(BOOL)shouldRun timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForFileAtPath:(NSString *)path timeout:(NSTimeInterval)timeout;
+- (BOOL)waitForListenerOnPort:(unsigned short)port
+                      timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForStatus:(NSString *)status timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForWindowWithTimeout:(NSTimeInterval)timeout;
 @end
@@ -166,6 +174,16 @@ static void PrintFail(NSString *message)
     goto cleanup;
   }
   PrintPass(@"Verified HTTPS image download finished");
+  if (![self waitForListenerOnPort:kRCTestIMAPPort timeout:15.0]) {
+    PrintFail(@"IMAP listener is not accepting loopback connections");
+    goto cleanup;
+  }
+  PrintPass(@"IMAP listener accepts connections on 127.0.0.1:1143");
+  if (![self waitForListenerOnPort:kRCTestSMTPPort timeout:15.0]) {
+    PrintFail(@"SMTP listener is not accepting loopback connections");
+    goto cleanup;
+  }
+  PrintPass(@"SMTP listener accepts connections on 127.0.0.1:1587");
 
   if (![self pressControlNamed:@"Stop" segment:1]) {
     PrintFail(@"Stop control could not be pressed");
@@ -531,6 +549,32 @@ cleanup:
   while ([deadline timeIntervalSinceNow] > 0.0) {
     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
       return YES;
+    }
+    usleep(250000);
+  }
+  return NO;
+}
+
+- (BOOL)waitForListenerOnPort:(unsigned short)port
+                      timeout:(NSTimeInterval)timeout;
+{
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+
+  while ([deadline timeIntervalSinceNow] > 0.0) {
+    int socketDescriptor = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in address;
+
+    if (socketDescriptor >= 0) {
+      memset(&address, 0, sizeof(address));
+      address.sin_family = AF_INET;
+      address.sin_port = htons(port);
+      address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+      if (connect(socketDescriptor, (struct sockaddr *)&address,
+                  sizeof(address)) == 0) {
+        close(socketDescriptor);
+        return YES;
+      }
+      close(socketDescriptor);
     }
     usleep(250000);
   }

@@ -6,6 +6,8 @@
 #import <Foundation/Foundation.h>
 #import <AltivecCore/AltivecCore.h>
 
+#include "RCMailProxy.h"
+
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,6 +18,13 @@ static const char kRCNetworkTestURL[] =
     "crop=16.67%2C0%2C66.66%2C100&w=1440";
 static NSString * const kRCCertificateName = @"cacert.pem";
 static NSString * const kRCNetworkTestName = @"RetroCloudSyncNetworkTest.jpg";
+
+static const unsigned short kRCIMAPLocalPort = 1143;
+static const char kRCIMAPServer[] = "imap.mail.me.com";
+static const unsigned short kRCIMAPServerPort = 993;
+static const unsigned short kRCSMTPLocalPort = 1587;
+static const char kRCSMTPServer[] = "smtp.mail.me.com";
+static const unsigned short kRCSMTPServerPort = 587;
 
 static volatile sig_atomic_t gShouldKeepRunning = 1;
 
@@ -109,11 +118,17 @@ int main(int argc, char *argv[])
 {
   NSAutoreleasePool *processPool;
   NSPort *keepAlivePort;
+  NSString *daemonPath;
+  NSString *daemonDirectory;
+  NSString *certificatePath;
+  RCMailProxyConfig mailConfigs[2];
+  RCMailProxy *mailProxy;
 
   (void)argc;
 
   signal(SIGINT, HandleTerminationSignal);
   signal(SIGTERM, HandleTerminationSignal);
+  signal(SIGPIPE, SIG_IGN);
 
   processPool = [[NSAutoreleasePool alloc] init];
   if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
@@ -122,6 +137,27 @@ int main(int argc, char *argv[])
     return 1;
   }
   if (!DownloadNetworkTest(argv[0])) {
+    curl_global_cleanup();
+    [processPool release];
+    return 1;
+  }
+  daemonPath = [NSString stringWithUTF8String:argv[0]];
+  daemonDirectory = [daemonPath stringByDeletingLastPathComponent];
+  certificatePath = [daemonDirectory
+      stringByAppendingPathComponent:kRCCertificateName];
+  mailConfigs[0].serviceName = "IMAP";
+  mailConfigs[0].localPort = kRCIMAPLocalPort;
+  mailConfigs[0].remoteHost = kRCIMAPServer;
+  mailConfigs[0].remotePort = kRCIMAPServerPort;
+  mailConfigs[0].mode = kRCMailProxyImplicitTLS;
+  mailConfigs[1].serviceName = "SMTP";
+  mailConfigs[1].localPort = kRCSMTPLocalPort;
+  mailConfigs[1].remoteHost = kRCSMTPServer;
+  mailConfigs[1].remotePort = kRCSMTPServerPort;
+  mailConfigs[1].mode = kRCMailProxySMTPStartTLS;
+  mailProxy = RCMailProxyStart(mailConfigs, 2,
+      [certificatePath fileSystemRepresentation]);
+  if (mailProxy == NULL) {
     curl_global_cleanup();
     [processPool release];
     return 1;
@@ -144,6 +180,7 @@ int main(int argc, char *argv[])
   [[NSRunLoop currentRunLoop] removePort:keepAlivePort
                                  forMode:NSDefaultRunLoopMode];
   [keepAlivePort release];
+  RCMailProxyStop(mailProxy);
 
   NSLog(@"Retro Cloud Sync daemon stopped");
   curl_global_cleanup();
