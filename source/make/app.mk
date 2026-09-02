@@ -32,7 +32,7 @@ APP_LINK_FLAGS := -framework AppKit -framework CoreServices \
 	-framework ApplicationServices -lobjc -lgcc_s.10.4
 
 ALL_SOURCE_PATHS = $(APP_SOURCE_PATHS) $(DAEMON_SOURCE_PATHS) \
-	$(SHARED_SOURCE_PATHS) $(TEST_SOURCE_PATHS)
+	$(SHARED_SOURCE_PATHS) $(TEST_SOURCE_PATHS) $(CARDDAV_PROBE_SOURCE)
 
 app-config: validate-build daemon-config $(APP_ZIP)
 

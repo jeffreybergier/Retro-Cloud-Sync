@@ -121,7 +121,8 @@ Apple provides canonical schemas for Contacts and Calendars. A Retro Cloud clien
 At a high level, one session does this:
 
 1. Register a stable client identifier and client-description property list.
-2. Open an `ISyncSession`, or use `ISyncSessionDriver` and its delegate model.
+2. Open an `ISyncSession` on Tiger. A Leopard-only implementation may instead
+   use `ISyncSessionDriver` and its delegate model.
 3. Negotiate fast, slow, refresh, pull-truth, or push-truth behavior as appropriate.
 4. Push additions, modifications, and deletions learned from iCloud into the sync engine.
 5. Allow the engine to mingle those changes with changes from Address Book, iCal, and other clients.
@@ -135,7 +136,8 @@ The truth database is field-oriented. It may merge changes to different fields o
 
 Apple warns that the session API is a finite-state machine whose call ordering is critical and that incorrect use can cause data loss. The implementation should therefore:
 
-- use `ISyncSessionDriver` unless a lower-level session is genuinely needed;
+- use the lower-level `ISyncSession` state machine for the 10.4 deployment
+  target; the 10.5 SDK excludes `ISyncSessionDriver` when building for Tiger;
 - keep the network phase and Sync Services transaction boundaries explicit;
 - acknowledge only remote writes that definitely succeeded;
 - retain enough state to retry after interruption;
@@ -328,7 +330,7 @@ RetroCloud/
 
   Sync/
     RCSyncCoordinator        session state machine
-    RCSyncServicesDriver     ISyncSessionDriver integration
+    RCSyncServicesBridge     Tiger ISyncSession integration
     RCConflictResolver       explicit merge policy
     RCStateStore             SQLite state and transactions
 
@@ -418,4 +420,3 @@ A local standards-friendly test server can exercise generic DAV behavior, but fi
 - The existing libcurl, OpenSSL, SQLite, CA bundle, and quad-fat build infrastructure in `AltivecIntelligence` make a focused iCloud DAV implementation realistic.
 - DAV transport is not enormous; reliable two-way synchronization and lossless data mapping are the hard parts.
 - The safest path is read-only discovery, then a durable mirror, one-way Sync Services import, conditional updates, and deletions last.
-

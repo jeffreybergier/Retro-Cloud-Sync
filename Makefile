@@ -9,8 +9,10 @@ BUILD_ROOT ?= $(PROJECT_ROOT)/build
 include $(SOURCE_ROOT)/make/legacy-mac.mk
 include $(SOURCE_ROOT)/make/shared.mk
 include $(SOURCE_ROOT)/make/daemon.mk
+include $(SOURCE_ROOT)/make/carddav-probe.mk
 include $(SOURCE_ROOT)/make/app.mk
 include $(SOURCE_ROOT)/make/test.mk
+include $(SOURCE_ROOT)/make/shared-test.mk
 
 release:
 	@echo "--- Building Retro Cloud Sync Release (-O3) ---"
@@ -41,6 +43,16 @@ daemon-debug:
 	@echo "--- Building macOS Daemon Debug (-O0) ---"
 	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
 		daemon-config
+
+carddav-probe:
+	@echo "--- Building read-only CardDAV probe (-O3) ---"
+	@$(MAKE) --no-print-directory CONFIG=release BUILD_ROOT="$(BUILD_ROOT)" \
+		carddav-probe-config
+
+carddav-probe-debug:
+	@echo "--- Building read-only CardDAV probe (-O0) ---"
+	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
+		carddav-probe-config
 
 shared-release:
 	@echo "--- Building Shared Library Release (-O3) ---"
@@ -76,6 +88,10 @@ test-gui:
 		PROJECT_ROOT="$(PROJECT_ROOT)" \
 		/bin/bash "$(SOURCE_ROOT)/macOS-test/run-remote.sh"
 
+test-shared:
+	@echo "--- Testing portable vCard and SQLite layers ---"
+	@$(MAKE) --no-print-directory BUILD_ROOT="$(BUILD_ROOT)" shared-test-run
+
 build-all: validate-build app-config
 
 analyze: validate-analyzer
@@ -86,6 +102,7 @@ analyze: validate-analyzer
 		-target i386-apple-darwin9 -arch i386 -isysroot "$(SDK)" \
 		-std=c99 -Wall -Wextra -fno-color-diagnostics \
 		-I"$(SHARED_SOURCE_ROOT)" -I"$(ALTIVECCORE_ROOT)/include" \
+		-I"$(SDK)/usr/include/libxml2" \
 		-I"$(ALTIVECCOCOA_ROOT)/include" \
 		$(ALL_SOURCE_PATHS)
 
@@ -99,5 +116,7 @@ clean:
 	@rm -rf "$(BUILD_ROOT)"
 
 .PHONY: release debug app-release app-debug daemon-release daemon-debug \
+	carddav-probe carddav-probe-debug \
 	shared-release shared-debug test-build test-debug test-analyze test-gui \
+	test-shared \
 	build-all analyze clean
