@@ -85,7 +85,8 @@ analyze: validate-analyzer
 		--analyze -Xanalyzer -analyzer-output=text \
 		-target i386-apple-darwin9 -arch i386 -isysroot "$(SDK)" \
 		-std=c99 -Wall -Wextra -fno-color-diagnostics \
-		-I"$(SHARED_SOURCE_ROOT)" $(ALL_SOURCE_PATHS)
+		-I"$(SHARED_SOURCE_ROOT)" -I"$(ALTIVECCORE_ROOT)/include" \
+		$(ALL_SOURCE_PATHS)
 
 clean:
 	@case "$(BUILD_ROOT)" in \

@@ -7,6 +7,7 @@
 
 static NSString * const kRCServiceLabel = @"com.retrocloudsync.daemon";
 static NSString * const kRCDaemonName = @"RetroCloudSyncDaemon";
+static NSString * const kRCCertificateName = @"cacert.pem";
 
 @interface RCServiceController (Private)
 - (NSString *)applicationSupportDirectory;
@@ -237,6 +238,10 @@ static NSString * const kRCDaemonName = @"RetroCloudSyncDaemon";
       stringByAppendingPathComponent:
           @"Contents/Library/LaunchServices/RetroCloudSyncDaemon"];
   NSString *installedDaemonPath = [self installedDaemonPath];
+  NSString *embeddedCertificatePath = [[NSBundle mainBundle]
+      pathForResource:@"cacert" ofType:@"pem"];
+  NSString *installedCertificatePath = [[self applicationSupportDirectory]
+      stringByAppendingPathComponent:kRCCertificateName];
   NSString *launchAgentPath = [self launchAgentPath];
   NSString *launchAgentsDirectory =
       [launchAgentPath stringByDeletingLastPathComponent];
@@ -244,9 +249,10 @@ static NSString * const kRCDaemonName = @"RetroCloudSyncDaemon";
       stringByAppendingPathComponent:@"RetroCloudSyncDaemon.log"];
   NSDictionary *launchAgent;
 
-  if (![fileManager fileExistsAtPath:embeddedDaemonPath]) {
+  if (![fileManager fileExistsAtPath:embeddedDaemonPath] ||
+      embeddedCertificatePath == nil) {
     if (errorMessage != NULL) {
-      *errorMessage = @"The embedded daemon is missing from the app";
+      *errorMessage = @"The embedded daemon or CA certificates are missing";
     }
     return NO;
   }
@@ -269,6 +275,21 @@ static NSString * const kRCDaemonName = @"RetroCloudSyncDaemon";
                      handler:nil]) {
     if (errorMessage != NULL) {
       *errorMessage = @"Could not install the embedded daemon";
+    }
+    return NO;
+  }
+  if ([fileManager fileExistsAtPath:installedCertificatePath] &&
+      ![fileManager removeFileAtPath:installedCertificatePath handler:nil]) {
+    if (errorMessage != NULL) {
+      *errorMessage = @"Could not replace the installed CA certificates";
+    }
+    return NO;
+  }
+  if (![fileManager copyPath:embeddedCertificatePath
+                      toPath:installedCertificatePath
+                     handler:nil]) {
+    if (errorMessage != NULL) {
+      *errorMessage = @"Could not install the CA certificates";
     }
     return NO;
   }

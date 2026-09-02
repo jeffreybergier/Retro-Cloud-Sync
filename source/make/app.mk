@@ -21,7 +21,8 @@ ALL_SOURCE_PATHS = $(APP_SOURCE_PATHS) $(DAEMON_SOURCE_PATHS) \
 
 app-config: validate-build daemon-config $(APP_ZIP)
 
-$(APP_ZIP): $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST)
+$(APP_ZIP): $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
+		$(ALTIVECCORE_CA_CERTS)
 	@echo " [4/5] Building app bundle and embedding daemon..."
 	@rm -rf "$(APP_BUNDLE)"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" \
@@ -34,6 +35,8 @@ $(APP_ZIP): $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST)
 	@chmod +x \
 		"$(APP_BUNDLE)/Contents/Library/LaunchServices/$(DAEMON_NAME)"
 	@cp "$(APP_INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"
+	@cp "$(ALTIVECCORE_CA_CERTS)" \
+		"$(APP_BUNDLE)/Contents/Resources/cacert.pem"
 	@printf 'APPL????' > "$(APP_BUNDLE)/Contents/PkgInfo"
 	@echo " [5/5] Zipping app..."
 	@rm -f "$@"

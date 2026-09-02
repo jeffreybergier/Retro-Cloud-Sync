@@ -24,6 +24,7 @@ static NSString * const kRCTestDaemonName = @"RetroCloudSyncDaemon";
 - (BOOL)pressControlNamed:(NSString *)name segment:(NSInteger)segment;
 - (BOOL)runTaskAtPath:(NSString *)path arguments:(NSArray *)arguments;
 - (BOOL)waitForDaemonRunning:(BOOL)shouldRun timeout:(NSTimeInterval)timeout;
+- (BOOL)waitForFileAtPath:(NSString *)path timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForStatus:(NSString *)status timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForWindowWithTimeout:(NSTimeInterval)timeout;
 @end
@@ -100,6 +101,8 @@ static void PrintFail(NSString *message)
 {
   NSString *supportDirectory;
   NSString *daemonPath;
+  NSString *certificatePath;
+  NSString *networkTestPath;
   NSString *launchAgentPath;
   NSFileManager *fileManager = [NSFileManager defaultManager];
   BOOL succeeded = NO;
@@ -117,6 +120,10 @@ static void PrintFail(NSString *message)
       stringByAppendingPathComponent:@"RetroCloudSync"];
   daemonPath = [supportDirectory stringByAppendingPathComponent:
       kRCTestDaemonName];
+  certificatePath = [supportDirectory
+      stringByAppendingPathComponent:@"cacert.pem"];
+  networkTestPath = [supportDirectory
+      stringByAppendingPathComponent:@"RetroCloudSyncNetworkTest.jpg"];
   launchAgentPath = [[NSHomeDirectory()
       stringByAppendingPathComponent:@"Library/LaunchAgents"]
       stringByAppendingPathComponent:@"com.retrocloudsync.daemon.plist"];
@@ -128,6 +135,11 @@ static void PrintFail(NSString *message)
     goto cleanup;
   }
   PrintPass(@"Stopped baseline established");
+  if ([fileManager fileExistsAtPath:networkTestPath] &&
+      ![fileManager removeFileAtPath:networkTestPath handler:nil]) {
+    PrintFail(@"Could not remove the previous network test download");
+    goto cleanup;
+  }
 
   if (![self pressControlNamed:@"Start" segment:0]) {
     PrintFail(@"Start control could not be pressed");
@@ -143,11 +155,17 @@ static void PrintFail(NSString *message)
   PrintPass(@"Daemon process is running");
 
   if (![fileManager fileExistsAtPath:daemonPath] ||
+      ![fileManager fileExistsAtPath:certificatePath] ||
       ![fileManager fileExistsAtPath:launchAgentPath]) {
-    PrintFail(@"Installed daemon or LaunchAgent plist is missing");
+    PrintFail(@"Installed daemon, CA certificates, or plist are missing");
     goto cleanup;
   }
-  PrintPass(@"Daemon and LaunchAgent files are installed");
+  PrintPass(@"Daemon, CA certificates, and LaunchAgent are installed");
+  if (![self waitForFileAtPath:networkTestPath timeout:120.0]) {
+    PrintFail(@"Verified HTTPS image download did not finish");
+    goto cleanup;
+  }
+  PrintPass(@"Verified HTTPS image download finished");
 
   if (![self pressControlNamed:@"Stop" segment:1]) {
     PrintFail(@"Stop control could not be pressed");
@@ -499,6 +517,19 @@ cleanup:
 
   while ([deadline timeIntervalSinceNow] > 0.0) {
     if ([self isDaemonRunning] == shouldRun) {
+      return YES;
+    }
+    usleep(250000);
+  }
+  return NO;
+}
+
+- (BOOL)waitForFileAtPath:(NSString *)path timeout:(NSTimeInterval)timeout;
+{
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+
+  while ([deadline timeIntervalSinceNow] > 0.0) {
+    if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
       return YES;
     }
     usleep(250000);
