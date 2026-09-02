@@ -86,6 +86,7 @@ analyze: validate-analyzer
 		-target i386-apple-darwin9 -arch i386 -isysroot "$(SDK)" \
 		-std=c99 -Wall -Wextra -fno-color-diagnostics \
 		-I"$(SHARED_SOURCE_ROOT)" -I"$(ALTIVECCORE_ROOT)/include" \
+		-I"$(ALTIVECCOCOA_ROOT)/include" \
 		$(ALL_SOURCE_PATHS)
 
 clean:

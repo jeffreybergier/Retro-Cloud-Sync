@@ -5,6 +5,8 @@
 
 #import "PreferencesWindowController.h"
 
+#import <AltivecCocoa/AIFontAwesome.h>
+
 #import "DaemonStatusView.h"
 #import "MailServerView.h"
 
@@ -38,6 +40,8 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   visibleView_ = nil;
   [daemonStatusView_ release];
   [mailServerView_ release];
+  [daemonToolbarImage_ release];
+  [mailToolbarImage_ release];
   [toolbar_ release];
   [super dealloc];
 }
@@ -50,8 +54,6 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   DaemonStatusView *daemonStatusView;
   MailServerView *mailServerView;
   NSToolbar *toolbar;
-  NSImage *daemonImage;
-  NSImage *mailImage;
 
   frame = NSMakeRect(0, 0, 480, 320);
   styleMask = NSTitledWindowMask | NSClosableWindowMask |
@@ -68,13 +70,15 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   [toolbar setDelegate:self];
   [toolbar setAllowsUserCustomization:NO];
   [toolbar setAutosavesConfiguration:NO];
-  daemonImage = [NSImage imageNamed:@"NSPreferencesGeneral"];
-  mailImage = [NSImage imageNamed:@"NSNetwork"];
-  if (daemonImage != nil && mailImage != nil) {
-    /* Leopard supplies the standard images used by preference toolbars. */
+  daemonToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAServer
+      style:AIFontAwesomeStyleSolid iconSize:24.0 canvasSize:32.0
+      scale:1.0] retain];
+  mailToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAEnvelope
+      style:AIFontAwesomeStyleSolid iconSize:24.0 canvasSize:32.0
+      scale:1.0] retain];
+  if (daemonToolbarImage_ != nil && mailToolbarImage_ != nil) {
     [toolbar setDisplayMode:NSToolbarDisplayModeIconAndLabel];
   } else {
-    /* Tiger has selectable toolbars but not the preference image set. */
     [toolbar setDisplayMode:NSToolbarDisplayModeLabelOnly];
   }
   [toolbar setSizeMode:NSToolbarSizeModeRegular];
@@ -154,9 +158,9 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   [item setTarget:self];
   [item setAction:@selector(selectPreferencePane:)];
   if ([itemIdentifier isEqualToString:kRCDaemonToolbarItem]) {
-    image = [NSImage imageNamed:@"NSPreferencesGeneral"];
+    image = daemonToolbarImage_;
   } else {
-    image = [NSImage imageNamed:@"NSNetwork"];
+    image = mailToolbarImage_;
   }
   if (image != nil) {
     [item setImage:image];
