@@ -10,6 +10,7 @@ include $(SOURCE_ROOT)/make/legacy-mac.mk
 include $(SOURCE_ROOT)/make/shared.mk
 include $(SOURCE_ROOT)/make/daemon.mk
 include $(SOURCE_ROOT)/make/app.mk
+include $(SOURCE_ROOT)/make/test.mk
 
 release:
 	@echo "--- Building Retro Cloud Sync Release (-O3) ---"
@@ -51,6 +52,30 @@ shared-debug:
 	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
 		shared-config
 
+test-build:
+	@echo "--- Building macOS GUI Test Harness Release (-O3) ---"
+	@$(MAKE) --no-print-directory CONFIG=release BUILD_ROOT="$(BUILD_ROOT)" \
+		test-config
+
+test-debug:
+	@echo "--- Building macOS GUI Test Harness Debug (-O0) ---"
+	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
+		test-config
+
+test-analyze: validate-analyzer
+	@echo "--- Analyzing macOS GUI Test Harness ---"
+	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(ANALYZER) \
+		--analyze -Xanalyzer -analyzer-output=text \
+		-target i386-apple-darwin9 -arch i386 -isysroot "$(SDK)" \
+		-std=c99 -Wall -Wextra -fno-color-diagnostics \
+		$(TEST_SOURCE_PATHS)
+
+test-gui:
+	@$(MAKE) --no-print-directory release test-build
+	@TEST_HOST="$(TEST_HOST)" BUILD_ROOT="$(BUILD_ROOT)" \
+		PROJECT_ROOT="$(PROJECT_ROOT)" \
+		/bin/bash "$(SOURCE_ROOT)/macOS-test/run-remote.sh"
+
 build-all: validate-build app-config
 
 analyze: validate-analyzer
@@ -72,4 +97,5 @@ clean:
 	@rm -rf "$(BUILD_ROOT)"
 
 .PHONY: release debug app-release app-debug daemon-release daemon-debug \
-	shared-release shared-debug build-all analyze clean
+	shared-release shared-debug test-build test-debug test-analyze test-gui \
+	build-all analyze clean

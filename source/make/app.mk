@@ -17,7 +17,7 @@ APP_I386_OBJECTS := $(addprefix $(APP_INTERMEDIATES)/i386/,$(APP_SOURCES:.m=.o))
 APP_LINK_FLAGS := -framework AppKit -lobjc -lgcc_s.10.4
 
 ALL_SOURCE_PATHS = $(APP_SOURCE_PATHS) $(DAEMON_SOURCE_PATHS) \
-	$(SHARED_SOURCE_PATHS)
+	$(SHARED_SOURCE_PATHS) $(TEST_SOURCE_PATHS)
 
 app-config: validate-build daemon-config $(APP_ZIP)
 
