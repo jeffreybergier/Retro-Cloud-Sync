@@ -22,6 +22,6 @@
 // Prints the current Accessibility hierarchy without changing service state.
 - (BOOL)dumpAccessibilityTree;
 
-// Runs the complete daemon Start/Stop GUI test and returns success.
+// Exercises both preferences panels, then runs the daemon Start/Stop test.
 - (BOOL)runTests;
 @end

@@ -23,8 +23,8 @@
 
     serviceController_ = [[RCServiceController alloc] init];
 
-    serviceControl = [[[NSSegmentedControl alloc]
-        initWithFrame:NSMakeRect(24, 254, 152, 28)] autorelease];
+    serviceControl = [[NSSegmentedControl alloc]
+        initWithFrame:NSMakeRect(24, 254, 152, 28)];
     [serviceControl setSegmentCount:2];
     [serviceControl setLabel:@"Start" forSegment:0];
     [serviceControl setLabel:@"Stop" forSegment:1];
@@ -35,17 +35,17 @@
     [serviceControl setTarget:self];
     [serviceControl setAction:@selector(serviceControlClicked:)];
     [self addSubview:serviceControl];
-    serviceControl_ = [serviceControl retain];
+    serviceControl_ = serviceControl;
 
-    statusLabel = [[[NSTextField alloc]
-        initWithFrame:NSMakeRect(192, 256, 264, 24)] autorelease];
+    statusLabel = [[NSTextField alloc]
+        initWithFrame:NSMakeRect(192, 256, 264, 24)];
     [statusLabel setBezeled:NO];
     [statusLabel setDrawsBackground:NO];
     [statusLabel setEditable:NO];
     [statusLabel setSelectable:NO];
     [statusLabel setStringValue:@"Checking daemon status..."];
     [self addSubview:statusLabel];
-    statusLabel_ = [statusLabel retain];
+    statusLabel_ = statusLabel;
 
     [self startUpdating];
   }
@@ -79,7 +79,7 @@
 - (void)stopUpdating;
 {
   [statusTimer_ invalidate];
-  [statusTimer_ autorelease];
+  [statusTimer_ release];
   statusTimer_ = nil;
 }
 

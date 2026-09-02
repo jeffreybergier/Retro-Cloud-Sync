@@ -12,12 +12,14 @@
 #include <unistd.h>
 
 static NSString * const kRCTestDaemonName = @"RetroCloudSyncDaemon";
-static const unsigned short kRCTestIMAPPort = 1143;
-static const unsigned short kRCTestSMTPPort = 1587;
 
 @interface AXTestRunner (Private)
 - (BOOL)captureScreenshotNamed:(NSString *)name;
 - (void)cleanUp;
+- (void)collectElementsWithRole:(CFStringRef)role
+                      inElement:(AXUIElementRef)element
+                          depth:(unsigned int)depth
+                        results:(NSMutableArray *)results;
 - (void)dumpElement:(AXUIElementRef)element depth:(unsigned int)depth;
 - (AXUIElementRef)findElementNamed:(NSString *)name
                          inElement:(AXUIElementRef)element
@@ -29,7 +31,22 @@ static const unsigned short kRCTestSMTPPort = 1587;
 - (BOOL)launchApplication;
 - (BOOL)pressControlNamed:(NSString *)name segment:(NSInteger)segment;
 - (BOOL)runTaskAtPath:(NSString *)path arguments:(NSArray *)arguments;
+- (BOOL)setMailFieldsWithIMAPLocalPort:(NSString *)imapLocalPort
+                            imapServer:(NSString *)imapServer
+                        imapServerPort:(NSString *)imapServerPort
+                         smtpLocalPort:(NSString *)smtpLocalPort
+                            smtpServer:(NSString *)smtpServer
+                        smtpServerPort:(NSString *)smtpServerPort;
+- (BOOL)waitForConfigurationAtPath:(NSString *)path
+                     imapLocalPort:(unsigned short)imapLocalPort
+                        imapServer:(NSString *)imapServer
+                    imapServerPort:(unsigned short)imapServerPort
+                     smtpLocalPort:(unsigned short)smtpLocalPort
+                        smtpServer:(NSString *)smtpServer
+                    smtpServerPort:(unsigned short)smtpServerPort
+                           timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForDaemonRunning:(BOOL)shouldRun timeout:(NSTimeInterval)timeout;
+- (BOOL)waitForElementNamed:(NSString *)name timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForFileAtPath:(NSString *)path timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForListenerOnPort:(unsigned short)port
                       timeout:(NSTimeInterval)timeout;
@@ -67,6 +84,30 @@ static void PrintFail(NSString *message)
 {
   fprintf(stderr, "[FAIL] %s\n", [message UTF8String]);
   fflush(stderr);
+}
+
+static BOOL ConfigurationMatches(NSString *path,
+                                 unsigned short imapLocalPort,
+                                 NSString *imapServer,
+                                 unsigned short imapServerPort,
+                                 unsigned short smtpLocalPort,
+                                 NSString *smtpServer,
+                                 unsigned short smtpServerPort)
+{
+  NSDictionary *configuration =
+      [NSDictionary dictionaryWithContentsOfFile:path];
+  NSDictionary *mailProxy = [configuration objectForKey:@"MailProxy"];
+  NSDictionary *imap = [mailProxy objectForKey:@"IMAP"];
+  NSDictionary *smtp = [mailProxy objectForKey:@"SMTP"];
+
+  return configuration != nil &&
+      [[configuration objectForKey:@"ConfigurationVersion"] intValue] == 1 &&
+      [[imap objectForKey:@"LocalPort"] intValue] == imapLocalPort &&
+      [[imap objectForKey:@"RemoteHost"] isEqualToString:imapServer] &&
+      [[imap objectForKey:@"RemotePort"] intValue] == imapServerPort &&
+      [[smtp objectForKey:@"LocalPort"] intValue] == smtpLocalPort &&
+      [[smtp objectForKey:@"RemoteHost"] isEqualToString:smtpServer] &&
+      [[smtp objectForKey:@"RemotePort"] intValue] == smtpServerPort;
 }
 
 @implementation AXTestRunner
@@ -110,9 +151,15 @@ static void PrintFail(NSString *message)
   NSString *supportDirectory;
   NSString *daemonPath;
   NSString *certificatePath;
+  NSString *configurationPath;
   NSString *networkTestPath;
   NSString *launchAgentPath;
+  NSDictionary *configuration;
+  NSDictionary *mailProxy;
+  unsigned short imapPort;
+  unsigned short smtpPort;
   NSFileManager *fileManager = [NSFileManager defaultManager];
+  BOOL mailSettingsChanged = NO;
   BOOL succeeded = NO;
 
   if (![self launchApplication] ||
@@ -130,6 +177,8 @@ static void PrintFail(NSString *message)
       kRCTestDaemonName];
   certificatePath = [supportDirectory
       stringByAppendingPathComponent:@"cacert.pem"];
+  configurationPath = [supportDirectory
+      stringByAppendingPathComponent:@"Configuration.plist"];
   networkTestPath = [supportDirectory
       stringByAppendingPathComponent:@"RetroCloudSyncNetworkTest.jpg"];
   launchAgentPath = [[NSHomeDirectory()
@@ -149,6 +198,67 @@ static void PrintFail(NSString *message)
     goto cleanup;
   }
 
+  if (![self pressControlNamed:@"Mail" segment:0] ||
+      ![self waitForElementNamed:@"Incoming Mail (IMAP)" timeout:5.0]) {
+    PrintFail(@"Could not open the Mail preferences panel");
+    goto cleanup;
+  }
+  PrintPass(@"Mail preferences panel opened");
+  if (![self setMailFieldsWithIMAPLocalPort:@"2143"
+                                  imapServer:@"imap.example.com"
+                              imapServerPort:@"1993"
+                               smtpLocalPort:@"2587"
+                                  smtpServer:@"smtp.example.com"
+                              smtpServerPort:@"2525"]) {
+    PrintFail(@"Mail preferences fields could not be found or changed");
+    goto cleanup;
+  }
+  PrintPass(@"All mail preferences fields were found and changed");
+  if (![self pressControlNamed:@"Save" segment:0]) {
+    PrintFail(@"Changed mail preferences could not be saved");
+    goto cleanup;
+  }
+  mailSettingsChanged = YES;
+  if (![self waitForConfigurationAtPath:configurationPath
+                          imapLocalPort:2143
+                             imapServer:@"imap.example.com"
+                         imapServerPort:1993
+                          smtpLocalPort:2587
+                             smtpServer:@"smtp.example.com"
+                         smtpServerPort:2525
+                                timeout:5.0]) {
+    PrintFail(@"Changed mail preferences were not saved");
+    goto cleanup;
+  }
+  PrintPass(@"Changed mail preferences were saved");
+
+  if (![self setMailFieldsWithIMAPLocalPort:@"1143"
+                                  imapServer:@"imap.mail.me.com"
+                              imapServerPort:@"993"
+                               smtpLocalPort:@"1587"
+                                  smtpServer:@"smtp.mail.me.com"
+                              smtpServerPort:@"587"] ||
+      ![self pressControlNamed:@"Save" segment:0] ||
+      ![self waitForConfigurationAtPath:configurationPath
+                          imapLocalPort:1143
+                             imapServer:@"imap.mail.me.com"
+                         imapServerPort:993
+                          smtpLocalPort:1587
+                             smtpServer:@"smtp.mail.me.com"
+                         smtpServerPort:587
+                                timeout:5.0]) {
+    PrintFail(@"Default mail preferences were not restored");
+    goto cleanup;
+  }
+  PrintPass(@"Default mail preferences were restored and saved");
+  mailSettingsChanged = NO;
+  if (![self pressControlNamed:@"Daemon" segment:0] ||
+      ![self waitForStatus:@"Daemon is stopped" timeout:5.0]) {
+    PrintFail(@"Could not return to the Daemon preferences panel");
+    goto cleanup;
+  }
+  PrintPass(@"Daemon preferences panel reopened");
+
   if (![self pressControlNamed:@"Start" segment:0]) {
     PrintFail(@"Start control could not be pressed");
     goto cleanup;
@@ -164,26 +274,41 @@ static void PrintFail(NSString *message)
 
   if (![fileManager fileExistsAtPath:daemonPath] ||
       ![fileManager fileExistsAtPath:certificatePath] ||
+      ![fileManager fileExistsAtPath:configurationPath] ||
       ![fileManager fileExistsAtPath:launchAgentPath]) {
-    PrintFail(@"Installed daemon, CA certificates, or plist are missing");
+    PrintFail(@"Installed daemon, CA certificates, configuration, or LaunchAgent are missing");
     goto cleanup;
   }
-  PrintPass(@"Daemon, CA certificates, and LaunchAgent are installed");
+  PrintPass(@"Daemon, CA certificates, configuration, and LaunchAgent are installed");
+  configuration = [NSDictionary dictionaryWithContentsOfFile:configurationPath];
+  mailProxy = [configuration objectForKey:@"MailProxy"];
+  imapPort = (unsigned short)[[[mailProxy objectForKey:@"IMAP"]
+      objectForKey:@"LocalPort"] intValue];
+  smtpPort = (unsigned short)[[[mailProxy objectForKey:@"SMTP"]
+      objectForKey:@"LocalPort"] intValue];
+  if (configuration == nil || imapPort == 0 || smtpPort == 0) {
+    PrintFail(@"Mail proxy configuration could not be read");
+    goto cleanup;
+  }
   if (![self waitForFileAtPath:networkTestPath timeout:120.0]) {
     PrintFail(@"Verified HTTPS image download did not finish");
     goto cleanup;
   }
   PrintPass(@"Verified HTTPS image download finished");
-  if (![self waitForListenerOnPort:kRCTestIMAPPort timeout:15.0]) {
+  if (![self waitForListenerOnPort:imapPort timeout:15.0]) {
     PrintFail(@"IMAP listener is not accepting loopback connections");
     goto cleanup;
   }
-  PrintPass(@"IMAP listener accepts connections on 127.0.0.1:1143");
-  if (![self waitForListenerOnPort:kRCTestSMTPPort timeout:15.0]) {
+  PrintPass([NSString stringWithFormat:
+      @"IMAP listener accepts connections on 127.0.0.1:%u",
+      (unsigned int)imapPort]);
+  if (![self waitForListenerOnPort:smtpPort timeout:15.0]) {
     PrintFail(@"SMTP listener is not accepting loopback connections");
     goto cleanup;
   }
-  PrintPass(@"SMTP listener accepts connections on 127.0.0.1:1587");
+  PrintPass([NSString stringWithFormat:
+      @"SMTP listener accepts connections on 127.0.0.1:%u",
+      (unsigned int)smtpPort]);
 
   if (![self pressControlNamed:@"Stop" segment:1]) {
     PrintFail(@"Stop control could not be pressed");
@@ -206,9 +331,20 @@ static void PrintFail(NSString *message)
   succeeded = YES;
 
 cleanup:
+  if (mailSettingsChanged) {
+    [self pressControlNamed:@"Mail" segment:0];
+    [self setMailFieldsWithIMAPLocalPort:@"1143"
+                               imapServer:@"imap.mail.me.com"
+                           imapServerPort:@"993"
+                            smtpLocalPort:@"1587"
+                               smtpServer:@"smtp.mail.me.com"
+                           smtpServerPort:@"587"];
+    [self pressControlNamed:@"Save" segment:0];
+  }
   if (!succeeded) {
     [self captureScreenshotNamed:@"failure.png"];
     [self dumpElement:windowElement_ depth:0];
+    [self pressControlNamed:@"Daemon" segment:0];
     [self pressControlNamed:@"Stop" segment:1];
   }
   [self cleanUp];
@@ -245,6 +381,40 @@ cleanup:
     [applicationTask_ release];
     applicationTask_ = nil;
   }
+}
+
+- (void)collectElementsWithRole:(CFStringRef)role
+                      inElement:(AXUIElementRef)element
+                          depth:(unsigned int)depth
+                        results:(NSMutableArray *)results;
+{
+  CFTypeRef elementRole;
+  CFTypeRef children;
+
+  if (depth > 12) {
+    return;
+  }
+  elementRole = CopyAXAttribute(element, kAXRoleAttribute);
+  if (elementRole != NULL && CFGetTypeID(elementRole) == CFStringGetTypeID() &&
+      CFEqual(elementRole, role)) {
+    [results addObject:(id)element];
+  }
+  if (elementRole != NULL) CFRelease(elementRole);
+
+  children = CopyAXAttribute(element, kAXChildrenAttribute);
+  if (children != NULL && CFGetTypeID(children) == CFArrayGetTypeID()) {
+    CFIndex childIndex;
+    CFIndex childCount = CFArrayGetCount((CFArrayRef)children);
+
+    for (childIndex = 0; childIndex < childCount; childIndex++) {
+      [self collectElementsWithRole:role
+                          inElement:(AXUIElementRef)CFArrayGetValueAtIndex(
+                              (CFArrayRef)children, childIndex)
+                              depth:depth + 1
+                            results:results];
+    }
+  }
+  if (children != NULL) CFRelease(children);
 }
 
 - (void)dumpElement:(AXUIElementRef)element depth:(unsigned int)depth;
@@ -400,7 +570,8 @@ cleanup:
     NSString *command = [line stringByTrimmingCharactersInSet:
         [NSCharacterSet whitespaceCharacterSet]];
 
-    if ([command isEqualToString:daemonPath]) {
+    if ([command isEqualToString:daemonPath] ||
+        [command hasPrefix:[daemonPath stringByAppendingString:@" "]]) {
       return YES;
     }
   }
@@ -529,6 +700,58 @@ cleanup:
   return [task terminationStatus] == 0;
 }
 
+- (BOOL)setMailFieldsWithIMAPLocalPort:(NSString *)imapLocalPort
+                            imapServer:(NSString *)imapServer
+                        imapServerPort:(NSString *)imapServerPort
+                         smtpLocalPort:(NSString *)smtpLocalPort
+                            smtpServer:(NSString *)smtpServer
+                        smtpServerPort:(NSString *)smtpServerPort;
+{
+  NSMutableArray *fields = [NSMutableArray array];
+  NSArray *values = [NSArray arrayWithObjects:
+      imapLocalPort, imapServer, imapServerPort,
+      smtpLocalPort, smtpServer, smtpServerPort, nil];
+  unsigned int index;
+
+  [self collectElementsWithRole:kAXTextFieldRole
+                      inElement:windowElement_
+                          depth:0
+                        results:fields];
+  if ([fields count] != [values count]) {
+    return NO;
+  }
+  for (index = 0; index < [values count]; index++) {
+    if (AXUIElementSetAttributeValue(
+            (AXUIElementRef)[fields objectAtIndex:index], kAXValueAttribute,
+            (CFTypeRef)[values objectAtIndex:index]) != kAXErrorSuccess) {
+      return NO;
+    }
+  }
+  usleep(100000);
+  return YES;
+}
+
+- (BOOL)waitForConfigurationAtPath:(NSString *)path
+                     imapLocalPort:(unsigned short)imapLocalPort
+                        imapServer:(NSString *)imapServer
+                    imapServerPort:(unsigned short)imapServerPort
+                     smtpLocalPort:(unsigned short)smtpLocalPort
+                        smtpServer:(NSString *)smtpServer
+                    smtpServerPort:(unsigned short)smtpServerPort
+                           timeout:(NSTimeInterval)timeout;
+{
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+
+  while ([deadline timeIntervalSinceNow] > 0.0) {
+    if (ConfigurationMatches(path, imapLocalPort, imapServer, imapServerPort,
+                             smtpLocalPort, smtpServer, smtpServerPort)) {
+      return YES;
+    }
+    usleep(100000);
+  }
+  return NO;
+}
+
 - (BOOL)waitForDaemonRunning:(BOOL)shouldRun timeout:(NSTimeInterval)timeout;
 {
   NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
@@ -538,6 +761,23 @@ cleanup:
       return YES;
     }
     usleep(250000);
+  }
+  return NO;
+}
+
+- (BOOL)waitForElementNamed:(NSString *)name timeout:(NSTimeInterval)timeout;
+{
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+
+  while ([deadline timeIntervalSinceNow] > 0.0) {
+    AXUIElementRef element = [self findElementNamed:name
+                                         inElement:windowElement_
+                                             depth:0];
+    if (element != NULL) {
+      CFRelease(element);
+      return YES;
+    }
+    usleep(100000);
   }
   return NO;
 }

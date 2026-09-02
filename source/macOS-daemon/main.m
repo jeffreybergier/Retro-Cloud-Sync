@@ -34,6 +34,91 @@ static void HandleTerminationSignal(int signalNumber)
   gShouldKeepRunning = 0;
 }
 
+static BOOL RCLoadServiceConfiguration(NSDictionary *mailProxy,
+                                       NSString *serviceKey,
+                                       const char *serviceName,
+                                       RCMailProxyMode mode,
+                                       RCMailProxyConfig *config)
+{
+  NSDictionary *service = [mailProxy objectForKey:serviceKey];
+  NSNumber *localPort;
+  NSNumber *remotePort;
+  NSString *remoteHost;
+  NSCharacterSet *invalidHostCharacters =
+      [NSCharacterSet characterSetWithCharactersInString:@" /:\\"];
+
+  if (![service isKindOfClass:[NSDictionary class]]) {
+    NSLog(@"%@ mail proxy settings are missing", serviceKey);
+    return NO;
+  }
+  localPort = [service objectForKey:@"LocalPort"];
+  remotePort = [service objectForKey:@"RemotePort"];
+  remoteHost = [service objectForKey:@"RemoteHost"];
+  if (![localPort isKindOfClass:[NSNumber class]] ||
+      [localPort intValue] < 1024 || [localPort intValue] > 65535 ||
+      ![remotePort isKindOfClass:[NSNumber class]] ||
+      [remotePort intValue] < 1 || [remotePort intValue] > 65535 ||
+      ![remoteHost isKindOfClass:[NSString class]] ||
+      [remoteHost length] == 0 ||
+      [remoteHost rangeOfCharacterFromSet:invalidHostCharacters].location !=
+          NSNotFound ||
+      [remoteHost rangeOfCharacterFromSet:
+          [NSCharacterSet whitespaceAndNewlineCharacterSet]].location !=
+          NSNotFound ||
+      [remoteHost UTF8String] == NULL) {
+    NSLog(@"%@ mail proxy settings are invalid", serviceKey);
+    return NO;
+  }
+  config->serviceName = serviceName;
+  config->localPort = (unsigned short)[localPort intValue];
+  config->remoteHost = [remoteHost UTF8String];
+  config->remotePort = (unsigned short)[remotePort intValue];
+  config->mode = mode;
+  return YES;
+}
+
+static NSDictionary *RCLoadMailConfiguration(NSString *path,
+                                               RCMailProxyConfig *configs)
+{
+  NSDictionary *configuration =
+      [[NSDictionary alloc] initWithContentsOfFile:path];
+  NSNumber *version;
+  NSDictionary *mailProxy;
+
+  if (configuration == nil) {
+    NSLog(@"Could not read mail proxy configuration at %@", path);
+    return nil;
+  }
+  version = [configuration objectForKey:@"ConfigurationVersion"];
+  mailProxy = [configuration objectForKey:@"MailProxy"];
+  if (![version isKindOfClass:[NSNumber class]] || [version intValue] != 1 ||
+      ![mailProxy isKindOfClass:[NSDictionary class]] ||
+      !RCLoadServiceConfiguration(mailProxy, @"IMAP", "IMAP",
+                                  kRCMailProxyImplicitTLS, &configs[0]) ||
+      !RCLoadServiceConfiguration(mailProxy, @"SMTP", "SMTP",
+                                  kRCMailProxySMTPStartTLS, &configs[1]) ||
+      configs[0].localPort == configs[1].localPort) {
+    NSLog(@"Mail proxy configuration is invalid");
+    [configuration release];
+    return nil;
+  }
+  return configuration;
+}
+
+static void RCUseDefaultMailConfiguration(RCMailProxyConfig *configs)
+{
+  configs[0].serviceName = "IMAP";
+  configs[0].localPort = kRCIMAPLocalPort;
+  configs[0].remoteHost = kRCIMAPServer;
+  configs[0].remotePort = kRCIMAPServerPort;
+  configs[0].mode = kRCMailProxyImplicitTLS;
+  configs[1].serviceName = "SMTP";
+  configs[1].localPort = kRCSMTPLocalPort;
+  configs[1].remoteHost = kRCSMTPServer;
+  configs[1].remotePort = kRCSMTPServerPort;
+  configs[1].mode = kRCMailProxySMTPStartTLS;
+}
+
 static BOOL DownloadNetworkTest(const char *executablePath)
 {
   NSFileManager *fileManager = [NSFileManager defaultManager];
@@ -121,23 +206,44 @@ int main(int argc, char *argv[])
   NSString *daemonPath;
   NSString *daemonDirectory;
   NSString *certificatePath;
+  NSString *configurationPath = nil;
+  NSDictionary *configuration = nil;
   RCMailProxyConfig mailConfigs[2];
   RCMailProxy *mailProxy;
-
-  (void)argc;
 
   signal(SIGINT, HandleTerminationSignal);
   signal(SIGTERM, HandleTerminationSignal);
   signal(SIGPIPE, SIG_IGN);
 
   processPool = [[NSAutoreleasePool alloc] init];
+  if (argc == 3 && strcmp(argv[1], "--config") == 0) {
+    configurationPath = [NSString stringWithUTF8String:argv[2]];
+    if (configurationPath == nil) {
+      NSLog(@"The configuration path is not valid UTF-8");
+      [processPool release];
+      return 1;
+    }
+    configuration = RCLoadMailConfiguration(configurationPath, mailConfigs);
+    if (configuration == nil) {
+      [processPool release];
+      return 1;
+    }
+  } else if (argc == 1) {
+    RCUseDefaultMailConfiguration(mailConfigs);
+  } else {
+    NSLog(@"Usage: RetroCloudSyncDaemon [--config path]");
+    [processPool release];
+    return 1;
+  }
   if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
     NSLog(@"Could not initialize AltivecCore libcurl");
+    [configuration release];
     [processPool release];
     return 1;
   }
   if (!DownloadNetworkTest(argv[0])) {
     curl_global_cleanup();
+    [configuration release];
     [processPool release];
     return 1;
   }
@@ -145,20 +251,11 @@ int main(int argc, char *argv[])
   daemonDirectory = [daemonPath stringByDeletingLastPathComponent];
   certificatePath = [daemonDirectory
       stringByAppendingPathComponent:kRCCertificateName];
-  mailConfigs[0].serviceName = "IMAP";
-  mailConfigs[0].localPort = kRCIMAPLocalPort;
-  mailConfigs[0].remoteHost = kRCIMAPServer;
-  mailConfigs[0].remotePort = kRCIMAPServerPort;
-  mailConfigs[0].mode = kRCMailProxyImplicitTLS;
-  mailConfigs[1].serviceName = "SMTP";
-  mailConfigs[1].localPort = kRCSMTPLocalPort;
-  mailConfigs[1].remoteHost = kRCSMTPServer;
-  mailConfigs[1].remotePort = kRCSMTPServerPort;
-  mailConfigs[1].mode = kRCMailProxySMTPStartTLS;
   mailProxy = RCMailProxyStart(mailConfigs, 2,
       [certificatePath fileSystemRepresentation]);
   if (mailProxy == NULL) {
     curl_global_cleanup();
+    [configuration release];
     [processPool release];
     return 1;
   }
@@ -184,6 +281,7 @@ int main(int argc, char *argv[])
 
   NSLog(@"Retro Cloud Sync daemon stopped");
   curl_global_cleanup();
+  [configuration release];
   [processPool release];
 
   return 0;

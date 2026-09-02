@@ -5,6 +5,8 @@
 
 #import "RCServiceController.h"
 
+#import "RCMailServerSettings.h"
+
 static NSString * const kRCServiceLabel = @"com.retrocloudsync.daemon";
 static NSString * const kRCDaemonName = @"RetroCloudSyncDaemon";
 static NSString * const kRCCertificateName = @"cacert.pem";
@@ -45,7 +47,8 @@ static NSString * const kRCCertificateName = @"cacert.pem";
     NSString *command = [line stringByTrimmingCharactersInSet:
         [NSCharacterSet whitespaceCharacterSet]];
 
-    if ([command isEqualToString:installedDaemonPath]) {
+    if ([command isEqualToString:installedDaemonPath] ||
+        [command hasPrefix:[installedDaemonPath stringByAppendingString:@" "]]) {
       return YES;
     }
   }
@@ -262,6 +265,9 @@ static NSString * const kRCCertificateName = @"cacert.pem";
                              error:errorMessage]) {
     return NO;
   }
+  if (![RCMailServerSettings ensureConfigurationExistsWithError:errorMessage]) {
+    return NO;
+  }
 
   if ([fileManager fileExistsAtPath:installedDaemonPath] &&
       ![fileManager removeFileAtPath:installedDaemonPath handler:nil]) {
@@ -296,7 +302,9 @@ static NSString * const kRCCertificateName = @"cacert.pem";
 
   launchAgent = [NSDictionary dictionaryWithObjectsAndKeys:
       kRCServiceLabel, @"Label",
-      [NSArray arrayWithObject:installedDaemonPath], @"ProgramArguments",
+      [NSArray arrayWithObjects:installedDaemonPath, @"--config",
+                                [RCMailServerSettings configurationPath], nil],
+      @"ProgramArguments",
       [NSNumber numberWithBool:YES], @"RunAtLoad",
       [NSNumber numberWithBool:YES], @"KeepAlive",
       logPath, @"StandardOutPath",
