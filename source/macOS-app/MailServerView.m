@@ -26,11 +26,11 @@
   if (self != nil) {
     NSButton *saveButton;
 
-    [self addServiceBox:@"Incoming Mail (IMAP)" y:148
+    [self addServiceBox:@"Incoming Mail (IMAP)" y:206
          localPortField:&imapLocalPortField_
             serverField:&imapServerField_
         serverPortField:&imapServerPortField_];
-    [self addServiceBox:@"Outgoing Mail (SMTP)" y:42
+    [self addServiceBox:@"Outgoing Mail (SMTP)" y:100
          localPortField:&smtpLocalPortField_
             serverField:&smtpServerField_
         serverPortField:&smtpServerPortField_];
@@ -77,6 +77,7 @@
   NSDictionary *smtp;
 
   if (configuration == nil) {
+    [statusLabel_ setTextColor:[NSColor redColor]];
     [statusLabel_ setStringValue:errorMessage];
     return;
   }
@@ -89,6 +90,7 @@
   [smtpLocalPortField_ setIntValue:[[smtp objectForKey:@"LocalPort"] intValue]];
   [smtpServerField_ setStringValue:[smtp objectForKey:@"RemoteHost"]];
   [smtpServerPortField_ setIntValue:[[smtp objectForKey:@"RemotePort"] intValue]];
+  [statusLabel_ setTextColor:[NSColor controlTextColor]];
   [statusLabel_ setStringValue:@"Changes take effect the next time the daemon starts."];
 }
 

@@ -63,8 +63,6 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   [window setReleasedWhenClosed:NO];
   [window setDelegate:self];
   [window setTitle:@"Retro Cloud Sync"];
-  [window setBackgroundColor:
-      [NSColor colorWithCalibratedRed:0.82 green:0.91 blue:1.0 alpha:1.0]];
 
   toolbar = [[NSToolbar alloc] initWithIdentifier:kRCToolbarIdentifier];
   [toolbar setDelegate:self];

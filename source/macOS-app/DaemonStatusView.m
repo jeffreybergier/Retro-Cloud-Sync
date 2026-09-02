@@ -8,7 +8,7 @@
 #import "RCServiceController.h"
 
 @interface DaemonStatusView (Private)
-- (void)serviceControlClicked:(id)sender;
+- (void)serviceButtonClicked:(id)sender;
 - (void)updateServiceStatus:(NSTimer *)timer;
 @end
 
@@ -18,34 +18,59 @@
 {
   self = [super initWithFrame:frame];
   if (self != nil) {
-    NSSegmentedControl *serviceControl;
+    NSBox *serviceBox;
+    NSButton *serviceButton;
+    NSTextField *statusTitle;
     NSTextField *statusLabel;
+    NSTextField *detailLabel;
 
     serviceController_ = [[RCServiceController alloc] init];
 
-    serviceControl = [[NSSegmentedControl alloc]
-        initWithFrame:NSMakeRect(24, 254, 152, 28)];
-    [serviceControl setSegmentCount:2];
-    [serviceControl setLabel:@"Start" forSegment:0];
-    [serviceControl setLabel:@"Stop" forSegment:1];
-    [serviceControl setWidth:76 forSegment:0];
-    [serviceControl setWidth:76 forSegment:1];
-    [(NSSegmentedCell *)[serviceControl cell]
-        setTrackingMode:NSSegmentSwitchTrackingMomentary];
-    [serviceControl setTarget:self];
-    [serviceControl setAction:@selector(serviceControlClicked:)];
-    [self addSubview:serviceControl];
-    serviceControl_ = serviceControl;
+    serviceBox = [[[NSBox alloc]
+        initWithFrame:NSMakeRect(16, 206, 448, 98)] autorelease];
+    [serviceBox setTitle:@"Background Service"];
+    [self addSubview:serviceBox];
+
+    statusTitle = [[[NSTextField alloc]
+        initWithFrame:NSMakeRect(30, 253, 78, 20)] autorelease];
+    [statusTitle setBezeled:NO];
+    [statusTitle setDrawsBackground:NO];
+    [statusTitle setEditable:NO];
+    [statusTitle setSelectable:NO];
+    [statusTitle setAlignment:NSRightTextAlignment];
+    [statusTitle setStringValue:@"Status:"];
+    [self addSubview:statusTitle];
 
     statusLabel = [[NSTextField alloc]
-        initWithFrame:NSMakeRect(192, 256, 264, 24)];
+        initWithFrame:NSMakeRect(116, 253, 220, 20)];
     [statusLabel setBezeled:NO];
     [statusLabel setDrawsBackground:NO];
     [statusLabel setEditable:NO];
     [statusLabel setSelectable:NO];
-    [statusLabel setStringValue:@"Checking daemon status..."];
+    [statusLabel setStringValue:@"Checking..."];
     [self addSubview:statusLabel];
     statusLabel_ = statusLabel;
+
+    detailLabel = [[NSTextField alloc]
+        initWithFrame:NSMakeRect(116, 228, 240, 18)];
+    [detailLabel setBezeled:NO];
+    [detailLabel setDrawsBackground:NO];
+    [detailLabel setEditable:NO];
+    [detailLabel setSelectable:NO];
+    [detailLabel setFont:
+        [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
+    [detailLabel setStringValue:@"Checking daemon status..."];
+    [self addSubview:detailLabel];
+    detailLabel_ = detailLabel;
+
+    serviceButton = [[NSButton alloc]
+        initWithFrame:NSMakeRect(368, 238, 88, 26)];
+    [serviceButton setTitle:@"Start"];
+    [serviceButton setBezelStyle:NSRoundedBezelStyle];
+    [serviceButton setTarget:self];
+    [serviceButton setAction:@selector(serviceButtonClicked:)];
+    [self addSubview:serviceButton];
+    serviceButton_ = serviceButton;
 
     [self startUpdating];
   }
@@ -56,9 +81,10 @@
 {
   [statusTimer_ invalidate];
   [statusTimer_ release];
-  [serviceControl_ setTarget:nil];
-  [serviceControl_ release];
+  [serviceButton_ setTarget:nil];
+  [serviceButton_ release];
   [statusLabel_ release];
+  [detailLabel_ release];
   [serviceController_ release];
   [super dealloc];
 }
@@ -83,36 +109,47 @@
   statusTimer_ = nil;
 }
 
-- (void)serviceControlClicked:(id)sender;
+- (void)serviceButtonClicked:(id)sender;
 {
-  NSInteger selectedSegment = [sender selectedSegment];
   NSString *errorMessage = nil;
   BOOL succeeded;
 
-  [serviceControl_ setEnabled:NO];
-  if (selectedSegment == 0) {
-    [statusLabel_ setStringValue:@"Starting daemon..."];
+  (void)sender;
+  [serviceButton_ setEnabled:NO];
+  [detailLabel_ setTextColor:[NSColor controlTextColor]];
+  if (!serviceRunning_) {
+    [statusLabel_ setStringValue:@"Starting..."];
+    [detailLabel_ setStringValue:@""];
     succeeded = [serviceController_ startServiceWithError:&errorMessage];
   } else {
-    [statusLabel_ setStringValue:@"Stopping daemon..."];
+    [statusLabel_ setStringValue:@"Stopping..."];
+    [detailLabel_ setStringValue:@""];
     succeeded = [serviceController_ stopServiceWithError:&errorMessage];
   }
 
   if (!succeeded) {
-    [statusLabel_ setStringValue:errorMessage];
+    [self updateServiceStatus:nil];
+    [detailLabel_ setTextColor:[NSColor redColor]];
+    [detailLabel_ setStringValue:errorMessage];
   } else {
     [self updateServiceStatus:nil];
   }
-  [serviceControl_ setEnabled:YES];
+  [serviceButton_ setEnabled:YES];
 }
 
 - (void)updateServiceStatus:(NSTimer *)timer;
 {
   (void)timer;
-  if ([serviceController_ isServiceRunning]) {
-    [statusLabel_ setStringValue:@"Daemon is running"];
+  serviceRunning_ = [serviceController_ isServiceRunning];
+  [detailLabel_ setTextColor:[NSColor controlTextColor]];
+  if (serviceRunning_) {
+    [statusLabel_ setStringValue:@"Running"];
+    [detailLabel_ setStringValue:@"The daemon is running normally."];
+    [serviceButton_ setTitle:@"Stop"];
   } else {
-    [statusLabel_ setStringValue:@"Daemon is stopped"];
+    [statusLabel_ setStringValue:@"Stopped"];
+    [detailLabel_ setStringValue:@"The daemon is not running."];
+    [serviceButton_ setTitle:@"Start"];
   }
 }
 

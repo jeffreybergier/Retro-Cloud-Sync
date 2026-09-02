@@ -185,8 +185,12 @@ static BOOL ConfigurationMatches(NSString *path,
       stringByAppendingPathComponent:@"Library/LaunchAgents"]
       stringByAppendingPathComponent:@"com.retrocloudsync.daemon.plist"];
 
-  if (![self pressControlNamed:@"Stop" segment:1] ||
-      ![self waitForStatus:@"Daemon is stopped" timeout:10.0] ||
+  if (![self waitForStatus:@"Stopped" timeout:1.0] &&
+      ![self pressControlNamed:@"Stop" segment:1]) {
+    PrintFail(@"Could not press Stop for the running daemon");
+    goto cleanup;
+  }
+  if (![self waitForStatus:@"Stopped" timeout:10.0] ||
       ![self waitForDaemonRunning:NO timeout:10.0]) {
     PrintFail(@"Could not establish a stopped baseline");
     goto cleanup;
@@ -253,7 +257,7 @@ static BOOL ConfigurationMatches(NSString *path,
   PrintPass(@"Default mail preferences were restored and saved");
   mailSettingsChanged = NO;
   if (![self pressControlNamed:@"Daemon" segment:0] ||
-      ![self waitForStatus:@"Daemon is stopped" timeout:5.0]) {
+      ![self waitForStatus:@"Stopped" timeout:5.0]) {
     PrintFail(@"Could not return to the Daemon preferences panel");
     goto cleanup;
   }
@@ -264,7 +268,7 @@ static BOOL ConfigurationMatches(NSString *path,
     goto cleanup;
   }
   PrintPass(@"Start control pressed");
-  if (![self waitForStatus:@"Daemon is running" timeout:15.0] ||
+  if (![self waitForStatus:@"Running" timeout:15.0] ||
       ![self waitForDaemonRunning:YES timeout:15.0]) {
     PrintFail(@"Daemon did not reach the running state");
     goto cleanup;
@@ -315,7 +319,7 @@ static BOOL ConfigurationMatches(NSString *path,
     goto cleanup;
   }
   PrintPass(@"Stop control pressed");
-  if (![self waitForStatus:@"Daemon is stopped" timeout:15.0] ||
+  if (![self waitForStatus:@"Stopped" timeout:15.0] ||
       ![self waitForDaemonRunning:NO timeout:15.0]) {
     PrintFail(@"Daemon did not reach the stopped state");
     goto cleanup;

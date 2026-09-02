@@ -9,10 +9,12 @@
 
 @interface DaemonStatusView : NSView {
  @private
-  NSSegmentedControl *serviceControl_;
+  NSButton *serviceButton_;
   NSTextField *statusLabel_;
+  NSTextField *detailLabel_;
   NSTimer *statusTimer_;
   RCServiceController *serviceController_;
+  BOOL serviceRunning_;
 }
 
 // Starts periodic daemon status checks if they are not already active.
