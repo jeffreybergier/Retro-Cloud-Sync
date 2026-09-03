@@ -256,6 +256,17 @@ static BOOL ConfigurationMatches(NSString *path,
   }
   PrintPass(@"Default mail preferences were restored and saved");
   mailSettingsChanged = NO;
+  if (![self pressControlNamed:@"Sync" segment:0] ||
+      ![self waitForElementNamed:@"Contacts & Calendars" timeout:5.0] ||
+      ![self waitForElementNamed:@"Apple ID:" timeout:5.0] ||
+      ![self waitForElementNamed:@"Password:" timeout:5.0] ||
+      ![self waitForElementNamed:@"Sync Contacts" timeout:5.0] ||
+      ![self waitForElementNamed:@"Sync Calendars"
+                         timeout:5.0]) {
+    PrintFail(@"Could not open or inspect the Sync preferences panel");
+    goto cleanup;
+  }
+  PrintPass(@"Sync preferences panel opened with account controls");
   if (![self pressControlNamed:@"Daemon" segment:0] ||
       ![self waitForStatus:@"Stopped" timeout:5.0]) {
     PrintFail(@"Could not return to the Daemon preferences panel");

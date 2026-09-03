@@ -19,7 +19,8 @@ DAEMON_I386_OBJECTS := $(addprefix \
 	$(DAEMON_INTERMEDIATES)/i386/,$(DAEMON_OBJECT_NAMES))
 DAEMON_COMPILE_FLAGS := -I$(ALTIVECCORE_ROOT)/include
 DAEMON_LINK_FLAGS := -framework Foundation -framework CoreFoundation \
-	-framework SystemConfiguration -lobjc -lgcc_s.10.4
+	-framework SystemConfiguration -framework Security -lxml2 \
+	-lobjc -lgcc_s.10.4
 
 daemon-config: validate-build shared-config $(DAEMON_OUTPUT)
 

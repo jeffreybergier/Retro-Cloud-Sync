@@ -5,7 +5,7 @@
 
 #import "MailServerView.h"
 
-#import "RCMailServerSettings.h"
+#import "RCConfiguration.h"
 
 @interface MailServerView (Private)
 - (NSTextField *)newEditableFieldWithFrame:(NSRect)frame;
@@ -16,6 +16,7 @@
           serverField:(NSTextField **)serverField
       serverPortField:(NSTextField **)serverPortField;
 - (void)saveSettings:(id)sender;
+- (void)showError:(NSString *)message;
 @end
 
 @implementation MailServerView
@@ -35,21 +36,13 @@
             serverField:&smtpServerField_
         serverPortField:&smtpServerPortField_];
     saveButton = [[[NSButton alloc]
-        initWithFrame:NSMakeRect(368, 10, 88, 26)] autorelease];
+        initWithFrame:NSMakeRect(380, 12, 88, 26)] autorelease];
     [saveButton setTitle:@"Save"];
     [saveButton setBezelStyle:NSRoundedBezelStyle];
     [saveButton setTarget:self];
     [saveButton setAction:@selector(saveSettings:)];
     [self addSubview:saveButton];
 
-    statusLabel_ = [[NSTextField alloc]
-        initWithFrame:NSMakeRect(24, 12, 332, 20)];
-    [statusLabel_ setBezeled:NO];
-    [statusLabel_ setDrawsBackground:NO];
-    [statusLabel_ setEditable:NO];
-    [statusLabel_ setSelectable:NO];
-    [statusLabel_ setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
-    [self addSubview:statusLabel_];
     [self reloadSettings];
   }
   return self;
@@ -63,7 +56,6 @@
   [smtpLocalPortField_ release];
   [smtpServerField_ release];
   [smtpServerPortField_ release];
-  [statusLabel_ release];
   [super dealloc];
 }
 
@@ -71,14 +63,13 @@
 {
   NSString *errorMessage = nil;
   NSDictionary *configuration =
-      [RCMailServerSettings loadConfigurationWithError:&errorMessage];
+      [RCConfiguration loadConfigurationWithError:&errorMessage];
   NSDictionary *mailProxy;
   NSDictionary *imap;
   NSDictionary *smtp;
 
   if (configuration == nil) {
-    [statusLabel_ setTextColor:[NSColor redColor]];
-    [statusLabel_ setStringValue:errorMessage];
+    [self showError:errorMessage];
     return;
   }
   mailProxy = [configuration objectForKey:@"MailProxy"];
@@ -90,8 +81,12 @@
   [smtpLocalPortField_ setIntValue:[[smtp objectForKey:@"LocalPort"] intValue]];
   [smtpServerField_ setStringValue:[smtp objectForKey:@"RemoteHost"]];
   [smtpServerPortField_ setIntValue:[[smtp objectForKey:@"RemotePort"] intValue]];
-  [statusLabel_ setTextColor:[NSColor controlTextColor]];
-  [statusLabel_ setStringValue:@"Changes take effect the next time the daemon starts."];
+}
+
+- (void)showError:(NSString *)message;
+{
+  NSRunAlertPanel(@"Retro Cloud Sync",
+      message != nil ? message : @"Unknown error", @"OK", nil, nil);
 }
 
 - (NSTextField *)newEditableFieldWithFrame:(NSRect)frame;
@@ -140,7 +135,6 @@
   NSDictionary *imap;
   NSDictionary *smtp;
   NSDictionary *mailProxy;
-  NSDictionary *configuration;
   NSString *errorMessage = nil;
 
   (void)sender;
@@ -156,19 +150,10 @@
       nil];
   mailProxy = [NSDictionary dictionaryWithObjectsAndKeys:
       imap, @"IMAP", smtp, @"SMTP", nil];
-  configuration = [NSDictionary dictionaryWithObjectsAndKeys:
-      [NSNumber numberWithInt:1], @"ConfigurationVersion",
-      mailProxy, @"MailProxy", nil];
-  if (![RCMailServerSettings saveConfiguration:configuration
-                                          error:&errorMessage]) {
-    [statusLabel_ setTextColor:[NSColor redColor]];
-    [statusLabel_ setStringValue:errorMessage];
-    NSBeep();
+  if (![RCConfiguration saveMailProxy:mailProxy error:&errorMessage]) {
+    [self showError:errorMessage];
     return;
   }
-  [statusLabel_ setTextColor:[NSColor controlTextColor]];
-  [statusLabel_ setStringValue:
-      @"Mail server settings saved. Restart the daemon to apply them."];
 }
 
 @end

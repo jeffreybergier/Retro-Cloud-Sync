@@ -7,10 +7,16 @@
 #import <AltivecCore/AltivecCore.h>
 
 #include "RCMailProxy.h"
+#include "RCCardDAVMirror.h"
+#include "RCICloudCredentials.h"
 
+#include <Security/Security.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static const char kRCNetworkTestURL[] =
     "https://platform.theverge.com/wp-content/uploads/sites/2/2026/07/"
@@ -27,6 +33,191 @@ static const char kRCSMTPServer[] = "smtp.mail.me.com";
 static const unsigned short kRCSMTPServerPort = 587;
 
 static volatile sig_atomic_t gShouldKeepRunning = 1;
+
+typedef struct {
+  pthread_t thread;
+  pthread_mutex_t mutex;
+  pthread_cond_t condition;
+  int started;
+  int shouldStop;
+  unsigned int interval;
+  char *username;
+  char *serviceURL;
+  char *databasePath;
+  char *certificatePath;
+} RCContactWorker;
+
+static char *RCCopyCString(const char *string)
+{
+  size_t length;
+  char *copy;
+
+  if (string == NULL) return NULL;
+  length = strlen(string);
+  copy = (char *)malloc(length + 1);
+  if (copy != NULL) memcpy(copy, string, length + 1);
+  return copy;
+}
+
+static void RCContactProgress(const char *message, void *context)
+{
+  (void)context;
+  if (message != NULL) NSLog(@"Contacts: %s", message);
+}
+
+static void *RCContactWorkerMain(void *context)
+{
+  RCContactWorker *worker = (RCContactWorker *)context;
+
+  SecKeychainSetUserInteractionAllowed(0);
+  for (;;) {
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+    char *password = NULL;
+    size_t passwordLength = 0;
+    RCContactStore *store = NULL;
+    RCCardDAVMirrorConfig mirrorConfig;
+    RCCardDAVMirrorResult result;
+    RCContactStoreStatistics statistics;
+    RCError error;
+    struct timespec wakeTime;
+    int shouldStop;
+
+    pthread_mutex_lock(&worker->mutex);
+    shouldStop = worker->shouldStop;
+    pthread_mutex_unlock(&worker->mutex);
+    if (shouldStop) {
+      [pool release];
+      break;
+    }
+
+    RCErrorClear(&error);
+    if (!RCICloudCredentialsCopyPassword(worker->username, &password,
+                                         &passwordLength, &error)) {
+      NSLog(@"Contacts sync skipped: %s", error.message);
+    } else if ((store = RCContactStoreOpen(worker->databasePath, &error)) ==
+               NULL) {
+      NSLog(@"Contacts sync failed: %s", error.message);
+    } else {
+      memset(&mirrorConfig, 0, sizeof(mirrorConfig));
+      mirrorConfig.serviceURL = worker->serviceURL;
+      mirrorConfig.username = worker->username;
+      mirrorConfig.password = password;
+      mirrorConfig.certificatePath = worker->certificatePath;
+      mirrorConfig.allowedHostSuffix = ".icloud.com";
+      mirrorConfig.progress = RCContactProgress;
+      if (RCCardDAVMirrorFetch(&mirrorConfig, store, &result, &error) &&
+          RCContactStoreGetStatistics(store, &statistics, &error)) {
+        NSLog(@"Contacts sync complete: %ld downloaded, %ld unchanged, "
+              @"%ld available, %ld remotely absent",
+              result.downloadedResourceCount, result.unchangedResourceCount,
+              statistics.availableCount, statistics.missingCount);
+      } else {
+        NSLog(@"Contacts sync failed: %s", error.message);
+      }
+    }
+    RCContactStoreClose(store);
+    RCICloudCredentialsClearPassword(password, passwordLength);
+    [pool release];
+
+    wakeTime.tv_sec = time(NULL) + worker->interval;
+    wakeTime.tv_nsec = 0;
+    pthread_mutex_lock(&worker->mutex);
+    if (!worker->shouldStop) {
+      pthread_cond_timedwait(&worker->condition, &worker->mutex, &wakeTime);
+    }
+    shouldStop = worker->shouldStop;
+    pthread_mutex_unlock(&worker->mutex);
+    if (shouldStop) break;
+  }
+  return NULL;
+}
+
+static BOOL RCContactWorkerStart(RCContactWorker *worker,
+                                 NSDictionary *configuration,
+                                 NSString *daemonDirectory)
+{
+  NSDictionary *contacts = [configuration objectForKey:@"Contacts"];
+  NSString *username;
+  NSString *serviceURL;
+  NSNumber *interval;
+  NSNumber *enabled;
+  NSString *databasePath;
+  NSString *certificatePath;
+
+  memset(worker, 0, sizeof(*worker));
+  if (contacts == nil) {
+    return YES;
+  }
+  if (![contacts isKindOfClass:[NSDictionary class]]) return NO;
+  enabled = [contacts objectForKey:@"Enabled"];
+  if (![enabled isKindOfClass:[NSNumber class]]) return NO;
+  if (![enabled boolValue]) return YES;
+  username = [contacts objectForKey:@"Username"];
+  serviceURL = [contacts objectForKey:@"ServiceURL"];
+  interval = [contacts objectForKey:@"SyncIntervalSeconds"];
+  if (![username isKindOfClass:[NSString class]] || [username length] == 0 ||
+      ![serviceURL isKindOfClass:[NSString class]] ||
+      ![serviceURL isEqualToString:@"https://contacts.icloud.com"] ||
+      ![interval isKindOfClass:[NSNumber class]] ||
+      [interval unsignedIntValue] < 60 ||
+      [interval unsignedIntValue] > 604800 ||
+      [username UTF8String] == NULL ||
+      [serviceURL UTF8String] == NULL) {
+    NSLog(@"Contacts configuration is invalid; contact sync is disabled");
+    return NO;
+  }
+  databasePath = [daemonDirectory stringByAppendingPathComponent:
+      @"Contacts.sqlite"];
+  certificatePath = [daemonDirectory stringByAppendingPathComponent:
+      kRCCertificateName];
+  worker->username = RCCopyCString([username UTF8String]);
+  worker->serviceURL = RCCopyCString([serviceURL UTF8String]);
+  worker->databasePath = RCCopyCString([databasePath fileSystemRepresentation]);
+  worker->certificatePath = RCCopyCString(
+      [certificatePath fileSystemRepresentation]);
+  worker->interval = [interval unsignedIntValue];
+  if (worker->username == NULL || worker->serviceURL == NULL ||
+      worker->databasePath == NULL || worker->certificatePath == NULL) {
+    NSLog(@"Could not allocate contact worker configuration");
+    goto failed;
+  }
+  pthread_mutex_init(&worker->mutex, NULL);
+  pthread_cond_init(&worker->condition, NULL);
+  if (pthread_create(&worker->thread, NULL, RCContactWorkerMain, worker) != 0) {
+    NSLog(@"Could not start the contact sync worker");
+    pthread_cond_destroy(&worker->condition);
+    pthread_mutex_destroy(&worker->mutex);
+    goto failed;
+  }
+  worker->started = 1;
+  return YES;
+
+failed:
+  free(worker->username);
+  free(worker->serviceURL);
+  free(worker->databasePath);
+  free(worker->certificatePath);
+  memset(worker, 0, sizeof(*worker));
+  return NO;
+}
+
+static void RCContactWorkerStop(RCContactWorker *worker)
+{
+  if (worker->started) {
+    pthread_mutex_lock(&worker->mutex);
+    worker->shouldStop = 1;
+    pthread_cond_signal(&worker->condition);
+    pthread_mutex_unlock(&worker->mutex);
+    pthread_join(worker->thread, NULL);
+    pthread_cond_destroy(&worker->condition);
+    pthread_mutex_destroy(&worker->mutex);
+  }
+  free(worker->username);
+  free(worker->serviceURL);
+  free(worker->databasePath);
+  free(worker->certificatePath);
+  memset(worker, 0, sizeof(*worker));
+}
 
 static void HandleTerminationSignal(int signalNumber)
 {
@@ -210,12 +401,14 @@ int main(int argc, char *argv[])
   NSDictionary *configuration = nil;
   RCMailProxyConfig mailConfigs[2];
   RCMailProxy *mailProxy;
+  RCContactWorker contactWorker;
 
   signal(SIGINT, HandleTerminationSignal);
   signal(SIGTERM, HandleTerminationSignal);
   signal(SIGPIPE, SIG_IGN);
 
   processPool = [[NSAutoreleasePool alloc] init];
+  memset(&contactWorker, 0, sizeof(contactWorker));
   if (argc == 3 && strcmp(argv[1], "--config") == 0) {
     configurationPath = [NSString stringWithUTF8String:argv[2]];
     if (configurationPath == nil) {
@@ -259,6 +452,9 @@ int main(int argc, char *argv[])
     [processPool release];
     return 1;
   }
+  if (configuration != nil) {
+    RCContactWorkerStart(&contactWorker, configuration, daemonDirectory);
+  }
   keepAlivePort = [[NSPort port] retain];
   [[NSRunLoop currentRunLoop] addPort:keepAlivePort
                               forMode:NSDefaultRunLoopMode];
@@ -277,6 +473,7 @@ int main(int argc, char *argv[])
   [[NSRunLoop currentRunLoop] removePort:keepAlivePort
                                  forMode:NSDefaultRunLoopMode];
   [keepAlivePort release];
+  RCContactWorkerStop(&contactWorker);
   RCMailProxyStop(mailProxy);
 
   NSLog(@"Retro Cloud Sync daemon stopped");

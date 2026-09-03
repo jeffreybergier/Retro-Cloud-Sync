@@ -4,8 +4,8 @@ APP_NAME := RetroCloudSync
 APP_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-app
 APP_BUILD_ROOT := $(BUILD_ROOT)/macOS-app/$(CONFIG)
 APP_SOURCES := main.m AppDelegate.m PreferencesWindowController.m \
-	DaemonStatusView.m MailServerView.m RCMailServerSettings.m \
-	RCServiceController.m
+	DaemonStatusView.m MailServerView.m RCConfiguration.m \
+	ContactsView.m RCServiceController.m
 APP_SOURCE_PATHS := $(addprefix $(APP_SOURCE_ROOT)/,$(APP_SOURCES))
 APP_RESOURCES_ROOT := $(APP_SOURCE_ROOT)/Resources
 APP_INFO_PLIST := $(APP_RESOURCES_ROOT)/Info.plist
@@ -29,7 +29,7 @@ APP_I386_ALTIVECCOCOA := \
 	$(APP_INTERMEDIATES)/i386/libAltivecCocoa.a
 APP_COMPILE_FLAGS := -I$(ALTIVECCOCOA_ROOT)/include
 APP_LINK_FLAGS := -framework AppKit -framework CoreServices \
-	-framework ApplicationServices -lobjc -lgcc_s.10.4
+	-framework ApplicationServices -framework Security -lobjc -lgcc_s.10.4
 
 ALL_SOURCE_PATHS = $(APP_SOURCE_PATHS) $(DAEMON_SOURCE_PATHS) \
 	$(SHARED_SOURCE_PATHS) $(TEST_SOURCE_PATHS) $(CARDDAV_PROBE_SOURCE)

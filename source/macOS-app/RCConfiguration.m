@@ -1,9 +1,9 @@
 //
-//  RCMailServerSettings.m
+//  RCConfiguration.m
 //  RetroCloudSync
 //
 
-#import "RCMailServerSettings.h"
+#import "RCConfiguration.h"
 
 #include <sys/stat.h>
 
@@ -14,14 +14,20 @@ static NSString * const kRCSMTP = @"SMTP";
 static NSString * const kRCLocalPort = @"LocalPort";
 static NSString * const kRCRemoteHost = @"RemoteHost";
 static NSString * const kRCRemotePort = @"RemotePort";
+static NSString * const kRCContacts = @"Contacts";
+static NSString * const kRCEnabled = @"Enabled";
+static NSString * const kRCCalendarsEnabled = @"CalendarsEnabled";
+static NSString * const kRCUsername = @"Username";
+static NSString * const kRCServiceURL = @"ServiceURL";
+static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
 
-@interface RCMailServerSettings (Private)
+@interface RCConfiguration (Private)
 + (BOOL)validateService:(NSDictionary *)service
                    name:(NSString *)name
                   error:(NSString **)errorMessage;
 @end
 
-@implementation RCMailServerSettings
+@implementation RCConfiguration
 
 + (NSString *)configurationPath;
 {
@@ -49,7 +55,14 @@ static NSString * const kRCRemotePort = @"RemotePort";
 
   return [NSDictionary dictionaryWithObjectsAndKeys:
       [NSNumber numberWithInt:1], kRCConfigurationVersion,
-      mailProxy, kRCMailProxy, nil];
+      mailProxy, kRCMailProxy,
+      [NSDictionary dictionaryWithObjectsAndKeys:
+          [NSNumber numberWithBool:NO], kRCEnabled,
+          [NSNumber numberWithBool:NO], kRCCalendarsEnabled,
+          @"", kRCUsername,
+          @"https://contacts.icloud.com", kRCServiceURL,
+          [NSNumber numberWithInt:3600], kRCSyncIntervalSeconds, nil],
+      kRCContacts, nil];
 }
 
 + (NSDictionary *)loadConfigurationWithError:(NSString **)errorMessage;
@@ -64,7 +77,7 @@ static NSString * const kRCRemotePort = @"RemotePort";
   configuration = [NSDictionary dictionaryWithContentsOfFile:path];
   if (configuration == nil) {
     if (errorMessage != NULL) {
-      *errorMessage = @"The mail server configuration could not be read";
+      *errorMessage = @"The Retro Cloud Sync configuration could not be read";
     }
     return nil;
   }
@@ -104,7 +117,7 @@ static NSString * const kRCRemotePort = @"RemotePort";
   }
   if (![configuration writeToFile:path atomically:YES]) {
     if (errorMessage != NULL) {
-      *errorMessage = @"Could not write the mail server configuration";
+      *errorMessage = @"Could not write the Retro Cloud Sync configuration";
     }
     return NO;
   }
@@ -133,6 +146,7 @@ static NSString * const kRCRemotePort = @"RemotePort";
   NSDictionary *mailProxy;
   NSDictionary *imap;
   NSDictionary *smtp;
+  NSDictionary *contacts;
 
   if (![configuration isKindOfClass:[NSDictionary class]]) {
     if (errorMessage != NULL) {
@@ -145,7 +159,7 @@ static NSString * const kRCRemotePort = @"RemotePort";
   if (![version isKindOfClass:[NSNumber class]] || [version intValue] != 1 ||
       ![mailProxy isKindOfClass:[NSDictionary class]]) {
     if (errorMessage != NULL) {
-      *errorMessage = @"The mail server configuration version is unsupported";
+      *errorMessage = @"The configuration version is unsupported";
     }
     return NO;
   }
@@ -155,6 +169,42 @@ static NSString * const kRCRemotePort = @"RemotePort";
       ![self validateService:smtp name:@"SMTP" error:errorMessage]) {
     return NO;
   }
+  contacts = [configuration objectForKey:kRCContacts];
+  if (contacts != nil) {
+    NSNumber *enabled;
+    NSNumber *interval;
+    NSNumber *calendarsEnabled;
+    NSString *username;
+    NSString *serviceURL;
+
+    if (![contacts isKindOfClass:[NSDictionary class]]) {
+      if (errorMessage != NULL) {
+        *errorMessage = @"The Contacts configuration is invalid";
+      }
+      return NO;
+    }
+    enabled = [contacts objectForKey:kRCEnabled];
+    interval = [contacts objectForKey:kRCSyncIntervalSeconds];
+    calendarsEnabled = [contacts objectForKey:kRCCalendarsEnabled];
+    username = [contacts objectForKey:kRCUsername];
+    serviceURL = [contacts objectForKey:kRCServiceURL];
+    if (![enabled isKindOfClass:[NSNumber class]] ||
+        ![interval isKindOfClass:[NSNumber class]] ||
+        (calendarsEnabled != nil &&
+         ![calendarsEnabled isKindOfClass:[NSNumber class]]) ||
+        [interval unsignedIntValue] < 60 ||
+        [interval unsignedIntValue] > 604800 ||
+        ![username isKindOfClass:[NSString class]] ||
+        ![serviceURL isKindOfClass:[NSString class]] ||
+        ![serviceURL isEqualToString:@"https://contacts.icloud.com"] ||
+        (([enabled boolValue] || [calendarsEnabled boolValue]) &&
+         [username length] == 0)) {
+      if (errorMessage != NULL) {
+        *errorMessage = @"The Contacts configuration is invalid";
+      }
+      return NO;
+    }
+  }
   if ([[imap objectForKey:kRCLocalPort] intValue] ==
       [[smtp objectForKey:kRCLocalPort] intValue]) {
     if (errorMessage != NULL) {
@@ -163,6 +213,50 @@ static NSString * const kRCRemotePort = @"RemotePort";
     return NO;
   }
   return YES;
+}
+
++ (NSDictionary *)contactsConfigurationFromConfiguration:
+    (NSDictionary *)configuration;
+{
+  NSDictionary *contacts = [configuration objectForKey:kRCContacts];
+
+  if ([contacts isKindOfClass:[NSDictionary class]]) return contacts;
+  return [[self defaultConfiguration] objectForKey:kRCContacts];
+}
+
++ (BOOL)saveMailProxy:(NSDictionary *)mailProxy
+                 error:(NSString **)errorMessage;
+{
+  NSDictionary *loaded = [self loadConfigurationWithError:errorMessage];
+  NSMutableDictionary *configuration;
+
+  if (loaded == nil) return NO;
+  configuration = [NSMutableDictionary dictionaryWithDictionary:loaded];
+  [configuration setObject:mailProxy forKey:kRCMailProxy];
+  return [self saveConfiguration:configuration error:errorMessage];
+}
+
++ (BOOL)saveContactsEnabled:(BOOL)enabled
+           calendarsEnabled:(BOOL)calendarsEnabled
+                   username:(NSString *)username
+               syncInterval:(unsigned int)syncInterval
+                      error:(NSString **)errorMessage;
+{
+  NSDictionary *loaded = [self loadConfigurationWithError:errorMessage];
+  NSMutableDictionary *configuration;
+  NSDictionary *contacts;
+
+  if (loaded == nil) return NO;
+  configuration = [NSMutableDictionary dictionaryWithDictionary:loaded];
+  contacts = [NSDictionary dictionaryWithObjectsAndKeys:
+      [NSNumber numberWithBool:enabled], kRCEnabled,
+      [NSNumber numberWithBool:calendarsEnabled], kRCCalendarsEnabled,
+      username, kRCUsername,
+      @"https://contacts.icloud.com", kRCServiceURL,
+      [NSNumber numberWithUnsignedInt:syncInterval],
+      kRCSyncIntervalSeconds, nil];
+  [configuration setObject:contacts forKey:kRCContacts];
+  return [self saveConfiguration:configuration error:errorMessage];
 }
 
 + (BOOL)validateService:(NSDictionary *)service

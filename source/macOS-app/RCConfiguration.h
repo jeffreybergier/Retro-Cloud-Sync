@@ -1,11 +1,11 @@
 //
-//  RCMailServerSettings.h
+//  RCConfiguration.h
 //  RetroCloudSync
 //
 
 #import <Foundation/Foundation.h>
 
-@interface RCMailServerSettings : NSObject
+@interface RCConfiguration : NSObject
 
 + (NSString *)configurationPath;
 + (NSDictionary *)defaultConfiguration;
@@ -15,5 +15,14 @@
 + (BOOL)ensureConfigurationExistsWithError:(NSString **)errorMessage;
 + (BOOL)validateConfiguration:(NSDictionary *)configuration
                          error:(NSString **)errorMessage;
++ (NSDictionary *)contactsConfigurationFromConfiguration:
+    (NSDictionary *)configuration;
++ (BOOL)saveContactsEnabled:(BOOL)enabled
+           calendarsEnabled:(BOOL)calendarsEnabled
+                   username:(NSString *)username
+               syncInterval:(unsigned int)syncInterval
+                      error:(NSString **)errorMessage;
++ (BOOL)saveMailProxy:(NSDictionary *)mailProxy
+                 error:(NSString **)errorMessage;
 
 @end

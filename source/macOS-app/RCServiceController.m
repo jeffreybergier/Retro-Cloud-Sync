@@ -5,7 +5,9 @@
 
 #import "RCServiceController.h"
 
-#import "RCMailServerSettings.h"
+#import "RCConfiguration.h"
+
+#include "RCICloudCredentials.h"
 
 static NSString * const kRCServiceLabel = @"com.retrocloudsync.daemon";
 static NSString * const kRCDaemonName = @"RetroCloudSyncDaemon";
@@ -13,7 +15,6 @@ static NSString * const kRCCertificateName = @"cacert.pem";
 
 @interface RCServiceController (Private)
 - (NSString *)applicationSupportDirectory;
-- (NSString *)installedDaemonPath;
 - (NSString *)launchAgentPath;
 - (int)runTaskAtPath:(NSString *)launchPath
            arguments:(NSArray *)arguments
@@ -82,6 +83,11 @@ static NSString * const kRCCertificateName = @"cacert.pem";
     return NO;
   }
   return YES;
+}
+
+- (BOOL)prepareServiceFilesWithError:(NSString **)errorMessage;
+{
+  return [self installServiceFilesWithError:errorMessage];
 }
 
 - (BOOL)stopServiceWithError:(NSString **)errorMessage;
@@ -265,7 +271,7 @@ static NSString * const kRCCertificateName = @"cacert.pem";
                              error:errorMessage]) {
     return NO;
   }
-  if (![RCMailServerSettings ensureConfigurationExistsWithError:errorMessage]) {
+  if (![RCConfiguration ensureConfigurationExistsWithError:errorMessage]) {
     return NO;
   }
 
@@ -300,10 +306,34 @@ static NSString * const kRCCertificateName = @"cacert.pem";
     return NO;
   }
 
+  {
+    NSDictionary *configuration =
+        [RCConfiguration loadConfigurationWithError:nil];
+    NSDictionary *contacts = [RCConfiguration
+        contactsConfigurationFromConfiguration:configuration];
+    NSString *username = [contacts objectForKey:@"Username"];
+
+    if ([username length] != 0 && [username UTF8String] != NULL &&
+        RCICloudCredentialsExist([username UTF8String])) {
+      RCError credentialError;
+
+      RCErrorClear(&credentialError);
+      if (!RCICloudCredentialsRefreshAccess([username UTF8String],
+              [installedDaemonPath fileSystemRepresentation],
+              &credentialError)) {
+        if (errorMessage != NULL) {
+          *errorMessage = [NSString stringWithUTF8String:
+              credentialError.message];
+        }
+        return NO;
+      }
+    }
+  }
+
   launchAgent = [NSDictionary dictionaryWithObjectsAndKeys:
       kRCServiceLabel, @"Label",
       [NSArray arrayWithObjects:installedDaemonPath, @"--config",
-                                [RCMailServerSettings configurationPath], nil],
+                                [RCConfiguration configurationPath], nil],
       @"ProgramArguments",
       [NSNumber numberWithBool:YES], @"RunAtLoad",
       [NSNumber numberWithBool:YES], @"KeepAlive",

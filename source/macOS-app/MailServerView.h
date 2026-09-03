@@ -13,7 +13,6 @@
   NSTextField *smtpLocalPortField_;
   NSTextField *smtpServerField_;
   NSTextField *smtpServerPortField_;
-  NSTextField *statusLabel_;
 }
 
 - (void)reloadSettings;
