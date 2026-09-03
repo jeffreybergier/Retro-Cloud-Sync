@@ -10,10 +10,12 @@
 #import "DaemonStatusView.h"
 #import "MailServerView.h"
 #import "ContactsView.h"
+#import "DaemonLogView.h"
 
 static NSString * const kRCDaemonToolbarItem = @"Daemon";
 static NSString * const kRCMailToolbarItem = @"Mail";
 static NSString * const kRCSyncToolbarItem = @"Sync";
+static NSString * const kRCLogToolbarItem = @"Log";
 static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
 
 @interface PreferencesWindowController (Private)
@@ -39,13 +41,16 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   [toolbar_ setDelegate:nil];
   [[self window] setDelegate:nil];
   [daemonStatusView_ stopUpdating];
+  [daemonLogView_ stopUpdating];
   visibleView_ = nil;
   [daemonStatusView_ release];
   [mailServerView_ release];
   [contactsView_ release];
+  [daemonLogView_ release];
   [daemonToolbarImage_ release];
   [mailToolbarImage_ release];
   [contactsToolbarImage_ release];
+  [logToolbarImage_ release];
   [toolbar_ release];
   [super dealloc];
 }
@@ -58,6 +63,7 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   DaemonStatusView *daemonStatusView;
   MailServerView *mailServerView;
   ContactsView *contactsView;
+  DaemonLogView *daemonLogView;
   NSToolbar *toolbar;
 
   frame = NSMakeRect(0, 0, 480, 320);
@@ -84,8 +90,11 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   contactsToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAAddressBook
       style:AIFontAwesomeStyleSolid iconSize:24.0 canvasSize:32.0
       scale:1.0] retain];
+  logToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAFileLines
+      style:AIFontAwesomeStyleSolid iconSize:24.0 canvasSize:32.0
+      scale:1.0] retain];
   if (daemonToolbarImage_ != nil && mailToolbarImage_ != nil &&
-      contactsToolbarImage_ != nil) {
+      contactsToolbarImage_ != nil && logToolbarImage_ != nil) {
     [toolbar setDisplayMode:NSToolbarDisplayModeIconAndLabel];
   } else {
     [toolbar setDisplayMode:NSToolbarDisplayModeLabelOnly];
@@ -112,6 +121,12 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
                                     NSViewHeightSizable];
   contactsView_ = contactsView;
 
+  daemonLogView = [[DaemonLogView alloc]
+      initWithFrame:[[window contentView] bounds]];
+  [daemonLogView setAutoresizingMask:NSViewWidthSizable |
+                                     NSViewHeightSizable];
+  daemonLogView_ = daemonLogView;
+
   [self setWindow:window];
   [toolbar setSelectedItemIdentifier:kRCDaemonToolbarItem];
   [self showView:daemonStatusView_];
@@ -124,6 +139,8 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
 {
   if (visibleView_ == daemonStatusView_) {
     [daemonStatusView_ startUpdating];
+  } else if (visibleView_ == daemonLogView_) {
+    [daemonLogView_ startUpdating];
   }
   [super showWindow:sender];
 }
@@ -132,6 +149,7 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
 {
   (void)notification;
   [daemonStatusView_ stopUpdating];
+  [daemonLogView_ stopUpdating];
 }
 
 - (NSArray *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar;
@@ -139,7 +157,8 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   (void)toolbar;
   return [NSArray arrayWithObjects:kRCDaemonToolbarItem,
                                    kRCMailToolbarItem,
-                                   kRCSyncToolbarItem, nil];
+                                   kRCSyncToolbarItem,
+                                   kRCLogToolbarItem, nil];
 }
 
 - (NSArray *)toolbarAllowedItemIdentifiers:(NSToolbar *)toolbar;
@@ -163,7 +182,8 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   (void)flag;
   if (![itemIdentifier isEqualToString:kRCDaemonToolbarItem] &&
       ![itemIdentifier isEqualToString:kRCMailToolbarItem] &&
-      ![itemIdentifier isEqualToString:kRCSyncToolbarItem]) {
+      ![itemIdentifier isEqualToString:kRCSyncToolbarItem] &&
+      ![itemIdentifier isEqualToString:kRCLogToolbarItem]) {
     return nil;
   }
   item = [[[NSToolbarItem alloc]
@@ -178,6 +198,8 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
     image = daemonToolbarImage_;
   } else if ([itemIdentifier isEqualToString:kRCSyncToolbarItem]) {
     image = contactsToolbarImage_;
+  } else if ([itemIdentifier isEqualToString:kRCLogToolbarItem]) {
+    image = logToolbarImage_;
   } else {
     image = mailToolbarImage_;
   }
@@ -197,6 +219,9 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   } else if ([identifier isEqualToString:kRCSyncToolbarItem]) {
     [contactsView_ reloadSettings];
     [self showView:contactsView_];
+  } else if ([identifier isEqualToString:kRCLogToolbarItem]) {
+    [daemonLogView_ reloadLog];
+    [self showView:daemonLogView_];
   } else {
     [self showView:daemonStatusView_];
   }
@@ -216,6 +241,11 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
     [daemonStatusView_ startUpdating];
   } else {
     [daemonStatusView_ stopUpdating];
+  }
+  if (view == daemonLogView_) {
+    [daemonLogView_ startUpdating];
+  } else {
+    [daemonLogView_ stopUpdating];
   }
 }
 

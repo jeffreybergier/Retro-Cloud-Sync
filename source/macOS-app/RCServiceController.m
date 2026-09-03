@@ -135,6 +135,16 @@ static NSString * const kRCCertificateName = @"cacert.pem";
       stringByAppendingPathComponent:kRCDaemonName];
 }
 
+- (NSString *)daemonLogPath;
+{
+  NSString *logsDirectory = [[NSHomeDirectory()
+      stringByAppendingPathComponent:@"Library"]
+      stringByAppendingPathComponent:@"Logs"];
+
+  return [[logsDirectory stringByAppendingPathComponent:@"RetroCloudSync"]
+      stringByAppendingPathComponent:@"RetroCloudSyncDaemon.log"];
+}
+
 - (NSString *)launchAgentPath;
 {
   NSString *libraryDirectory =
@@ -254,8 +264,8 @@ static NSString * const kRCCertificateName = @"cacert.pem";
   NSString *launchAgentPath = [self launchAgentPath];
   NSString *launchAgentsDirectory =
       [launchAgentPath stringByDeletingLastPathComponent];
-  NSString *logPath = [[self applicationSupportDirectory]
-      stringByAppendingPathComponent:@"RetroCloudSyncDaemon.log"];
+  NSString *logPath = [self daemonLogPath];
+  NSString *logDirectory = [logPath stringByDeletingLastPathComponent];
   NSDictionary *launchAgent;
 
   if (![fileManager fileExistsAtPath:embeddedDaemonPath] ||
@@ -267,6 +277,7 @@ static NSString * const kRCCertificateName = @"cacert.pem";
   }
   if (![self ensureDirectoryExists:[self applicationSupportDirectory]
                              error:errorMessage] ||
+      ![self ensureDirectoryExists:logDirectory error:errorMessage] ||
       ![self ensureDirectoryExists:launchAgentsDirectory
                              error:errorMessage]) {
     return NO;
@@ -312,8 +323,10 @@ static NSString * const kRCCertificateName = @"cacert.pem";
     NSDictionary *contacts = [RCConfiguration
         contactsConfigurationFromConfiguration:configuration];
     NSString *username = [contacts objectForKey:@"Username"];
+    NSNumber *contactsEnabled = [contacts objectForKey:@"Enabled"];
 
-    if ([username length] != 0 && [username UTF8String] != NULL &&
+    if ([contactsEnabled boolValue] && [username length] != 0 &&
+        [username UTF8String] != NULL &&
         RCICloudCredentialsExist([username UTF8String])) {
       RCError credentialError;
 

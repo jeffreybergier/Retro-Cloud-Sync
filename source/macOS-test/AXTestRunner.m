@@ -154,8 +154,10 @@ static BOOL ConfigurationMatches(NSString *path,
   NSString *configurationPath;
   NSString *networkTestPath;
   NSString *launchAgentPath;
+  NSString *daemonLogPath;
   NSDictionary *configuration;
   NSDictionary *mailProxy;
+  NSDictionary *launchAgent;
   unsigned short imapPort;
   unsigned short smtpPort;
   NSFileManager *fileManager = [NSFileManager defaultManager];
@@ -184,6 +186,9 @@ static BOOL ConfigurationMatches(NSString *path,
   launchAgentPath = [[NSHomeDirectory()
       stringByAppendingPathComponent:@"Library/LaunchAgents"]
       stringByAppendingPathComponent:@"com.retrocloudsync.daemon.plist"];
+  daemonLogPath = [[NSHomeDirectory()
+      stringByAppendingPathComponent:@"Library/Logs/RetroCloudSync"]
+      stringByAppendingPathComponent:@"RetroCloudSyncDaemon.log"];
 
   if (![self waitForStatus:@"Stopped" timeout:1.0] &&
       ![self pressControlNamed:@"Stop" segment:1]) {
@@ -295,6 +300,29 @@ static BOOL ConfigurationMatches(NSString *path,
     goto cleanup;
   }
   PrintPass(@"Daemon, CA certificates, configuration, and LaunchAgent are installed");
+  launchAgent = [NSDictionary dictionaryWithContentsOfFile:launchAgentPath];
+  if (![[launchAgent objectForKey:@"StandardOutPath"]
+          isEqualToString:daemonLogPath] ||
+      ![[launchAgent objectForKey:@"StandardErrorPath"]
+          isEqualToString:daemonLogPath] ||
+      ![self waitForFileAtPath:daemonLogPath timeout:5.0]) {
+    PrintFail(@"LaunchAgent is not writing to the per-user daemon log");
+    goto cleanup;
+  }
+  PrintPass(@"LaunchAgent writes to the per-user daemon log");
+  if (![self pressControlNamed:@"Log" segment:0] ||
+      ![self waitForElementNamed:@"Daemon Log" timeout:5.0] ||
+      ![self waitForElementNamed:daemonLogPath timeout:5.0] ||
+      ![self waitForElementNamed:@"Refresh" timeout:5.0]) {
+    PrintFail(@"Could not open or inspect the daemon Log preferences panel");
+    goto cleanup;
+  }
+  PrintPass(@"Daemon Log preferences panel opened");
+  if (![self pressControlNamed:@"Daemon" segment:0] ||
+      ![self waitForStatus:@"Running" timeout:5.0]) {
+    PrintFail(@"Could not return to the running Daemon preferences panel");
+    goto cleanup;
+  }
   configuration = [NSDictionary dictionaryWithContentsOfFile:configurationPath];
   mailProxy = [configuration objectForKey:@"MailProxy"];
   imapPort = (unsigned short)[[[mailProxy objectForKey:@"IMAP"]

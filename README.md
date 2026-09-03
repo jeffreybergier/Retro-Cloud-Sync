@@ -20,7 +20,12 @@ then at the configured interval. Its read-only mirror is stored at:
 ```
 
 Contact download errors do not stop the mail proxy; they are written to the
-daemon log and retried at the next interval.
+daemon log and retried at the next interval. Choose **Log** in the application
+toolbar to follow that log. It is stored at:
+
+```text
+~/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log
+```
 
 ## Read-only CardDAV probe
 
