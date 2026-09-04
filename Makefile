@@ -13,6 +13,7 @@ include $(SOURCE_ROOT)/make/carddav-probe.mk
 include $(SOURCE_ROOT)/make/app.mk
 include $(SOURCE_ROOT)/make/test.mk
 include $(SOURCE_ROOT)/make/shared-test.mk
+include $(SOURCE_ROOT)/make/syncservices-test.mk
 
 release:
 	@echo "--- Building Retro Cloud Sync Release (-O3) ---"
@@ -92,6 +93,24 @@ test-shared:
 	@echo "--- Testing portable vCard and SQLite layers ---"
 	@$(MAKE) --no-print-directory BUILD_ROOT="$(BUILD_ROOT)" shared-test-run
 
+test-syncservices-build:
+	@echo "--- Building offline Sync Services test tools ---"
+	@$(MAKE) --no-print-directory CONFIG=release BUILD_ROOT="$(BUILD_ROOT)" \
+		syncservices-test-config
+
+test-syncservices-analyze: validate-analyzer
+	@echo "--- Analyzing offline Sync Services verifier ---"
+	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(ANALYZER) \
+		--analyze -Xanalyzer -analyzer-output=text \
+		-target i386-apple-darwin9 -arch i386 -isysroot "$(SDK)" \
+		-std=c99 -Wall -Wextra -fno-color-diagnostics \
+		$(SYNC_TEST_VERIFIER_SOURCE)
+
+test-syncservices:
+	@$(MAKE) --no-print-directory release test-syncservices-build
+	@TEST_HOST="$(TEST_HOST)" BUILD_ROOT="$(BUILD_ROOT)" \
+		/bin/bash "$(SOURCE_ROOT)/macOS-test/run-syncservices-remote.sh"
+
 build-all: validate-build app-config
 
 analyze: validate-analyzer
@@ -119,4 +138,5 @@ clean:
 	carddav-probe carddav-probe-debug \
 	shared-release shared-debug test-build test-debug test-analyze test-gui \
 	test-shared \
+	test-syncservices-build test-syncservices-analyze test-syncservices \
 	build-all analyze clean

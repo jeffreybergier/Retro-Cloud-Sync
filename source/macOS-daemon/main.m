@@ -445,7 +445,7 @@ int main(int argc, char *argv[])
 
   processPool = [[NSAutoreleasePool alloc] init];
   memset(&contactWorker, 0, sizeof(contactWorker));
-  if (argc == 4 && strcmp(argv[1], "--export-contacts") == 0) {
+  if (argc == 4 && strcmp(argv[1], "--test-syncservices") == 0) {
     RCContactStore *store;
     RCError error;
     long recordCount = 0;
@@ -453,7 +453,7 @@ int main(int argc, char *argv[])
 
     RCErrorClear(&error);
     store = RCContactStoreOpen(argv[2], &error);
-    status = store != NULL && RCSyncServicesPushContacts(
+    status = store != NULL && RCSyncServicesPushTestContacts(
         store, argv[3], &recordCount, &error);
     if (status) {
       NSLog(@"Sync Services export complete: %ld records", recordCount);
@@ -461,6 +461,20 @@ int main(int argc, char *argv[])
       NSLog(@"Sync Services export failed: %s", error.message);
     }
     RCContactStoreClose(store);
+    [processPool release];
+    return status ? 0 : 1;
+  }
+  if (argc == 2 &&
+      strcmp(argv[1], "--unregister-syncservices-test-client") == 0) {
+    RCError error;
+    int status;
+
+    RCErrorClear(&error);
+    status = RCSyncServicesUnregisterTestClient(&error);
+    if (!status) {
+      NSLog(@"Could not unregister Sync Services test client: %s",
+            error.message);
+    }
     [processPool release];
     return status ? 0 : 1;
   }
@@ -480,7 +494,8 @@ int main(int argc, char *argv[])
     RCUseDefaultMailConfiguration(mailConfigs);
   } else {
     NSLog(@"Usage: RetroCloudSyncDaemon [--config path] | "
-           "--export-contacts database client-description");
+           "--test-syncservices database client-description | "
+           "--unregister-syncservices-test-client");
     [processPool release];
     return 1;
   }

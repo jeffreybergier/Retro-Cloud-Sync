@@ -64,3 +64,28 @@ The password is read from an interactive prompt. The probe performs CardDAV
 discovery and read-only contact downloads; it never sends `PUT` or `DELETE`.
 Downloaded vCards are stored both as their original bodies and as normalized
 contact, property, parameter, and structured-value rows.
+
+## Offline Sync Services test
+
+Build the non-shipped test tools and synthetic contact databases with:
+
+```sh
+make test-syncservices-build
+make test-syncservices-analyze
+```
+
+Run the end-to-end test on a Tiger host with:
+
+```sh
+make test-syncservices TEST_HOST=x4-vm
+```
+
+The test refuses to run while the production daemon is active. It uses the
+separate Sync Services client identifier
+`com.retrocloudsync.contacts.test.v1` and never reads the login Keychain,
+loads the service configuration, initializes the network stack, or contacts
+iCloud. It records the existing Address Book identifiers, adds two uniquely
+named synthetic contacts, verifies an idempotent re-export, updates one,
+deletes the other, removes all test contacts, and confirms that every
+pre-existing Address Book record remains. Cleanup is attempted after failures,
+and all remote tools and artifacts remain under `~/Desktop`.

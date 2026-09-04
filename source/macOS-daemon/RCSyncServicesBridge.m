@@ -20,6 +20,10 @@ static NSString * const kRCGroupEntity = @"com.apple.contacts.Group";
 static NSString * const kRCSmartGroupEntity = @"com.apple.contacts.SmartGroup";
 static NSString * const kRCIMEntity = @"com.apple.contacts.IM";
 static NSString * const kRCRelatedNameEntity = @"com.apple.contacts.Related Name";
+static NSString * const kRCProductionClientIdentifier =
+    @"com.retrocloudsync.contacts.v1";
+static NSString * const kRCTestClientIdentifier =
+    @"com.retrocloudsync.contacts.test.v1";
 
 typedef struct {
   RCContactStore *store;
@@ -318,9 +322,9 @@ static int RCExportContact(long long contactIdentifier,
   return 1;
 }
 
-int RCSyncServicesPushContacts(RCContactStore *store,
-                               const char *clientDescriptionPath,
-                               long *recordCount, RCError *error)
+static int RCSyncServicesPushContactsForClient(
+    RCContactStore *store, const char *clientDescriptionPath,
+    NSString *clientIdentifier, long *recordCount, RCError *error)
 {
   NSArray *entities = [NSArray arrayWithObjects:kRCContactEntity, kRCDateEntity,
       kRCEmailEntity, kRCGroupEntity, kRCSmartGroupEntity, kRCIMEntity,
@@ -345,8 +349,7 @@ int RCSyncServicesPushContacts(RCContactStore *store,
       RCErrorSet(error, 1, "Sync Services is disabled or unavailable");
       return 0;
     }
-    client = [manager registerClientWithIdentifier:
-        @"com.retrocloudsync.contacts.v1"
+    client = [manager registerClientWithIdentifier:clientIdentifier
         descriptionFilePath:descriptionPath];
     if (client == nil) {
       RCErrorSet(error, 1, "Could not register the Sync Services client");
@@ -417,4 +420,44 @@ finished:
     }
   }
   return success;
+}
+
+int RCSyncServicesPushContacts(RCContactStore *store,
+                               const char *clientDescriptionPath,
+                               long *recordCount, RCError *error)
+{
+  return RCSyncServicesPushContactsForClient(store, clientDescriptionPath,
+      kRCProductionClientIdentifier, recordCount, error);
+}
+
+int RCSyncServicesPushTestContacts(RCContactStore *store,
+                                   const char *clientDescriptionPath,
+                                   long *recordCount, RCError *error)
+{
+  return RCSyncServicesPushContactsForClient(store, clientDescriptionPath,
+      kRCTestClientIdentifier, recordCount, error);
+}
+
+int RCSyncServicesUnregisterTestClient(RCError *error)
+{
+  ISyncManager *manager;
+  ISyncClient *client;
+
+  RCErrorClear(error);
+  @try {
+    manager = [ISyncManager sharedManager];
+    if (![manager isEnabled]) {
+      RCErrorSet(error, 1, "Sync Services is disabled or unavailable");
+      return 0;
+    }
+    client = [manager clientWithIdentifier:kRCTestClientIdentifier];
+    if (client != nil) [manager unregisterClient:client];
+  }
+  @catch (NSException *exception) {
+    const char *reason = [[exception reason] UTF8String];
+    RCErrorSet(error, 1, "Sync Services exception: %s",
+               reason != NULL ? reason : "unknown error");
+    return 0;
+  }
+  return 1;
 }

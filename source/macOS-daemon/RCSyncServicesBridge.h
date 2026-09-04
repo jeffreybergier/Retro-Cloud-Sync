@@ -7,5 +7,9 @@
 int RCSyncServicesPushContacts(RCContactStore *store,
                                const char *clientDescriptionPath,
                                long *recordCount, RCError *error);
+int RCSyncServicesPushTestContacts(RCContactStore *store,
+                                   const char *clientDescriptionPath,
+                                   long *recordCount, RCError *error);
+int RCSyncServicesUnregisterTestClient(RCError *error);
 
 #endif
