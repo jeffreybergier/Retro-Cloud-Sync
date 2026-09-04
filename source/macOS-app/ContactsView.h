@@ -7,8 +7,8 @@
 
 @interface ContactsView : NSView {
  @private
-  NSButton *enabledButton_;
-  NSButton *calendarsEnabledButton_;
+  NSMatrix *contactsSyncMatrix_;
+  NSMatrix *calendarsSyncMatrix_;
   NSTextField *usernameField_;
   NSSecureTextField *passwordField_;
   NSTextField *intervalField_;

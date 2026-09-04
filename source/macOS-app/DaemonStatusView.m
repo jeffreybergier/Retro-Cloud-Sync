@@ -26,12 +26,12 @@
     serviceController_ = [[RCServiceController alloc] init];
 
     serviceBox = [[[NSBox alloc]
-        initWithFrame:NSMakeRect(16, 232, 448, 72)] autorelease];
+        initWithFrame:NSMakeRect(16, 278, 448, 72)] autorelease];
     [serviceBox setTitle:@"Background Service"];
     [self addSubview:serviceBox];
 
     statusTitle = [[[NSTextField alloc]
-        initWithFrame:NSMakeRect(30, 253, 78, 20)] autorelease];
+        initWithFrame:NSMakeRect(30, 299, 78, 20)] autorelease];
     [statusTitle setBezeled:NO];
     [statusTitle setDrawsBackground:NO];
     [statusTitle setEditable:NO];
@@ -41,7 +41,7 @@
     [self addSubview:statusTitle];
 
     statusLabel = [[NSTextField alloc]
-        initWithFrame:NSMakeRect(116, 253, 220, 20)];
+        initWithFrame:NSMakeRect(116, 299, 220, 20)];
     [statusLabel setBezeled:NO];
     [statusLabel setDrawsBackground:NO];
     [statusLabel setEditable:NO];
@@ -51,7 +51,7 @@
     statusLabel_ = statusLabel;
 
     serviceButton = [[NSButton alloc]
-        initWithFrame:NSMakeRect(368, 246, 88, 26)];
+        initWithFrame:NSMakeRect(368, 292, 88, 26)];
     [serviceButton setTitle:@"Start"];
     [serviceButton setBezelStyle:NSRoundedBezelStyle];
     [serviceButton setTarget:self];

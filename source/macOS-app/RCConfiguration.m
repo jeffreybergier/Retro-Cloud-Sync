@@ -17,6 +17,8 @@ static NSString * const kRCRemotePort = @"RemotePort";
 static NSString * const kRCContacts = @"Contacts";
 static NSString * const kRCEnabled = @"Enabled";
 static NSString * const kRCCalendarsEnabled = @"CalendarsEnabled";
+static NSString * const kRCContactsSyncMode = @"ContactsSyncMode";
+static NSString * const kRCCalendarsSyncMode = @"CalendarsSyncMode";
 static NSString * const kRCUsername = @"Username";
 static NSString * const kRCServiceURL = @"ServiceURL";
 static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
@@ -25,6 +27,7 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
 + (BOOL)validateService:(NSDictionary *)service
                    name:(NSString *)name
                   error:(NSString **)errorMessage;
++ (BOOL)isValidSyncMode:(NSString *)syncMode;
 @end
 
 @implementation RCConfiguration
@@ -59,6 +62,8 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
       [NSDictionary dictionaryWithObjectsAndKeys:
           [NSNumber numberWithBool:NO], kRCEnabled,
           [NSNumber numberWithBool:NO], kRCCalendarsEnabled,
+          @"Disabled", kRCContactsSyncMode,
+          @"Disabled", kRCCalendarsSyncMode,
           @"", kRCUsername,
           @"https://contacts.icloud.com", kRCServiceURL,
           [NSNumber numberWithInt:3600], kRCSyncIntervalSeconds, nil],
@@ -174,6 +179,8 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
     NSNumber *enabled;
     NSNumber *interval;
     NSNumber *calendarsEnabled;
+    NSString *contactsSyncMode;
+    NSString *calendarsSyncMode;
     NSString *username;
     NSString *serviceURL;
 
@@ -186,18 +193,29 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
     enabled = [contacts objectForKey:kRCEnabled];
     interval = [contacts objectForKey:kRCSyncIntervalSeconds];
     calendarsEnabled = [contacts objectForKey:kRCCalendarsEnabled];
+    contactsSyncMode = [contacts objectForKey:kRCContactsSyncMode];
+    calendarsSyncMode = [contacts objectForKey:kRCCalendarsSyncMode];
     username = [contacts objectForKey:kRCUsername];
     serviceURL = [contacts objectForKey:kRCServiceURL];
     if (![enabled isKindOfClass:[NSNumber class]] ||
         ![interval isKindOfClass:[NSNumber class]] ||
         (calendarsEnabled != nil &&
          ![calendarsEnabled isKindOfClass:[NSNumber class]]) ||
+        (contactsSyncMode != nil &&
+         ![self isValidSyncMode:contactsSyncMode]) ||
+        (calendarsSyncMode != nil &&
+         ![self isValidSyncMode:calendarsSyncMode]) ||
         [interval unsignedIntValue] < 60 ||
         [interval unsignedIntValue] > 604800 ||
         ![username isKindOfClass:[NSString class]] ||
         ![serviceURL isKindOfClass:[NSString class]] ||
         ![serviceURL isEqualToString:@"https://contacts.icloud.com"] ||
-        (([enabled boolValue] || [calendarsEnabled boolValue]) &&
+        (((contactsSyncMode != nil ?
+              ![contactsSyncMode isEqualToString:@"Disabled"] :
+              [enabled boolValue]) ||
+          (calendarsSyncMode != nil ?
+              ![calendarsSyncMode isEqualToString:@"Disabled"] :
+              [calendarsEnabled boolValue])) &&
          [username length] == 0)) {
       if (errorMessage != NULL) {
         *errorMessage = @"The Contacts configuration is invalid";
@@ -236,11 +254,11 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
   return [self saveConfiguration:configuration error:errorMessage];
 }
 
-+ (BOOL)saveContactsEnabled:(BOOL)enabled
-           calendarsEnabled:(BOOL)calendarsEnabled
-                   username:(NSString *)username
-               syncInterval:(unsigned int)syncInterval
-                      error:(NSString **)errorMessage;
++ (BOOL)saveContactsSyncMode:(NSString *)contactsSyncMode
+           calendarsSyncMode:(NSString *)calendarsSyncMode
+                     username:(NSString *)username
+                 syncInterval:(unsigned int)syncInterval
+                        error:(NSString **)errorMessage;
 {
   NSDictionary *loaded = [self loadConfigurationWithError:errorMessage];
   NSMutableDictionary *configuration;
@@ -249,14 +267,27 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
   if (loaded == nil) return NO;
   configuration = [NSMutableDictionary dictionaryWithDictionary:loaded];
   contacts = [NSDictionary dictionaryWithObjectsAndKeys:
-      [NSNumber numberWithBool:enabled], kRCEnabled,
-      [NSNumber numberWithBool:calendarsEnabled], kRCCalendarsEnabled,
+      [NSNumber numberWithBool:
+          [contactsSyncMode isEqualToString:@"OneWay"]], kRCEnabled,
+      [NSNumber numberWithBool:
+          [calendarsSyncMode isEqualToString:@"OneWay"]],
+      kRCCalendarsEnabled,
+      contactsSyncMode, kRCContactsSyncMode,
+      calendarsSyncMode, kRCCalendarsSyncMode,
       username, kRCUsername,
       @"https://contacts.icloud.com", kRCServiceURL,
       [NSNumber numberWithUnsignedInt:syncInterval],
       kRCSyncIntervalSeconds, nil];
   [configuration setObject:contacts forKey:kRCContacts];
   return [self saveConfiguration:configuration error:errorMessage];
+}
+
++ (BOOL)isValidSyncMode:(NSString *)syncMode;
+{
+  return [syncMode isKindOfClass:[NSString class]] &&
+      ([syncMode isEqualToString:@"Disabled"] ||
+       [syncMode isEqualToString:@"OneWay"] ||
+       [syncMode isEqualToString:@"TwoWay"]);
 }
 
 + (BOOL)validateService:(NSDictionary *)service

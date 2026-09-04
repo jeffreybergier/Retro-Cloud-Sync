@@ -27,11 +27,11 @@
   if (self != nil) {
     NSButton *saveButton;
 
-    [self addServiceBox:@"Incoming Mail (IMAP)" y:206
+    [self addServiceBox:@"Incoming Mail (IMAP)" y:252
          localPortField:&imapLocalPortField_
             serverField:&imapServerField_
         serverPortField:&imapServerPortField_];
-    [self addServiceBox:@"Outgoing Mail (SMTP)" y:100
+    [self addServiceBox:@"Outgoing Mail (SMTP)" y:146
          localPortField:&smtpLocalPortField_
             serverField:&smtpServerField_
         serverPortField:&smtpServerPortField_];

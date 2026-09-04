@@ -25,73 +25,182 @@
 {
   self = [super initWithFrame:frame];
   if (self != nil) {
-    NSBox *box;
+    NSBox *accountBox;
+    NSBox *contactsBox;
+    NSBox *calendarsBox;
+    NSButtonCell *radioCell;
     NSButton *saveButton;
     NSButton *removeButton;
     NSTextField *helpLabel;
+    NSRect accountBoxFrame;
+    NSRect contactsBoxFrame;
+    NSRect calendarsBoxFrame;
+    float innerLeft;
+    float innerRight;
+    float accountTop;
+    const float edgePadding = 8;
+    const float boxPadding = 8;
+    const float controlSpacing = 4;
+    const float boxTitleHeight = 14;
+    const float accountBoxHeight = 104;
+    const float syncBoxHeight = 98;
+    const float actionButtonHeight = 26;
 
-    box = [[[NSBox alloc] initWithFrame:NSMakeRect(16, 64, 448, 240)]
-        autorelease];
-    [box setTitle:@"Contacts & Calendars"];
-    [self addSubview:box];
+    accountBoxFrame = NSMakeRect(
+        edgePadding, NSHeight(frame) - edgePadding - accountBoxHeight,
+        NSWidth(frame) - (edgePadding * 2), accountBoxHeight);
+    calendarsBoxFrame = NSMakeRect(
+        edgePadding,
+        edgePadding + actionButtonHeight + edgePadding,
+        NSWidth(frame) - (edgePadding * 2), syncBoxHeight);
+    contactsBoxFrame = NSMakeRect(
+        edgePadding, NSMaxY(calendarsBoxFrame) + edgePadding,
+        NSWidth(frame) - (edgePadding * 2), syncBoxHeight);
+    innerLeft = NSMinX(accountBoxFrame) + boxPadding;
+    innerRight = NSMaxX(accountBoxFrame) - boxPadding;
+    accountTop = NSMaxY(accountBoxFrame) - boxTitleHeight - boxPadding;
 
-    enabledButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(116, 260, 310, 20)];
-    [enabledButton_ setButtonType:NSSwitchButton];
-    [enabledButton_ setTitle:@"Sync Contacts"];
-    [self addSubview:enabledButton_];
+    accountBox = [[[NSBox alloc]
+        initWithFrame:accountBoxFrame] autorelease];
+    [accountBox setTitle:@"iCloud Account"];
+    [accountBox setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+    [self addSubview:accountBox];
 
-    calendarsEnabledButton_ = [[NSButton alloc]
-        initWithFrame:NSMakeRect(116, 236, 310, 20)];
-    [calendarsEnabledButton_ setButtonType:NSSwitchButton];
-    [calendarsEnabledButton_ setTitle:@"Sync Calendars"];
-    [self addSubview:calendarsEnabledButton_];
+    contactsBox = [[[NSBox alloc]
+        initWithFrame:contactsBoxFrame] autorelease];
+    [contactsBox setTitle:@"Contacts Sync"];
+    [contactsBox setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+    [self addSubview:contactsBox];
 
-    [self addLabel:@"Apple ID:" frame:NSMakeRect(30, 202, 78, 20)];
-    usernameField_ = [[NSTextField alloc] initWithFrame:NSMakeRect(116, 200, 320, 22)];
+    calendarsBox = [[[NSBox alloc]
+        initWithFrame:calendarsBoxFrame] autorelease];
+    [calendarsBox setTitle:@"Calendar Sync"];
+    [calendarsBox setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+    [self addSubview:calendarsBox];
+
+    radioCell = [[[NSButtonCell alloc] init] autorelease];
+    [radioCell setButtonType:NSRadioButton];
+    contactsSyncMatrix_ = [[NSMatrix alloc]
+        initWithFrame:NSMakeRect(innerLeft,
+                                 NSMinY(contactsBoxFrame) + boxPadding,
+                                 innerRight - innerLeft, 68)
+                  mode:NSRadioModeMatrix
+             prototype:radioCell
+          numberOfRows:3
+       numberOfColumns:1];
+    [contactsSyncMatrix_ setCellSize:NSMakeSize(innerRight - innerLeft, 20)];
+    [contactsSyncMatrix_ setIntercellSpacing:
+        NSMakeSize(0, controlSpacing)];
+    [contactsSyncMatrix_ setAutosizesCells:YES];
+    [contactsSyncMatrix_
+        setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+    [[contactsSyncMatrix_ cellAtRow:0 column:0]
+        setTitle:@"Disabled"];
+    [[contactsSyncMatrix_ cellAtRow:1 column:0]
+        setTitle:@"1-way Sync: iCloud → Address Book"];
+    [[contactsSyncMatrix_ cellAtRow:2 column:0]
+        setTitle:@"2-way Sync: iCloud ↔ Address Book"];
+    [[contactsSyncMatrix_ cellAtRow:2 column:0] setEnabled:NO];
+    [self addSubview:contactsSyncMatrix_];
+
+    radioCell = [[[NSButtonCell alloc] init] autorelease];
+    [radioCell setButtonType:NSRadioButton];
+    calendarsSyncMatrix_ = [[NSMatrix alloc]
+        initWithFrame:NSMakeRect(innerLeft,
+                                 NSMinY(calendarsBoxFrame) + boxPadding,
+                                 innerRight - innerLeft, 68)
+                  mode:NSRadioModeMatrix
+             prototype:radioCell
+          numberOfRows:3
+       numberOfColumns:1];
+    [calendarsSyncMatrix_ setCellSize:NSMakeSize(innerRight - innerLeft, 20)];
+    [calendarsSyncMatrix_ setIntercellSpacing:
+        NSMakeSize(0, controlSpacing)];
+    [calendarsSyncMatrix_ setAutosizesCells:YES];
+    [calendarsSyncMatrix_
+        setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+    [[calendarsSyncMatrix_ cellAtRow:0 column:0]
+        setTitle:@"Disabled"];
+    [[calendarsSyncMatrix_ cellAtRow:1 column:0]
+        setTitle:@"1-way Sync: iCloud → iCal"];
+    [[calendarsSyncMatrix_ cellAtRow:2 column:0]
+        setTitle:@"2-way Sync: iCloud ↔ iCal"];
+    [[calendarsSyncMatrix_ cellAtRow:2 column:0] setEnabled:NO];
+    [self addSubview:calendarsSyncMatrix_];
+
+    [self addLabel:@"Apple ID:"
+             frame:NSMakeRect(innerLeft, accountTop - 20, 70, 20)];
+    usernameField_ = [[NSTextField alloc]
+        initWithFrame:NSMakeRect(innerLeft + 70 + controlSpacing,
+                                 accountTop - 22,
+                                 innerRight - innerLeft - 70 - controlSpacing,
+                                 22)];
+    [usernameField_
+        setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [self addSubview:usernameField_];
 
-    [self addLabel:@"Password:" frame:NSMakeRect(30, 168, 78, 20)];
+    [self addLabel:@"Password:"
+             frame:NSMakeRect(innerLeft, accountTop - 46, 70, 20)];
     passwordField_ = [[NSSecureTextField alloc]
-        initWithFrame:NSMakeRect(116, 166, 320, 22)];
+        initWithFrame:NSMakeRect(innerLeft + 70 + controlSpacing,
+                                 accountTop - 48,
+                                 innerRight - innerLeft - 70 - controlSpacing,
+                                 22)];
+    [passwordField_
+        setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [self addSubview:passwordField_];
 
-    [self addLabel:@"Sync every:" frame:NSMakeRect(30, 136, 78, 20)];
+    [self addLabel:@"Sync every:"
+             frame:NSMakeRect(innerLeft, accountTop - 72, 70, 20)];
     intervalField_ = [[NSTextField alloc]
-        initWithFrame:NSMakeRect(116, 134, 64, 22)];
+        initWithFrame:NSMakeRect(innerLeft + 70 + controlSpacing,
+                                 accountTop - 74, 64, 22)];
+    [intervalField_ setAutoresizingMask:NSViewMinYMargin];
     [self addSubview:intervalField_];
     helpLabel = [[[NSTextField alloc]
-        initWithFrame:NSMakeRect(186, 136, 250, 20)] autorelease];
+        initWithFrame:NSMakeRect(innerLeft + 70 + controlSpacing + 64 +
+                                     controlSpacing,
+                                 accountTop - 72,
+                                 innerRight - innerLeft - 70 -
+                                     (controlSpacing * 2) - 64,
+                                 20)] autorelease];
     [helpLabel setBezeled:NO];
     [helpLabel setDrawsBackground:NO];
     [helpLabel setEditable:NO];
     [helpLabel setSelectable:NO];
     [helpLabel setStringValue:@"minutes"];
+    [helpLabel setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [self addSubview:helpLabel];
 
     removeButton = [[[NSButton alloc]
-        initWithFrame:NSMakeRect(276, 12, 104, 26)] autorelease];
+        initWithFrame:NSMakeRect(NSWidth(frame) - edgePadding - 80 -
+                                     controlSpacing - 104,
+                                 edgePadding, 104, 26)] autorelease];
     [removeButton setTitle:@"Remove Account"];
     [removeButton setBezelStyle:NSRoundedBezelStyle];
+    [removeButton setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
     [removeButton setTarget:self];
     [removeButton setAction:@selector(removeAccount:)];
     [self addSubview:removeButton];
 
     saveButton = [[[NSButton alloc]
-        initWithFrame:NSMakeRect(388, 12, 80, 26)] autorelease];
+        initWithFrame:NSMakeRect(NSWidth(frame) - edgePadding - 80,
+                                 edgePadding, 80, 26)] autorelease];
     [saveButton setTitle:@"Save"];
     [saveButton setBezelStyle:NSRoundedBezelStyle];
+    [saveButton setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
     [saveButton setTarget:self];
     [saveButton setAction:@selector(saveSettings:)];
     [self addSubview:saveButton];
 
     /* Tiger does not reliably infer key order for programmatic views. */
-    [enabledButton_ setNextKeyView:calendarsEnabledButton_];
-    [calendarsEnabledButton_ setNextKeyView:usernameField_];
+    [contactsSyncMatrix_ setNextKeyView:calendarsSyncMatrix_];
+    [calendarsSyncMatrix_ setNextKeyView:usernameField_];
     [usernameField_ setNextKeyView:passwordField_];
     [passwordField_ setNextKeyView:intervalField_];
     [intervalField_ setNextKeyView:removeButton];
     [removeButton setNextKeyView:saveButton];
-    [saveButton setNextKeyView:enabledButton_];
+    [saveButton setNextKeyView:contactsSyncMatrix_];
 
     [self reloadSettings];
   }
@@ -100,8 +209,8 @@
 
 - (void)dealloc;
 {
-  [enabledButton_ release];
-  [calendarsEnabledButton_ release];
+  [contactsSyncMatrix_ release];
+  [calendarsSyncMatrix_ release];
   [usernameField_ release];
   [passwordField_ release];
   [intervalField_ release];
@@ -117,6 +226,7 @@
   [label setSelectable:NO];
   [label setAlignment:NSRightTextAlignment];
   [label setStringValue:text];
+  [label setAutoresizingMask:NSViewMinYMargin];
   [self addSubview:label];
 }
 
@@ -127,6 +237,8 @@
       [RCConfiguration loadConfigurationWithError:&errorMessage];
   NSDictionary *contacts;
   NSString *username;
+  NSString *contactsSyncMode;
+  NSString *calendarsSyncMode;
   char *password = NULL;
   size_t passwordLength = 0;
   RCError credentialError;
@@ -138,11 +250,20 @@
   contacts = [RCConfiguration
       contactsConfigurationFromConfiguration:configuration];
   username = [contacts objectForKey:@"Username"];
-  [enabledButton_ setState:[[contacts objectForKey:@"Enabled"] boolValue] ?
-                                NSOnState : NSOffState];
-  [calendarsEnabledButton_ setState:
-      [[contacts objectForKey:@"CalendarsEnabled"] boolValue] ?
-          NSOnState : NSOffState];
+  contactsSyncMode = [contacts objectForKey:@"ContactsSyncMode"];
+  calendarsSyncMode = [contacts objectForKey:@"CalendarsSyncMode"];
+  [contactsSyncMatrix_ selectCellAtRow:
+      [contactsSyncMode isEqualToString:@"TwoWay"] ? 2 :
+      ([contactsSyncMode isEqualToString:@"OneWay"] ||
+       (contactsSyncMode == nil &&
+        [[contacts objectForKey:@"Enabled"] boolValue])) ? 1 : 0
+                                  column:0];
+  [calendarsSyncMatrix_ selectCellAtRow:
+      [calendarsSyncMode isEqualToString:@"TwoWay"] ? 2 :
+      ([calendarsSyncMode isEqualToString:@"OneWay"] ||
+       (calendarsSyncMode == nil &&
+        [[contacts objectForKey:@"CalendarsEnabled"] boolValue])) ? 1 : 0
+                                   column:0];
   [usernameField_ setStringValue:username];
   [intervalField_ setIntValue:
       [[contacts objectForKey:@"SyncIntervalSeconds"] intValue] / 60];
@@ -180,8 +301,12 @@
           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
   NSString *password = [passwordField_ stringValue];
   unsigned int minutes = (unsigned int)[intervalField_ intValue];
-  BOOL enabled = [enabledButton_ state] == NSOnState;
-  BOOL calendarsEnabled = [calendarsEnabledButton_ state] == NSOnState;
+  NSString *contactsSyncMode = [contactsSyncMatrix_ selectedRow] == 2 ?
+      @"TwoWay" : ([contactsSyncMatrix_ selectedRow] == 1 ?
+          @"OneWay" : @"Disabled");
+  NSString *calendarsSyncMode = [calendarsSyncMatrix_ selectedRow] == 2 ?
+      @"TwoWay" : ([calendarsSyncMatrix_ selectedRow] == 1 ?
+          @"OneWay" : @"Disabled");
   BOOL passwordAlreadyExists = NO;
   NSString *credentialWarning = nil;
   RCError credentialError;
@@ -226,8 +351,8 @@
       return;
     }
   }
-  if (![RCConfiguration saveContactsEnabled:enabled
-      calendarsEnabled:calendarsEnabled username:username
+  if (![RCConfiguration saveContactsSyncMode:contactsSyncMode
+      calendarsSyncMode:calendarsSyncMode username:username
       syncInterval:minutes * 60 error:&errorMessage]) {
     [self setError:errorMessage];
     return;
@@ -260,8 +385,9 @@
   BOOL serviceWasRunning = [serviceController isServiceRunning];
 
   (void)sender;
-  if (![RCConfiguration saveContactsEnabled:NO calendarsEnabled:NO
-      username:@"" syncInterval:3600 error:&errorMessage]) {
+  if (![RCConfiguration saveContactsSyncMode:@"Disabled"
+      calendarsSyncMode:@"Disabled" username:@"" syncInterval:3600
+      error:&errorMessage]) {
     [self setError:errorMessage];
     return;
   }
@@ -271,8 +397,8 @@
     credentialWarning = [NSString stringWithUTF8String:
         credentialError.message];
   }
-  [enabledButton_ setState:NSOffState];
-  [calendarsEnabledButton_ setState:NSOffState];
+  [contactsSyncMatrix_ selectCellAtRow:0 column:0];
+  [calendarsSyncMatrix_ selectCellAtRow:0 column:0];
   [usernameField_ setStringValue:@""];
   [passwordField_ setStringValue:@""];
   [intervalField_ setIntValue:60];

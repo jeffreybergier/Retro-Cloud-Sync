@@ -17,11 +17,11 @@
                          error:(NSString **)errorMessage;
 + (NSDictionary *)contactsConfigurationFromConfiguration:
     (NSDictionary *)configuration;
-+ (BOOL)saveContactsEnabled:(BOOL)enabled
-           calendarsEnabled:(BOOL)calendarsEnabled
-                   username:(NSString *)username
-               syncInterval:(unsigned int)syncInterval
-                      error:(NSString **)errorMessage;
++ (BOOL)saveContactsSyncMode:(NSString *)contactsSyncMode
+           calendarsSyncMode:(NSString *)calendarsSyncMode
+                     username:(NSString *)username
+                 syncInterval:(unsigned int)syncInterval
+                        error:(NSString **)errorMessage;
 + (BOOL)saveMailProxy:(NSDictionary *)mailProxy
                  error:(NSString **)errorMessage;
 

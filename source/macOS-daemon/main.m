@@ -68,6 +68,29 @@ static void RCContactProgress(const char *message, void *context)
   if (message != NULL) NSLog(@"Contacts: %s", message);
 }
 
+static NSString *RCSyncModeFromConfiguration(NSDictionary *configuration,
+                                             NSString *modeKey,
+                                             NSString *legacyEnabledKey,
+                                             BOOL legacyValueIsRequired)
+{
+  id mode = [configuration objectForKey:modeKey];
+  id enabled;
+
+  if (mode != nil) {
+    if ([mode isKindOfClass:[NSString class]] &&
+        ([mode isEqualToString:@"Disabled"] ||
+         [mode isEqualToString:@"OneWay"] ||
+         [mode isEqualToString:@"TwoWay"])) {
+      return mode;
+    }
+    return nil;
+  }
+  enabled = [configuration objectForKey:legacyEnabledKey];
+  if (enabled == nil && !legacyValueIsRequired) return @"Disabled";
+  if (![enabled isKindOfClass:[NSNumber class]]) return nil;
+  return [enabled boolValue] ? @"OneWay" : @"Disabled";
+}
+
 static void *RCContactWorkerMain(void *context)
 {
   RCContactWorker *worker = (RCContactWorker *)context;
@@ -153,19 +176,42 @@ static BOOL RCContactWorkerStart(RCContactWorker *worker,
   NSString *username;
   NSString *serviceURL;
   NSNumber *interval;
-  NSNumber *enabled;
+  NSString *contactsSyncMode;
+  NSString *calendarsSyncMode;
   NSString *databasePath;
   NSString *certificatePath;
   NSString *syncClientDescriptionPath;
 
   memset(worker, 0, sizeof(*worker));
   if (contacts == nil) {
+    NSLog(@"Contacts sync is disabled");
+    NSLog(@"Calendar sync is disabled");
     return YES;
   }
   if (![contacts isKindOfClass:[NSDictionary class]]) return NO;
-  enabled = [contacts objectForKey:@"Enabled"];
-  if (![enabled isKindOfClass:[NSNumber class]]) return NO;
-  if (![enabled boolValue]) return YES;
+  contactsSyncMode = RCSyncModeFromConfiguration(
+      contacts, @"ContactsSyncMode", @"Enabled", YES);
+  calendarsSyncMode = RCSyncModeFromConfiguration(
+      contacts, @"CalendarsSyncMode", @"CalendarsEnabled", NO);
+  if (contactsSyncMode == nil || calendarsSyncMode == nil) {
+    NSLog(@"Contacts and Calendars sync mode configuration is invalid");
+    return NO;
+  }
+  if ([calendarsSyncMode isEqualToString:@"Disabled"]) {
+    NSLog(@"Calendar sync is disabled");
+  } else if ([calendarsSyncMode isEqualToString:@"TwoWay"]) {
+    NSLog(@"Calendar 2-way sync is not implemented yet");
+  } else {
+    NSLog(@"Calendar 1-way sync is not implemented yet");
+  }
+  if ([contactsSyncMode isEqualToString:@"Disabled"]) {
+    NSLog(@"Contacts sync is disabled");
+    return YES;
+  }
+  if ([contactsSyncMode isEqualToString:@"TwoWay"]) {
+    NSLog(@"Contacts 2-way sync is not implemented yet");
+    return YES;
+  }
   username = [contacts objectForKey:@"Username"];
   serviceURL = [contacts objectForKey:@"ServiceURL"];
   interval = [contacts objectForKey:@"SyncIntervalSeconds"];

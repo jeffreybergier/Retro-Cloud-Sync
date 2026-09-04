@@ -265,12 +265,21 @@ static BOOL ConfigurationMatches(NSString *path,
   PrintPass(@"Default mail preferences were restored and saved");
   mailSettingsChanged = NO;
   if (![self pressControlNamed:@"Sync" segment:0] ||
-      ![self waitForElementNamed:@"Contacts & Calendars" timeout:5.0] ||
+      ![self waitForElementNamed:@"iCloud Account" timeout:5.0] ||
+      ![self waitForElementNamed:@"Contacts Sync" timeout:5.0] ||
+      ![self waitForElementNamed:@"Calendar Sync" timeout:5.0] ||
       ![self waitForElementNamed:@"Apple ID:" timeout:5.0] ||
       ![self waitForElementNamed:@"Password:" timeout:5.0] ||
-      ![self waitForElementNamed:@"Sync Contacts" timeout:5.0] ||
-      ![self waitForElementNamed:@"Sync Calendars"
-                         timeout:5.0]) {
+      ![self waitForElementNamed:@"Disabled" timeout:5.0] ||
+      ![self waitForElementNamed:
+          @"1-way Sync: iCloud → Address Book" timeout:5.0] ||
+      ![self waitForElementNamed:
+          @"2-way Sync: iCloud ↔ Address Book"
+          timeout:5.0] ||
+      ![self waitForElementNamed:@"1-way Sync: iCloud → iCal"
+          timeout:5.0] ||
+      ![self waitForElementNamed:
+          @"2-way Sync: iCloud ↔ iCal" timeout:5.0]) {
     PrintFail(@"Could not open or inspect the Sync preferences panel");
     goto cleanup;
   }
@@ -609,8 +618,10 @@ cleanup:
   [task setStandardOutput:pipe];
   [task setStandardError:[NSFileHandle fileHandleWithNullDevice]];
   [task launch];
-  [task waitUntilExit];
+  /* Drain ps output before waiting so a full Tiger pipe cannot deadlock the
+     harness in the same way as the application's status check. */
   data = [[pipe fileHandleForReading] readDataToEndOfFile];
+  [task waitUntilExit];
   output = [[[NSString alloc] initWithData:data
                                   encoding:NSUTF8StringEncoding] autorelease];
   lines = [output componentsSeparatedByString:@"\n"];

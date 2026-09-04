@@ -180,6 +180,9 @@ static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
 
   @try {
     [task launch];
+    /* Drain the pipe while the child is running.  Waiting first can deadlock
+       when ps produces more output than Tiger's pipe buffer can hold. */
+    data = [[pipe fileHandleForReading] readDataToEndOfFile];
     [task waitUntilExit];
   }
   @catch (NSException *exception) {
@@ -189,7 +192,6 @@ static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
     return -1;
   }
 
-  data = [[pipe fileHandleForReading] readDataToEndOfFile];
   taskOutput = [[[NSString alloc] initWithData:data
                                       encoding:NSUTF8StringEncoding]
       autorelease];

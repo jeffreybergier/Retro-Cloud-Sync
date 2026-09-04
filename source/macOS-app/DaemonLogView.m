@@ -31,14 +31,14 @@ static const unsigned long long kRCMaximumDisplayedLogSize = 1024 * 1024;
     serviceController = [[[RCServiceController alloc] init] autorelease];
     logPath_ = [[serviceController daemonLogPath] copy];
 
-    box = [[[NSBox alloc] initWithFrame:NSMakeRect(16, 48, 448, 256)]
+    box = [[[NSBox alloc] initWithFrame:NSMakeRect(16, 48, 448, 302)]
         autorelease];
     [box setTitle:@"Daemon Log"];
     [box setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [self addSubview:box];
 
     scrollView = [[[NSScrollView alloc]
-        initWithFrame:NSMakeRect(28, 76, 424, 204)] autorelease];
+        initWithFrame:NSMakeRect(28, 76, 424, 250)] autorelease];
     [scrollView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [scrollView setBorderType:NSBezelBorder];
     [scrollView setHasVerticalScroller:YES];

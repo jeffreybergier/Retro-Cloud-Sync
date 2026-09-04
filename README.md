@@ -4,14 +4,18 @@ Sync iCloud Email, Contacts, Calendars with Retro Macs 10.4+
 ## Contacts and Calendars preferences
 
 Open the application and choose **Sync** in the toolbar. Enter the Apple ID
-used for iCloud, an app-specific password, select Contacts and/or Calendars,
-and choose the desired sync interval. The password is stored in the user's
+used for iCloud, an app-specific password, select a sync mode for Contacts and
+Calendars, and choose the desired sync interval. The password is stored in the user's
 login Keychain and is never written to the configuration file or LaunchAgent.
 Saving or removing an account restarts an already-running background service
 so the new settings take effect.
 
 The Calendars selection is saved with the account settings for the calendar
 sync engine; the current daemon build only performs the Contacts mirror.
+The configuration stores `ContactsSyncMode` and `CalendarsSyncMode` as
+`Disabled`, `OneWay`, or `TwoWay`. Legacy `Enabled` and `CalendarsEnabled`
+booleans remain in the plist for compatibility. Unsupported modes are logged
+and are never treated as one-way sync by the daemon.
 
 When enabled, the daemon downloads contacts immediately after it starts and
 then at the configured interval. Its read-only mirror is stored at:
