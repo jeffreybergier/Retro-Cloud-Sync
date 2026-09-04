@@ -183,8 +183,11 @@
   BOOL enabled = [enabledButton_ state] == NSOnState;
   BOOL calendarsEnabled = [calendarsEnabledButton_ state] == NSOnState;
   BOOL passwordAlreadyExists = NO;
+  NSString *credentialWarning = nil;
   RCError credentialError;
-  RCServiceController *serviceController;
+  RCServiceController *serviceController =
+      [[[RCServiceController alloc] init] autorelease];
+  BOOL serviceWasRunning = [serviceController isServiceRunning];
 
   (void)sender;
   if ([username length] == 0 || minutes == 0 || minutes > 10080) {
@@ -209,7 +212,6 @@
     return;
   }
   if ([password length] != 0) {
-    serviceController = [[[RCServiceController alloc] init] autorelease];
     if (![serviceController prepareServiceFilesWithError:&errorMessage]) {
       [self setError:errorMessage];
       return;
@@ -232,8 +234,19 @@
   }
   if (![oldUsername isEqualToString:username] && [oldUsername length] != 0) {
     RCErrorClear(&credentialError);
-    RCICloudCredentialsRemove([oldUsername UTF8String], &credentialError);
+    if (!RCICloudCredentialsRemove([oldUsername UTF8String],
+                                   &credentialError)) {
+      credentialWarning = [NSString stringWithUTF8String:
+          credentialError.message];
+    }
   }
+  if (serviceWasRunning &&
+      (![serviceController stopServiceWithError:&errorMessage] ||
+       ![serviceController startServiceWithError:&errorMessage])) {
+    [self setError:errorMessage];
+    return;
+  }
+  if (credentialWarning != nil) [self setError:credentialWarning];
 }
 
 - (void)removeAccount:(id)sender;
@@ -241,6 +254,10 @@
   NSString *username = [usernameField_ stringValue];
   NSString *errorMessage = nil;
   RCError credentialError;
+  NSString *credentialWarning = nil;
+  RCServiceController *serviceController =
+      [[[RCServiceController alloc] init] autorelease];
+  BOOL serviceWasRunning = [serviceController isServiceRunning];
 
   (void)sender;
   if (![RCConfiguration saveContactsEnabled:NO calendarsEnabled:NO
@@ -251,14 +268,21 @@
   RCErrorClear(&credentialError);
   if ([username UTF8String] != NULL &&
       !RCICloudCredentialsRemove([username UTF8String], &credentialError)) {
-    [self setError:[NSString stringWithUTF8String:credentialError.message]];
-    return;
+    credentialWarning = [NSString stringWithUTF8String:
+        credentialError.message];
   }
   [enabledButton_ setState:NSOffState];
   [calendarsEnabledButton_ setState:NSOffState];
   [usernameField_ setStringValue:@""];
   [passwordField_ setStringValue:@""];
   [intervalField_ setIntValue:60];
+  if (serviceWasRunning &&
+      (![serviceController stopServiceWithError:&errorMessage] ||
+       ![serviceController startServiceWithError:&errorMessage])) {
+    [self setError:errorMessage];
+    return;
+  }
+  if (credentialWarning != nil) [self setError:credentialWarning];
 }
 
 @end

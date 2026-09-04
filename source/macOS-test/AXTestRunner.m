@@ -151,6 +151,7 @@ static BOOL ConfigurationMatches(NSString *path,
   NSString *supportDirectory;
   NSString *daemonPath;
   NSString *certificatePath;
+  NSString *syncClientPath;
   NSString *configurationPath;
   NSString *networkTestPath;
   NSString *launchAgentPath;
@@ -179,6 +180,8 @@ static BOOL ConfigurationMatches(NSString *path,
       kRCTestDaemonName];
   certificatePath = [supportDirectory
       stringByAppendingPathComponent:@"cacert.pem"];
+  syncClientPath = [supportDirectory
+      stringByAppendingPathComponent:@"SyncClient.plist"];
   configurationPath = [supportDirectory
       stringByAppendingPathComponent:@"Configuration.plist"];
   networkTestPath = [supportDirectory
@@ -284,7 +287,9 @@ static BOOL ConfigurationMatches(NSString *path,
     goto cleanup;
   }
   PrintPass(@"Start control pressed");
-  if (![self waitForStatus:@"Running" timeout:15.0] ||
+  /* Tiger's launchctl may defer a newly loaded job while performing its
+     internal Bonjour workaround. Allow the blocking Start action to finish. */
+  if (![self waitForStatus:@"Running" timeout:90.0] ||
       ![self waitForDaemonRunning:YES timeout:15.0]) {
     PrintFail(@"Daemon did not reach the running state");
     goto cleanup;
@@ -294,12 +299,13 @@ static BOOL ConfigurationMatches(NSString *path,
 
   if (![fileManager fileExistsAtPath:daemonPath] ||
       ![fileManager fileExistsAtPath:certificatePath] ||
+      ![fileManager fileExistsAtPath:syncClientPath] ||
       ![fileManager fileExistsAtPath:configurationPath] ||
       ![fileManager fileExistsAtPath:launchAgentPath]) {
-    PrintFail(@"Installed daemon, CA certificates, configuration, or LaunchAgent are missing");
+    PrintFail(@"Installed daemon, CA certificates, Sync Services description, configuration, or LaunchAgent are missing");
     goto cleanup;
   }
-  PrintPass(@"Daemon, CA certificates, configuration, and LaunchAgent are installed");
+  PrintPass(@"Daemon, CA certificates, Sync Services description, configuration, and LaunchAgent are installed");
   launchAgent = [NSDictionary dictionaryWithContentsOfFile:launchAgentPath];
   if (![[launchAgent objectForKey:@"StandardOutPath"]
           isEqualToString:daemonLogPath] ||

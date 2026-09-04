@@ -9,6 +9,7 @@ APP_SOURCES := main.m AppDelegate.m PreferencesWindowController.m \
 APP_SOURCE_PATHS := $(addprefix $(APP_SOURCE_ROOT)/,$(APP_SOURCES))
 APP_RESOURCES_ROOT := $(APP_SOURCE_ROOT)/Resources
 APP_INFO_PLIST := $(APP_RESOURCES_ROOT)/Info.plist
+APP_SYNC_CLIENT_PLIST := $(APP_RESOURCES_ROOT)/SyncClient.plist
 APP_INTERMEDIATES := $(APP_BUILD_ROOT)/Intermediates
 APP_BUNDLE := $(APP_BUILD_ROOT)/$(APP_NAME).app
 APP_ZIP := $(APP_BUILD_ROOT)/$(APP_NAME).zip
@@ -37,6 +38,7 @@ ALL_SOURCE_PATHS = $(APP_SOURCE_PATHS) $(DAEMON_SOURCE_PATHS) \
 app-config: validate-build daemon-config $(APP_ZIP)
 
 $(APP_ZIP): $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
+		$(APP_SYNC_CLIENT_PLIST) \
 		$(ALTIVECCORE_CA_CERTS) $(ALTIVECCOCOA_FONTS) \
 		$(ALTIVECCOCOA_FONT_LICENSE)
 	@echo " [4/5] Building app bundle and embedding daemon..."
@@ -51,6 +53,8 @@ $(APP_ZIP): $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
 	@chmod +x \
 		"$(APP_BUNDLE)/Contents/Library/LaunchServices/$(DAEMON_NAME)"
 	@cp "$(APP_INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"
+	@cp "$(APP_SYNC_CLIENT_PLIST)" \
+		"$(APP_BUNDLE)/Contents/Resources/SyncClient.plist"
 	@cp "$(ALTIVECCORE_CA_CERTS)" \
 		"$(APP_BUNDLE)/Contents/Resources/cacert.pem"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources/Fonts"

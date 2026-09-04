@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- com.apple.Contacts is Tiger SyncServices' data-class name; it is
+       distinct from Address Book.app's com.apple.AddressBook bundle ID. -->
+  <key>Type</key>
+  <string>server</string>
+  <key>DisplayName</key>
+  <string>Retro Cloud Sync Contacts</string>
+  <key>Entities</key>
+  <dict>
+    <key>com.apple.contacts.Contact</key>
+    <array>
+      <string>com.apple.syncservices.RecordEntityName</string>
+      <string>first name</string><string>last name</string>
+      <string>middle name</string><string>title</string><string>suffix</string>
+      <string>nickname</string><string>company name</string>
+      <string>display as company</string>
+      <string>department</string><string>job title</string>
+      <string>birthday</string><string>notes</string>
+      <string>phone numbers</string><string>primary phone number</string>
+      <string>email addresses</string><string>primary email address</string>
+      <string>street addresses</string><string>primary street address</string>
+      <string>URLs</string><string>primary URL</string>
+    </array>
+    <key>com.apple.contacts.Phone Number</key>
+    <array><string>com.apple.syncservices.RecordEntityName</string><string>type</string><string>label</string><string>value</string><string>contact</string></array>
+    <key>com.apple.contacts.Email Address</key>
+    <array><string>com.apple.syncservices.RecordEntityName</string><string>type</string><string>label</string><string>value</string><string>contact</string></array>
+    <key>com.apple.contacts.Street Address</key>
+    <array>
+      <string>com.apple.syncservices.RecordEntityName</string>
+      <string>type</string><string>label</string><string>street</string>
+      <string>city</string><string>state</string><string>postal code</string>
+      <string>country</string><string>country code</string><string>contact</string>
+    </array>
+    <key>com.apple.contacts.URL</key>
+    <array><string>com.apple.syncservices.RecordEntityName</string><string>type</string><string>label</string><string>value</string><string>contact</string></array>
+    <key>com.apple.contacts.Date</key>
+    <array><string>com.apple.syncservices.RecordEntityName</string><string>type</string><string>value</string><string>label</string><string>contact</string></array>
+    <key>com.apple.contacts.Group</key>
+    <array>
+      <string>com.apple.syncservices.RecordEntityName</string><string>name</string>
+      <string>members</string><string>parent groups</string>
+      <string>distribution phone numbers</string>
+      <string>distribution email addresses</string>
+      <string>distribution street addresses</string>
+    </array>
+    <key>com.apple.contacts.SmartGroup</key>
+    <array><string>com.apple.syncservices.RecordEntityName</string><string>name</string><string>criteria</string><string>tracksModification</string></array>
+    <key>com.apple.contacts.IM</key>
+    <array><string>com.apple.syncservices.RecordEntityName</string><string>type</string><string>service</string><string>user</string><string>label</string><string>contact</string></array>
+    <key>com.apple.contacts.Related Name</key>
+    <array><string>com.apple.syncservices.RecordEntityName</string><string>type</string><string>value</string><string>label</string><string>contact</string></array>
+  </dict>
+  <key>PushOnlyEntities</key>
+  <array>
+    <string>com.apple.contacts.Contact</string>
+    <string>com.apple.contacts.Date</string>
+    <string>com.apple.contacts.Email Address</string>
+    <string>com.apple.contacts.Group</string>
+    <string>com.apple.contacts.SmartGroup</string>
+    <string>com.apple.contacts.IM</string>
+    <string>com.apple.contacts.Phone Number</string>
+    <string>com.apple.contacts.Related Name</string>
+    <string>com.apple.contacts.Street Address</string>
+    <string>com.apple.contacts.URL</string>
+  </array>
+</dict>
+</plist>

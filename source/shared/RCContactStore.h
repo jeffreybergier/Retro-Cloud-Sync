@@ -14,6 +14,11 @@ typedef struct {
   long missingCount;
 } RCContactStoreStatistics;
 
+typedef int (*RCContactStoreContactCallback)(
+    long long contactIdentifier, const char *syncRecordIdentifier,
+    const unsigned char *rawVCard, size_t rawVCardLength,
+    void *context, RCError *error);
+
 RCContactStore *RCContactStoreOpen(const char *path, RCError *error);
 void RCContactStoreClose(RCContactStore *store);
 
@@ -49,5 +54,11 @@ int RCContactStoreFinishRun(RCContactStore *store, long long runIdentifier,
 int RCContactStoreGetStatistics(RCContactStore *store,
                                 RCContactStoreStatistics *statistics,
                                 RCError *error);
+int RCContactStoreForEachAvailableContact(
+    RCContactStore *store, RCContactStoreContactCallback callback,
+    void *context, RCError *error);
+int RCContactStoreCopyPropertySyncIdentifier(
+    RCContactStore *store, long long contactIdentifier, int propertyPosition,
+    char **syncRecordIdentifier, RCError *error);
 
 #endif

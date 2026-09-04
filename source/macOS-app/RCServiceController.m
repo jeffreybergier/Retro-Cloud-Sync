@@ -7,11 +7,12 @@
 
 #import "RCConfiguration.h"
 
-#include "RCICloudCredentials.h"
+#include <unistd.h>
 
 static NSString * const kRCServiceLabel = @"com.retrocloudsync.daemon";
 static NSString * const kRCDaemonName = @"RetroCloudSyncDaemon";
 static NSString * const kRCCertificateName = @"cacert.pem";
+static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
 
 @interface RCServiceController (Private)
 - (NSString *)applicationSupportDirectory;
@@ -21,6 +22,7 @@ static NSString * const kRCCertificateName = @"cacert.pem";
               output:(NSString **)output;
 - (int)runLaunchctlWithArguments:(NSArray *)arguments
                           output:(NSString **)output;
+- (BOOL)waitForServiceToStopWithTimeout:(NSTimeInterval)timeout;
 - (BOOL)ensureDirectoryExists:(NSString *)path error:(NSString **)errorMessage;
 - (BOOL)installServiceFilesWithError:(NSString **)errorMessage;
 @end
@@ -58,9 +60,6 @@ static NSString * const kRCCertificateName = @"cacert.pem";
 
 - (BOOL)startServiceWithError:(NSString **)errorMessage;
 {
-  NSString *output = nil;
-  int status;
-
   if ([self isServiceRunning]) {
     return YES;
   }
@@ -72,15 +71,18 @@ static NSString * const kRCCertificateName = @"cacert.pem";
   [self runLaunchctlWithArguments:
       [NSArray arrayWithObjects:@"unload", [self launchAgentPath], nil]
                            output:nil];
-  status = [self runLaunchctlWithArguments:
-      [NSArray arrayWithObjects:@"load", [self launchAgentPath], nil]
-                            output:&output];
-  if (status != 0) {
-    if (errorMessage != NULL) {
-      *errorMessage = [NSString stringWithFormat:@"Could not start daemon: %@",
-                                                   output];
+  {
+    NSString *output = nil;
+    int status = [self runLaunchctlWithArguments:
+        [NSArray arrayWithObjects:@"load", [self launchAgentPath], nil]
+                              output:&output];
+    if (status != 0) {
+      if (errorMessage != NULL) {
+        *errorMessage = [NSString stringWithFormat:@"Could not start daemon: %@",
+            [output length] != 0 ? output : @"launchctl returned an error"];
+      }
+      return NO;
     }
-    return NO;
   }
   return YES;
 }
@@ -106,6 +108,12 @@ static NSString * const kRCCertificateName = @"cacert.pem";
     if (errorMessage != NULL) {
       *errorMessage = [NSString stringWithFormat:@"Could not stop daemon: %@",
                                                    output];
+    }
+    return NO;
+  }
+  if (![self waitForServiceToStopWithTimeout:15.0]) {
+    if (errorMessage != NULL) {
+      *errorMessage = @"The daemon did not stop within 15 seconds";
     }
     return NO;
   }
@@ -213,10 +221,18 @@ static NSString * const kRCCertificateName = @"cacert.pem";
     return -1;
   }
 
-  if (output != NULL) {
-    *output = @"launchctl returned an error";
-  }
+  if (output != NULL) *output = @"launchctl returned an error";
   return [task terminationStatus];
+}
+
+- (BOOL)waitForServiceToStopWithTimeout:(NSTimeInterval)timeout;
+{
+  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+
+  while ([self isServiceRunning] && [deadline timeIntervalSinceNow] > 0.0) {
+    usleep(100000);
+  }
+  return ![self isServiceRunning];
 }
 
 - (BOOL)ensureDirectoryExists:(NSString *)path
@@ -261,6 +277,10 @@ static NSString * const kRCCertificateName = @"cacert.pem";
       pathForResource:@"cacert" ofType:@"pem"];
   NSString *installedCertificatePath = [[self applicationSupportDirectory]
       stringByAppendingPathComponent:kRCCertificateName];
+  NSString *embeddedSyncClientPath = [[NSBundle mainBundle]
+      pathForResource:@"SyncClient" ofType:@"plist"];
+  NSString *installedSyncClientPath = [[self applicationSupportDirectory]
+      stringByAppendingPathComponent:kRCSyncClientDescriptionName];
   NSString *launchAgentPath = [self launchAgentPath];
   NSString *launchAgentsDirectory =
       [launchAgentPath stringByDeletingLastPathComponent];
@@ -269,9 +289,9 @@ static NSString * const kRCCertificateName = @"cacert.pem";
   NSDictionary *launchAgent;
 
   if (![fileManager fileExistsAtPath:embeddedDaemonPath] ||
-      embeddedCertificatePath == nil) {
+      embeddedCertificatePath == nil || embeddedSyncClientPath == nil) {
     if (errorMessage != NULL) {
-      *errorMessage = @"The embedded daemon or CA certificates are missing";
+      *errorMessage = @"The embedded daemon, CA certificates, or Sync Services description is missing";
     }
     return NO;
   }
@@ -316,31 +336,20 @@ static NSString * const kRCCertificateName = @"cacert.pem";
     }
     return NO;
   }
-
-  {
-    NSDictionary *configuration =
-        [RCConfiguration loadConfigurationWithError:nil];
-    NSDictionary *contacts = [RCConfiguration
-        contactsConfigurationFromConfiguration:configuration];
-    NSString *username = [contacts objectForKey:@"Username"];
-    NSNumber *contactsEnabled = [contacts objectForKey:@"Enabled"];
-
-    if ([contactsEnabled boolValue] && [username length] != 0 &&
-        [username UTF8String] != NULL &&
-        RCICloudCredentialsExist([username UTF8String])) {
-      RCError credentialError;
-
-      RCErrorClear(&credentialError);
-      if (!RCICloudCredentialsRefreshAccess([username UTF8String],
-              [installedDaemonPath fileSystemRepresentation],
-              &credentialError)) {
-        if (errorMessage != NULL) {
-          *errorMessage = [NSString stringWithUTF8String:
-              credentialError.message];
-        }
-        return NO;
-      }
+  if ([fileManager fileExistsAtPath:installedSyncClientPath] &&
+      ![fileManager removeFileAtPath:installedSyncClientPath handler:nil]) {
+    if (errorMessage != NULL) {
+      *errorMessage = @"Could not replace the Sync Services client description";
     }
+    return NO;
+  }
+  if (![fileManager copyPath:embeddedSyncClientPath
+                      toPath:installedSyncClientPath
+                     handler:nil]) {
+    if (errorMessage != NULL) {
+      *errorMessage = @"Could not install the Sync Services client description";
+    }
+    return NO;
   }
 
   launchAgent = [NSDictionary dictionaryWithObjectsAndKeys:

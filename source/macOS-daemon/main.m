@@ -9,6 +9,7 @@
 #include "RCMailProxy.h"
 #include "RCCardDAVMirror.h"
 #include "RCICloudCredentials.h"
+#include "RCSyncServicesBridge.h"
 
 #include <Security/Security.h>
 #include <pthread.h>
@@ -24,6 +25,7 @@ static const char kRCNetworkTestURL[] =
     "crop=16.67%2C0%2C66.66%2C100&w=1440";
 static NSString * const kRCCertificateName = @"cacert.pem";
 static NSString * const kRCNetworkTestName = @"RetroCloudSyncNetworkTest.jpg";
+static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
 
 static const unsigned short kRCIMAPLocalPort = 1143;
 static const char kRCIMAPServer[] = "imap.mail.me.com";
@@ -45,6 +47,7 @@ typedef struct {
   char *serviceURL;
   char *databasePath;
   char *certificatePath;
+  char *syncClientDescriptionPath;
 } RCContactWorker;
 
 static char *RCCopyCString(const char *string)
@@ -78,6 +81,7 @@ static void *RCContactWorkerMain(void *context)
     RCCardDAVMirrorConfig mirrorConfig;
     RCCardDAVMirrorResult result;
     RCContactStoreStatistics statistics;
+    long syncRecordCount = 0;
     RCError error;
     struct timespec wakeTime;
     int shouldStop;
@@ -111,6 +115,15 @@ static void *RCContactWorkerMain(void *context)
               @"%ld available, %ld remotely absent",
               result.downloadedResourceCount, result.unchangedResourceCount,
               statistics.availableCount, statistics.missingCount);
+        RCErrorClear(&error);
+        if (RCSyncServicesPushContacts(store,
+            worker->syncClientDescriptionPath,
+            &syncRecordCount, &error)) {
+          NSLog(@"Sync Services export complete: %ld records",
+                syncRecordCount);
+        } else {
+          NSLog(@"Sync Services export failed: %s", error.message);
+        }
       } else {
         NSLog(@"Contacts sync failed: %s", error.message);
       }
@@ -143,6 +156,7 @@ static BOOL RCContactWorkerStart(RCContactWorker *worker,
   NSNumber *enabled;
   NSString *databasePath;
   NSString *certificatePath;
+  NSString *syncClientDescriptionPath;
 
   memset(worker, 0, sizeof(*worker));
   if (contacts == nil) {
@@ -170,14 +184,19 @@ static BOOL RCContactWorkerStart(RCContactWorker *worker,
       @"Contacts.sqlite"];
   certificatePath = [daemonDirectory stringByAppendingPathComponent:
       kRCCertificateName];
+  syncClientDescriptionPath = [daemonDirectory stringByAppendingPathComponent:
+      kRCSyncClientDescriptionName];
   worker->username = RCCopyCString([username UTF8String]);
   worker->serviceURL = RCCopyCString([serviceURL UTF8String]);
   worker->databasePath = RCCopyCString([databasePath fileSystemRepresentation]);
   worker->certificatePath = RCCopyCString(
       [certificatePath fileSystemRepresentation]);
+  worker->syncClientDescriptionPath = RCCopyCString(
+      [syncClientDescriptionPath fileSystemRepresentation]);
   worker->interval = [interval unsignedIntValue];
   if (worker->username == NULL || worker->serviceURL == NULL ||
-      worker->databasePath == NULL || worker->certificatePath == NULL) {
+      worker->databasePath == NULL || worker->certificatePath == NULL ||
+      worker->syncClientDescriptionPath == NULL) {
     NSLog(@"Could not allocate contact worker configuration");
     goto failed;
   }
@@ -197,6 +216,7 @@ failed:
   free(worker->serviceURL);
   free(worker->databasePath);
   free(worker->certificatePath);
+  free(worker->syncClientDescriptionPath);
   memset(worker, 0, sizeof(*worker));
   return NO;
 }
@@ -216,6 +236,7 @@ static void RCContactWorkerStop(RCContactWorker *worker)
   free(worker->serviceURL);
   free(worker->databasePath);
   free(worker->certificatePath);
+  free(worker->syncClientDescriptionPath);
   memset(worker, 0, sizeof(*worker));
 }
 
@@ -390,6 +411,19 @@ static BOOL DownloadNetworkTest(const char *executablePath)
   return YES;
 }
 
+static void *RCNetworkTestMain(void *context)
+{
+  char *executablePath = (char *)context;
+  NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
+  if (!DownloadNetworkTest(executablePath)) {
+    NSLog(@"Network diagnostic failed; continuing daemon operation");
+  }
+  free(executablePath);
+  [pool release];
+  return NULL;
+}
+
 int main(int argc, char *argv[])
 {
   NSAutoreleasePool *processPool;
@@ -402,6 +436,8 @@ int main(int argc, char *argv[])
   RCMailProxyConfig mailConfigs[2];
   RCMailProxy *mailProxy;
   RCContactWorker contactWorker;
+  pthread_t networkTestThread;
+  int networkTestStarted = 0;
 
   signal(SIGINT, HandleTerminationSignal);
   signal(SIGTERM, HandleTerminationSignal);
@@ -409,6 +445,25 @@ int main(int argc, char *argv[])
 
   processPool = [[NSAutoreleasePool alloc] init];
   memset(&contactWorker, 0, sizeof(contactWorker));
+  if (argc == 4 && strcmp(argv[1], "--export-contacts") == 0) {
+    RCContactStore *store;
+    RCError error;
+    long recordCount = 0;
+    int status;
+
+    RCErrorClear(&error);
+    store = RCContactStoreOpen(argv[2], &error);
+    status = store != NULL && RCSyncServicesPushContacts(
+        store, argv[3], &recordCount, &error);
+    if (status) {
+      NSLog(@"Sync Services export complete: %ld records", recordCount);
+    } else {
+      NSLog(@"Sync Services export failed: %s", error.message);
+    }
+    RCContactStoreClose(store);
+    [processPool release];
+    return status ? 0 : 1;
+  }
   if (argc == 3 && strcmp(argv[1], "--config") == 0) {
     configurationPath = [NSString stringWithUTF8String:argv[2]];
     if (configurationPath == nil) {
@@ -424,18 +479,13 @@ int main(int argc, char *argv[])
   } else if (argc == 1) {
     RCUseDefaultMailConfiguration(mailConfigs);
   } else {
-    NSLog(@"Usage: RetroCloudSyncDaemon [--config path]");
+    NSLog(@"Usage: RetroCloudSyncDaemon [--config path] | "
+           "--export-contacts database client-description");
     [processPool release];
     return 1;
   }
   if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
     NSLog(@"Could not initialize AltivecCore libcurl");
-    [configuration release];
-    [processPool release];
-    return 1;
-  }
-  if (!DownloadNetworkTest(argv[0])) {
-    curl_global_cleanup();
     [configuration release];
     [processPool release];
     return 1;
@@ -453,7 +503,24 @@ int main(int argc, char *argv[])
     return 1;
   }
   if (configuration != nil) {
-    RCContactWorkerStart(&contactWorker, configuration, daemonDirectory);
+    if (!RCContactWorkerStart(&contactWorker, configuration, daemonDirectory)) {
+      RCMailProxyStop(mailProxy);
+      curl_global_cleanup();
+      [configuration release];
+      [processPool release];
+      return 1;
+    }
+  }
+  {
+    char *networkTestExecutablePath = RCCopyCString(argv[0]);
+    if (networkTestExecutablePath != NULL &&
+        pthread_create(&networkTestThread, NULL, RCNetworkTestMain,
+                       networkTestExecutablePath) == 0) {
+      networkTestStarted = 1;
+    } else {
+      free(networkTestExecutablePath);
+      NSLog(@"Could not start the network diagnostic worker");
+    }
   }
   keepAlivePort = [[NSPort port] retain];
   [[NSRunLoop currentRunLoop] addPort:keepAlivePort
@@ -475,6 +542,7 @@ int main(int argc, char *argv[])
   [keepAlivePort release];
   RCContactWorkerStop(&contactWorker);
   RCMailProxyStop(mailProxy);
+  if (networkTestStarted) pthread_join(networkTestThread, NULL);
 
   NSLog(@"Retro Cloud Sync daemon stopped");
   curl_global_cleanup();

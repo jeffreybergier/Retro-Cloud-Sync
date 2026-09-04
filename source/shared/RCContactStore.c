@@ -86,6 +86,36 @@ static const char kRCSchema[] =
   "CREATE INDEX IF NOT EXISTS properties_contact "
     "ON contact_properties(contact_id, position);";
 
+static int RCMigrateSchema(RCContactStore *store, int version, RCError *error)
+{
+  if (version == 1) {
+    if (!RCExecute(store, "BEGIN IMMEDIATE", error) ||
+        !RCExecute(store,
+          "ALTER TABLE contacts ADD COLUMN sync_record_id TEXT;"
+          "ALTER TABLE contact_properties ADD COLUMN sync_record_id TEXT;"
+          "UPDATE contacts SET sync_record_id=lower(hex(randomblob(16))) "
+            "WHERE sync_record_id IS NULL;"
+          "UPDATE contact_properties SET sync_record_id=lower(hex(randomblob(16))) "
+            "WHERE sync_record_id IS NULL;"
+          "CREATE UNIQUE INDEX contacts_sync_record_id "
+            "ON contacts(sync_record_id);"
+          "CREATE UNIQUE INDEX properties_sync_record_id "
+            "ON contact_properties(sync_record_id);"
+          "UPDATE schema_version SET version=2;", error)) {
+      RCExecute(store, "ROLLBACK", NULL);
+      return 0;
+    }
+    if (!RCExecute(store, "COMMIT", error)) return 0;
+    version = 2;
+  }
+  if (version != 2) {
+    RCErrorSet(error, 1, "Unsupported contact database schema version %d",
+               version);
+    return 0;
+  }
+  return 1;
+}
+
 RCContactStore *RCContactStoreOpen(const char *path, RCError *error)
 {
   RCContactStore *store;
@@ -130,9 +160,7 @@ RCContactStore *RCContactStoreOpen(const char *path, RCError *error)
     version = sqlite3_column_int(statement, 0);
     sqlite3_finalize(statement);
   }
-  if (version != 1) {
-    RCErrorSet(error, 1, "Unsupported contact database schema version %d",
-               version);
+  if (!RCMigrateSchema(store, version, error)) {
     RCContactStoreClose(store);
     return NULL;
   }
@@ -238,8 +266,77 @@ int RCContactStoreMarkSeen(RCContactStore *store,
       RCStoreError(store, error, "Could not mark contact as seen");
 }
 
+static int RCCopyPreviousPropertyIdentifiers(
+    RCContactStore *store, long long contactIdentifier,
+    const RCVCardDocument *document, char ***identifiers, RCError *error)
+{
+  sqlite3_stmt *statement = NULL;
+  char **copies;
+  size_t propertyIndex;
+
+  *identifiers = NULL;
+  copies = (char **)calloc(document->propertyCount, sizeof(*copies));
+  if (copies == NULL && document->propertyCount != 0) {
+    RCErrorSet(error, 1, "Out of memory preserving contact property identities");
+    return 0;
+  }
+  if (!RCPrepare(store,
+      "SELECT sync_record_id FROM contact_properties "
+      "WHERE contact_id=? AND position=? "
+      "AND (group_name=? OR (group_name IS NULL AND ? IS NULL)) "
+      "AND property_name=?", &statement, error)) {
+    free(copies);
+    return 0;
+  }
+  for (propertyIndex = 0; propertyIndex < document->propertyCount;
+       propertyIndex++) {
+    int result;
+    const unsigned char *identifier;
+    sqlite3_bind_int64(statement, 1, contactIdentifier);
+    sqlite3_bind_int(statement, 2, document->properties[propertyIndex].position);
+    RCBindText(statement, 3, document->properties[propertyIndex].group);
+    RCBindText(statement, 4, document->properties[propertyIndex].group);
+    RCBindText(statement, 5, document->properties[propertyIndex].name);
+    result = sqlite3_step(statement);
+    if (result == SQLITE_ROW) {
+      identifier = sqlite3_column_text(statement, 0);
+      if (identifier != NULL) {
+        copies[propertyIndex] = strdup((const char *)identifier);
+        if (copies[propertyIndex] == NULL) {
+          sqlite3_finalize(statement);
+          while (propertyIndex != 0) free(copies[--propertyIndex]);
+          free(copies);
+          RCErrorSet(error, 1,
+                     "Out of memory preserving contact property identity");
+          return 0;
+        }
+      }
+    } else if (result != SQLITE_DONE) {
+      sqlite3_finalize(statement);
+      while (propertyIndex != 0) free(copies[--propertyIndex]);
+      free(copies);
+      return RCStoreError(store, error,
+                          "Could not inspect contact property identity");
+    }
+    sqlite3_reset(statement);
+    sqlite3_clear_bindings(statement);
+  }
+  sqlite3_finalize(statement);
+  *identifiers = copies;
+  return 1;
+}
+
+static void RCFreePropertyIdentifiers(char **identifiers, size_t count)
+{
+  size_t index;
+  if (identifiers == NULL) return;
+  for (index = 0; index < count; index++) free(identifiers[index]);
+  free(identifiers);
+}
+
 static int RCInsertProperties(RCContactStore *store, long long contactIdentifier,
-                              const RCVCardDocument *document, RCError *error)
+                              const RCVCardDocument *document,
+                              char **syncIdentifiers, RCError *error)
 {
   sqlite3_stmt *propertyStatement = NULL;
   sqlite3_stmt *parameterStatement = NULL;
@@ -249,8 +346,9 @@ static int RCInsertProperties(RCContactStore *store, long long contactIdentifier
 
   if (!RCPrepare(store,
       "INSERT INTO contact_properties(contact_id, position, group_name, "
-      "property_name, decoded_value, original_value, value_type) "
-      "VALUES(?, ?, ?, ?, ?, ?, ?)", &propertyStatement, error) ||
+      "property_name, decoded_value, original_value, value_type, sync_record_id) "
+      "VALUES(?, ?, ?, ?, ?, ?, ?, COALESCE(?, lower(hex(randomblob(16)))))",
+      &propertyStatement, error) ||
       !RCPrepare(store,
       "INSERT INTO contact_parameters(property_id, position, parameter_name, "
       "parameter_value) VALUES(?, ?, ?, ?)", &parameterStatement, error) ||
@@ -270,6 +368,7 @@ static int RCInsertProperties(RCContactStore *store, long long contactIdentifier
     RCBindText(propertyStatement, 5, property->decodedValue);
     RCBindText(propertyStatement, 6, property->originalValue);
     RCBindText(propertyStatement, 7, property->valueType);
+    RCBindText(propertyStatement, 8, syncIdentifiers[propertyIndex]);
     if (sqlite3_step(propertyStatement) != SQLITE_DONE) goto database_error;
     propertyIdentifier = sqlite3_last_insert_rowid(store->database);
     sqlite3_reset(propertyStatement);
@@ -317,13 +416,15 @@ int RCContactStoreSaveVCard(RCContactStore *store,
 {
   sqlite3_stmt *statement = NULL;
   long long contactIdentifier = 0;
+  char **propertySyncIdentifiers = NULL;
   int result;
   int success = 0;
 
   if (!RCExecute(store, "BEGIN IMMEDIATE", error)) return 0;
   if (!RCPrepare(store,
-      "INSERT OR IGNORE INTO contacts(collection_id, href, raw_vcard, seen_run_id) "
-      "VALUES(?, ?, ?, ?)", &statement, error)) goto finished;
+      "INSERT OR IGNORE INTO contacts(collection_id, href, raw_vcard, seen_run_id, "
+      "sync_record_id) VALUES(?, ?, ?, ?, lower(hex(randomblob(16))))",
+      &statement, error)) goto finished;
   sqlite3_bind_int64(statement, 1, collectionIdentifier);
   RCBindText(statement, 2, href);
   sqlite3_bind_blob(statement, 3, rawVCard, (int)rawVCardLength, SQLITE_TRANSIENT);
@@ -372,6 +473,9 @@ int RCContactStoreSaveVCard(RCContactStore *store,
   contactIdentifier = sqlite3_column_int64(statement, 0);
   sqlite3_finalize(statement);
   statement = NULL;
+  if (!RCCopyPreviousPropertyIdentifiers(store, contactIdentifier, document,
+                                         &propertySyncIdentifiers, error))
+    goto finished;
   if (!RCPrepare(store, "DELETE FROM contact_properties WHERE contact_id=?",
                  &statement, error)) goto finished;
   sqlite3_bind_int64(statement, 1, contactIdentifier);
@@ -381,13 +485,16 @@ int RCContactStoreSaveVCard(RCContactStore *store,
   }
   sqlite3_finalize(statement);
   statement = NULL;
-  if (!RCInsertProperties(store, contactIdentifier, document, error)) goto finished;
+  if (!RCInsertProperties(store, contactIdentifier, document,
+                          propertySyncIdentifiers, error)) goto finished;
   success = RCExecute(store, "COMMIT", error);
+  RCFreePropertyIdentifiers(propertySyncIdentifiers, document->propertyCount);
   return success;
 
 finished:
   sqlite3_finalize(statement);
   RCExecute(store, "ROLLBACK", NULL);
+  RCFreePropertyIdentifiers(propertySyncIdentifiers, document->propertyCount);
   return 0;
 }
 
@@ -463,4 +570,81 @@ int RCContactStoreGetStatistics(RCContactStore *store,
   sqlite3_finalize(statement);
   return result == SQLITE_ROW ? 1 : RCStoreError(store, error,
                                                   "Could not read statistics");
+}
+
+int RCContactStoreForEachAvailableContact(
+    RCContactStore *store, RCContactStoreContactCallback callback,
+    void *context, RCError *error)
+{
+  sqlite3_stmt *statement = NULL;
+  int result;
+
+  if (store == NULL || callback == NULL) {
+    RCErrorSet(error, 1, "Contact enumeration parameters are missing");
+    return 0;
+  }
+  if (!RCPrepare(store,
+      "SELECT id, sync_record_id, raw_vcard FROM contacts "
+      "WHERE remote_missing=0 ORDER BY id", &statement, error)) return 0;
+  while ((result = sqlite3_step(statement)) == SQLITE_ROW) {
+    long long identifier = sqlite3_column_int64(statement, 0);
+    const char *syncIdentifier =
+        (const char *)sqlite3_column_text(statement, 1);
+    const unsigned char *rawVCard =
+        (const unsigned char *)sqlite3_column_blob(statement, 2);
+    int rawVCardLength = sqlite3_column_bytes(statement, 2);
+
+    if (syncIdentifier == NULL || rawVCard == NULL || rawVCardLength <= 0 ||
+        !callback(identifier, syncIdentifier, rawVCard,
+                  (size_t)rawVCardLength, context, error)) {
+      if (error != NULL && error->code == 0) {
+        RCErrorSet(error, 1, "Could not export cached contact");
+      }
+      sqlite3_finalize(statement);
+      return 0;
+    }
+  }
+  sqlite3_finalize(statement);
+  return result == SQLITE_DONE ? 1 :
+      RCStoreError(store, error, "Could not enumerate cached contacts");
+}
+
+int RCContactStoreCopyPropertySyncIdentifier(
+    RCContactStore *store, long long contactIdentifier, int propertyPosition,
+    char **syncRecordIdentifier, RCError *error)
+{
+  sqlite3_stmt *statement = NULL;
+  int result;
+  const unsigned char *identifier;
+
+  if (syncRecordIdentifier == NULL) {
+    RCErrorSet(error, 1, "Property identity output is missing");
+    return 0;
+  }
+  *syncRecordIdentifier = NULL;
+  if (!RCPrepare(store,
+      "SELECT sync_record_id FROM contact_properties "
+      "WHERE contact_id=? AND position=?", &statement, error)) return 0;
+  sqlite3_bind_int64(statement, 1, contactIdentifier);
+  sqlite3_bind_int(statement, 2, propertyPosition);
+  result = sqlite3_step(statement);
+  if (result == SQLITE_ROW) {
+    identifier = sqlite3_column_text(statement, 0);
+    if (identifier != NULL) {
+      *syncRecordIdentifier = strdup((const char *)identifier);
+    }
+  }
+  sqlite3_finalize(statement);
+  if (result != SQLITE_ROW || *syncRecordIdentifier == NULL) {
+    if (result == SQLITE_ROW) {
+      RCErrorSet(error, 1, "Out of memory copying contact property identity");
+      return 0;
+    }
+    if (result == SQLITE_DONE) {
+      RCErrorSet(error, 1, "Could not find contact property identity");
+      return 0;
+    }
+    return RCStoreError(store, error, "Could not read contact property identity");
+  }
+  return 1;
 }

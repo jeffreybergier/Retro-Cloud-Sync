@@ -33,6 +33,30 @@ static int RCScalar(const char *path, const char *sql)
   return value;
 }
 
+typedef struct {
+  RCContactStore *store;
+  int contacts;
+  int propertiesWithIdentity;
+} RCExportTestContext;
+
+static int RCInspectExport(long long contactIdentifier,
+                           const char *syncRecordIdentifier,
+                           const unsigned char *rawVCard,
+                           size_t rawVCardLength, void *opaqueContext,
+                           RCError *error)
+{
+  RCExportTestContext *context = (RCExportTestContext *)opaqueContext;
+  char *propertyIdentifier = NULL;
+  if (syncRecordIdentifier == NULL || syncRecordIdentifier[0] == '\0' ||
+      rawVCard == NULL || rawVCardLength == 0 ||
+      !RCContactStoreCopyPropertySyncIdentifier(context->store,
+          contactIdentifier, 0, &propertyIdentifier, error)) return 0;
+  context->contacts++;
+  if (propertyIdentifier[0] != '\0') context->propertiesWithIdentity++;
+  free(propertyIdentifier);
+  return 1;
+}
+
 int main(void)
 {
   static const unsigned char vcard[] =
@@ -54,6 +78,7 @@ int main(void)
   RCVCardDocument document;
   RCContactStore *store = NULL;
   RCContactStoreStatistics statistics;
+  RCExportTestContext exportContext;
   long long collectionIdentifier;
   long long run;
   int current = 0;
@@ -104,9 +129,21 @@ int main(void)
     RCErrorSet(&error, 1, "seen contact was not restored to available state");
     goto failed;
   }
+  memset(&exportContext, 0, sizeof(exportContext));
+  exportContext.store = store;
+  if (!RCContactStoreForEachAvailableContact(store, RCInspectExport,
+                                             &exportContext, &error) ||
+      exportContext.contacts != 1 ||
+      exportContext.propertiesWithIdentity != 1) {
+    RCErrorSet(&error, 1, "sync export identities were not available");
+    goto failed;
+  }
   RCContactStoreClose(store);
   store = NULL;
   if (RCScalar(path, "SELECT COUNT(*) FROM contacts") != 1 ||
+      RCScalar(path, "SELECT version FROM schema_version") != 2 ||
+      RCScalar(path, "SELECT COUNT(*) FROM contacts WHERE sync_record_id IS NULL") != 0 ||
+      RCScalar(path, "SELECT COUNT(*) FROM contact_properties WHERE sync_record_id IS NULL") != 0 ||
       RCScalar(path, "SELECT COUNT(*) FROM contact_properties") !=
           (int)document.propertyCount ||
       RCScalar(path, "SELECT COUNT(*) FROM contact_value_parts") != 12) {

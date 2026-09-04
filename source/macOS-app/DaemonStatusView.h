@@ -11,7 +11,6 @@
  @private
   NSButton *serviceButton_;
   NSTextField *statusLabel_;
-  NSTextField *detailLabel_;
   NSTimer *statusTimer_;
   RCServiceController *serviceController_;
   BOOL serviceRunning_;

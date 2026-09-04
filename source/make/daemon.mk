@@ -3,7 +3,7 @@
 DAEMON_NAME := RetroCloudSyncDaemon
 DAEMON_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-daemon
 DAEMON_BUILD_ROOT := $(BUILD_ROOT)/macOS-daemon/$(CONFIG)
-DAEMON_SOURCES := main.m RCMailProxy.c
+DAEMON_SOURCES := main.m RCSyncServicesBridge.m RCMailProxy.c
 DAEMON_SOURCE_PATHS := $(addprefix $(DAEMON_SOURCE_ROOT)/,$(DAEMON_SOURCES))
 DAEMON_INTERMEDIATES := $(DAEMON_BUILD_ROOT)/Intermediates
 DAEMON_OUTPUT := $(DAEMON_BUILD_ROOT)/$(DAEMON_NAME)
@@ -19,8 +19,9 @@ DAEMON_I386_OBJECTS := $(addprefix \
 	$(DAEMON_INTERMEDIATES)/i386/,$(DAEMON_OBJECT_NAMES))
 DAEMON_COMPILE_FLAGS := -I$(ALTIVECCORE_ROOT)/include
 DAEMON_LINK_FLAGS := -framework Foundation -framework CoreFoundation \
-	-framework SystemConfiguration -framework Security -lxml2 \
-	-lobjc -lgcc_s.10.4
+		-framework SystemConfiguration -framework Security -lxml2 \
+		-framework SyncServices \
+		-lobjc -lgcc_s.10.4
 
 daemon-config: validate-build shared-config $(DAEMON_OUTPUT)
 
