@@ -13,14 +13,12 @@
 + (BOOL)saveConfiguration:(NSDictionary *)configuration
                      error:(NSString **)errorMessage;
 + (BOOL)ensureConfigurationExistsWithError:(NSString **)errorMessage;
-+ (BOOL)validateConfiguration:(NSDictionary *)configuration
-                         error:(NSString **)errorMessage;
 + (NSDictionary *)contactsConfigurationFromConfiguration:
     (NSDictionary *)configuration;
 + (BOOL)saveContactsSyncMode:(NSString *)contactsSyncMode
            calendarsSyncMode:(NSString *)calendarsSyncMode
                      username:(NSString *)username
-                 syncInterval:(unsigned int)syncInterval
+                 syncInterval:(long long)syncInterval
                         error:(NSString **)errorMessage;
 + (BOOL)saveMailProxy:(NSDictionary *)mailProxy
                  error:(NSString **)errorMessage;

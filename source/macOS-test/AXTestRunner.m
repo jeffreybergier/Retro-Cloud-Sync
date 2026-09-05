@@ -31,6 +31,8 @@ static NSString * const kRCTestDaemonName = @"RetroCloudSyncDaemon";
 - (BOOL)launchApplication;
 - (BOOL)pressControlNamed:(NSString *)name segment:(NSInteger)segment;
 - (BOOL)runTaskAtPath:(NSString *)path arguments:(NSArray *)arguments;
+- (BOOL)replaceTextInField:(AXUIElementRef)field withString:(NSString *)string;
+- (BOOL)testMailFieldValidationAtPath:(NSString *)path;
 - (BOOL)setMailFieldsWithIMAPLocalPort:(NSString *)imapLocalPort
                             imapServer:(NSString *)imapServer
                         imapServerPort:(NSString *)imapServerPort
@@ -216,6 +218,7 @@ static BOOL ConfigurationMatches(NSString *path,
     goto cleanup;
   }
   PrintPass(@"Mail preferences panel opened");
+  mailSettingsChanged = YES;
   if (![self setMailFieldsWithIMAPLocalPort:@"2143"
                                   imapServer:@"imap.example.com"
                               imapServerPort:@"1993"
@@ -226,11 +229,6 @@ static BOOL ConfigurationMatches(NSString *path,
     goto cleanup;
   }
   PrintPass(@"All mail preferences fields were found and changed");
-  if (![self pressControlNamed:@"Save" segment:0]) {
-    PrintFail(@"Changed mail preferences could not be saved");
-    goto cleanup;
-  }
-  mailSettingsChanged = YES;
   if (![self waitForConfigurationAtPath:configurationPath
                           imapLocalPort:2143
                              imapServer:@"imap.example.com"
@@ -242,7 +240,7 @@ static BOOL ConfigurationMatches(NSString *path,
     PrintFail(@"Changed mail preferences were not saved");
     goto cleanup;
   }
-  PrintPass(@"Changed mail preferences were saved");
+  PrintPass(@"Changed mail preferences were saved before leaving the field");
 
   if (![self setMailFieldsWithIMAPLocalPort:@"1143"
                                   imapServer:@"imap.mail.me.com"
@@ -250,7 +248,6 @@ static BOOL ConfigurationMatches(NSString *path,
                                smtpLocalPort:@"1587"
                                   smtpServer:@"smtp.mail.me.com"
                               smtpServerPort:@"587"] ||
-      ![self pressControlNamed:@"Save" segment:0] ||
       ![self waitForConfigurationAtPath:configurationPath
                           imapLocalPort:1143
                              imapServer:@"imap.mail.me.com"
@@ -263,11 +260,17 @@ static BOOL ConfigurationMatches(NSString *path,
     goto cleanup;
   }
   PrintPass(@"Default mail preferences were restored and saved");
+  if (![self testMailFieldValidationAtPath:configurationPath]) {
+    PrintFail(@"Mail field autosave or validation on editing end failed");
+    goto cleanup;
+  }
+  PrintPass(@"Invalid mail values save immediately and alert only on editing end");
   mailSettingsChanged = NO;
   if (![self pressControlNamed:@"Sync" segment:0] ||
       ![self waitForElementNamed:@"iCloud Account" timeout:5.0] ||
-      ![self waitForElementNamed:@"Contacts Sync" timeout:5.0] ||
-      ![self waitForElementNamed:@"Calendar Sync" timeout:5.0] ||
+      ![self waitForElementNamed:@"Contacts" timeout:5.0] ||
+      ![self waitForElementNamed:@"Calendar" timeout:5.0] ||
+      ![self waitForElementNamed:@"Interval" timeout:5.0] ||
       ![self waitForElementNamed:@"Apple ID:" timeout:5.0] ||
       ![self waitForElementNamed:@"Password:" timeout:5.0] ||
       ![self waitForElementNamed:@"Disabled" timeout:5.0] ||
@@ -284,6 +287,138 @@ static BOOL ConfigurationMatches(NSString *path,
     goto cleanup;
   }
   PrintPass(@"Sync preferences panel opened with account controls");
+  {
+    AXUIElementRef accountTitle = [self findElementNamed:@"iCloud Account"
+        inElement:windowElement_ depth:0];
+    AXUIElementRef accountBox = NULL;
+    AXUIElementRef accountButton = NULL;
+
+    if (accountTitle != NULL) {
+      accountBox = (AXUIElementRef)CopyAXAttribute(accountTitle,
+          kAXParentAttribute);
+      CFRelease(accountTitle);
+    }
+    if (accountBox != NULL) {
+      accountButton = [self findElementNamed:@"Save"
+          inElement:accountBox depth:0];
+      if (accountButton == NULL) {
+        accountButton = [self findElementNamed:@"Reset"
+            inElement:accountBox depth:0];
+      }
+      CFRelease(accountBox);
+    }
+    if (accountButton == NULL) {
+      PrintFail(@"Save/Reset is missing from the iCloud Account box");
+      goto cleanup;
+    }
+    CFRelease(accountButton);
+  }
+  PrintPass(@"Credential Save/Reset button is inside the iCloud Account box");
+  {
+    AXUIElementRef slider = [self findElementWithRole:kAXSliderRole
+        inElement:windowElement_ depth:0];
+    NSDictionary *original =
+        [NSDictionary dictionaryWithContentsOfFile:configurationPath];
+    BOOL passed = slider != NULL && original != nil;
+    unsigned int index;
+    int startingValues[] = {2, 299};
+    int expectedMinutes[] = {1, 300};
+    CFStringRef actions[] = {kAXDecrementAction, kAXIncrementAction};
+
+    for (index = 0; passed && index < 2; index++) {
+      NSDate *deadline;
+      BOOL saved = NO;
+
+      if (AXUIElementSetAttributeValue(slider, kAXValueAttribute,
+              (CFTypeRef)[NSNumber numberWithInt:startingValues[index]]) !=
+              kAXErrorSuccess ||
+          AXUIElementPerformAction(slider, actions[index]) != kAXErrorSuccess) {
+        passed = NO;
+        break;
+      }
+      deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+      while ([deadline timeIntervalSinceNow] > 0.0) {
+        NSDictionary *current = [NSDictionary
+            dictionaryWithContentsOfFile:configurationPath];
+
+        if ([[[current objectForKey:@"Contacts"]
+                objectForKey:@"SyncIntervalSeconds"] intValue] ==
+                expectedMinutes[index] * 60) {
+          saved = YES;
+          break;
+        }
+        usleep(100000);
+      }
+      passed = saved && [self waitForElementNamed:
+          index == 0 ? @"1 minute" : @"300 minutes" timeout:5.0];
+    }
+    if (slider != NULL) CFRelease(slider);
+    if (original == nil ||
+        ![original writeToFile:configurationPath atomically:YES]) {
+      PrintFail(@"Could not restore configuration after the interval slider test");
+      goto cleanup;
+    }
+    if (!passed || ![self pressControlNamed:@"Sync" segment:0]) {
+      PrintFail(@"Interval slider endpoints, readout, or autosave failed");
+      goto cleanup;
+    }
+  }
+  PrintPass(@"Interval slider saves 1 and 300 minutes with matching readouts");
+  [self captureScreenshotNamed:@"sync-panel.png"];
+  {
+    NSDictionary *original =
+        [NSDictionary dictionaryWithContentsOfFile:configurationPath];
+    NSDictionary *contacts = [original objectForKey:@"Contacts"];
+
+    if ([[contacts objectForKey:@"Username"] isEqualToString:@""] &&
+        [[contacts objectForKey:@"ContactsSyncMode"]
+            isEqualToString:@"Disabled"]) {
+      BOOL saved = NO;
+      BOOL restored = NO;
+      NSDate *deadline;
+
+      if ([self pressControlNamed:@"1-way Sync: iCloud → Address Book"
+                         segment:0]) {
+        deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+        while ([deadline timeIntervalSinceNow] > 0.0) {
+          NSDictionary *current = [NSDictionary
+              dictionaryWithContentsOfFile:configurationPath];
+          NSDictionary *currentContacts = [current objectForKey:@"Contacts"];
+
+          if ([[currentContacts objectForKey:@"ContactsSyncMode"]
+                  isEqualToString:@"OneWay"] &&
+              [[currentContacts objectForKey:@"Username"]
+                  isEqualToString:@""]) {
+            saved = YES;
+            break;
+          }
+          usleep(100000);
+        }
+      }
+      if (saved && [self pressControlNamed:@"Disabled" segment:0]) {
+        deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+        while ([deadline timeIntervalSinceNow] > 0.0) {
+          NSDictionary *current = [NSDictionary
+              dictionaryWithContentsOfFile:configurationPath];
+
+          if ([current isEqualToDictionary:original]) {
+            restored = YES;
+            break;
+          }
+          usleep(100000);
+        }
+      }
+      if (!restored && ![original writeToFile:configurationPath atomically:YES]) {
+        PrintFail(@"Could not restore configuration after the sync radio test");
+        goto cleanup;
+      }
+      if (!saved || !restored) {
+        PrintFail(@"Sync radio changes were not saved with a blank Apple ID");
+        goto cleanup;
+      }
+      PrintPass(@"Sync radio changes save with a blank Apple ID and restore correctly");
+    }
+  }
   if (![self pressControlNamed:@"Daemon" segment:0] ||
       ![self waitForStatus:@"Stopped" timeout:5.0]) {
     PrintFail(@"Could not return to the Daemon preferences panel");
@@ -326,11 +461,20 @@ static BOOL ConfigurationMatches(NSString *path,
   }
   PrintPass(@"LaunchAgent writes to the per-user daemon log");
   if (![self pressControlNamed:@"Log" segment:0] ||
-      ![self waitForElementNamed:@"Daemon Log" timeout:5.0] ||
-      ![self waitForElementNamed:daemonLogPath timeout:5.0] ||
+      ![self waitForElementNamed:@"Reveal" timeout:5.0] ||
       ![self waitForElementNamed:@"Refresh" timeout:5.0]) {
     PrintFail(@"Could not open or inspect the daemon Log preferences panel");
     goto cleanup;
+  }
+  {
+    NSMutableArray *logTextAreas = [NSMutableArray array];
+
+    [self collectElementsWithRole:kAXTextAreaRole inElement:windowElement_
+                           depth:0 results:logTextAreas];
+    if ([logTextAreas count] != 1) {
+      PrintFail(@"The daemon Log preferences panel is missing its log text area");
+      goto cleanup;
+    }
   }
   PrintPass(@"Daemon Log preferences panel opened");
   if (![self pressControlNamed:@"Daemon" segment:0] ||
@@ -397,7 +541,6 @@ cleanup:
                             smtpLocalPort:@"1587"
                                smtpServer:@"smtp.mail.me.com"
                            smtpServerPort:@"587"];
-    [self pressControlNamed:@"Save" segment:0];
   }
   if (!succeeded) {
     [self captureScreenshotNamed:@"failure.png"];
@@ -760,6 +903,158 @@ cleanup:
   return [task terminationStatus] == 0;
 }
 
+- (BOOL)replaceTextInField:(AXUIElementRef)field withString:(NSString *)string;
+{
+  CFTypeRef value;
+  CFRange range;
+  AXValueRef selection;
+  AXError error;
+  ProcessSerialNumber process;
+  unsigned int index;
+  NSDate *deadline;
+
+  if (GetProcessForPID([applicationTask_ processIdentifier], &process) != noErr) {
+    return NO;
+  }
+  SetFrontProcess(&process);
+  if (AXUIElementSetAttributeValue(field, kAXFocusedAttribute,
+                                  kCFBooleanTrue) != kAXErrorSuccess) return NO;
+  value = CopyAXAttribute(field, kAXValueAttribute);
+  if (value == NULL || CFGetTypeID(value) != CFStringGetTypeID()) {
+    if (value != NULL) CFRelease(value);
+    return NO;
+  }
+  range = CFRangeMake(0, CFStringGetLength((CFStringRef)value));
+  CFRelease(value);
+  selection = AXValueCreate(kAXValueCFRangeType, &range);
+  error = AXUIElementSetAttributeValue(field, kAXSelectedTextRangeAttribute,
+                                      selection);
+  CFRelease(selection);
+  if (error != kAXErrorSuccess) return NO;
+  /* AX value setters bypass NSTextField's user-edit notifications on Tiger. */
+  for (index = 0; index < MAX([string length], 1); index++) {
+    /* Virtual key codes for the test Mac's US keyboard layout. */
+    static const char characters[] = "abcdefghijklmnopqrstuvwxyz0123456789./:";
+    static const CGKeyCode keyCodes[] = {
+      0, 11, 8, 2, 14, 3, 5, 4, 34, 38, 40, 37, 46,
+      45, 31, 35, 12, 15, 1, 17, 32, 9, 13, 7, 16, 6,
+      29, 18, 19, 20, 21, 23, 22, 26, 28, 25, 47, 44, 41
+    };
+    unichar character = [string length] != 0 ? [string characterAtIndex:index] : 0;
+    CGKeyCode keyCode = 51;
+
+    if (character != 0) {
+      const char *position = character < 128 ? strchr(characters, character) : NULL;
+      if (position == NULL) return NO;
+      keyCode = keyCodes[position - characters];
+    }
+    if (character == ':') CGPostKeyboardEvent(0, 56, true);
+    CGPostKeyboardEvent(character, keyCode, true);
+    CGPostKeyboardEvent(character, keyCode, false);
+    if (character == ':') CGPostKeyboardEvent(0, 56, false);
+    usleep(50000);
+  }
+  deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+  while ([deadline timeIntervalSinceNow] > 0.0) {
+    BOOL matches;
+
+    value = CopyAXAttribute(field, kAXValueAttribute);
+    matches = AXValueMatchesString(value, string);
+    if (value != NULL) CFRelease(value);
+    if (matches) return YES;
+    usleep(100000);
+  }
+  return NO;
+}
+
+- (BOOL)testMailFieldValidationAtPath:(NSString *)path;
+{
+  NSMutableArray *fields = [NSMutableArray array];
+  unsigned int indexes[] = {0, 2, 1};
+  NSArray *values = [NSArray arrayWithObjects:@"80", @"65536",
+      @"https://imap.example.com", nil];
+  NSArray *keys = [NSArray arrayWithObjects:@"LocalPort", @"RemotePort",
+      @"RemoteHost", nil];
+  NSArray *originals = [NSArray arrayWithObjects:@"1143", @"993",
+      @"imap.mail.me.com", nil];
+  NSArray *messages = [NSArray arrayWithObjects:
+      @"The IMAP local port must be a whole number from 1024 to 65535.",
+      @"The IMAP server port must be a whole number from 1 to 65535.",
+      @"The IMAP server must be a hostname without whitespace, a scheme, a port, or a path.",
+      nil];
+  unsigned int index;
+
+  [self collectElementsWithRole:kAXTextFieldRole inElement:windowElement_
+                         depth:0 results:fields];
+  if ([fields count] != 6) return NO;
+  for (index = 0; index < 3; index++) {
+    AXUIElementRef field = (AXUIElementRef)[fields objectAtIndex:indexes[index]];
+    AXUIElementRef message = NULL;
+    AXUIElementRef okay;
+    NSDate *deadline;
+    BOOL saved = NO;
+
+    if (![self replaceTextInField:field withString:[values objectAtIndex:index]]) {
+      return NO;
+    }
+    deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+    while ([deadline timeIntervalSinceNow] > 0.0) {
+      NSDictionary *configuration = [NSDictionary dictionaryWithContentsOfFile:path];
+      id value = [[[configuration objectForKey:@"MailProxy"] objectForKey:@"IMAP"]
+          objectForKey:[keys objectAtIndex:index]];
+
+      if ([[value description] isEqualToString:[values objectAtIndex:index]]) {
+        saved = YES;
+        break;
+      }
+      usleep(100000);
+    }
+    okay = [self findElementNamed:@"OK" inElement:applicationElement_ depth:0];
+    if (!saved || okay != NULL) {
+      if (okay != NULL) CFRelease(okay);
+      return NO;
+    }
+    /* Tab ends editing and presents the validation sheet. */
+    CGPostKeyboardEvent(0, 48, true);
+    CGPostKeyboardEvent(0, 48, false);
+    deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+    while ([deadline timeIntervalSinceNow] > 0.0 && message == NULL) {
+      message = [self findElementNamed:[messages objectAtIndex:index]
+          inElement:applicationElement_ depth:0];
+      if (message == NULL) usleep(100000);
+    }
+    if (message == NULL) return NO;
+    CFRelease(message);
+    {
+      AXUIElementRef sheet = [self findElementWithRole:kAXSheetRole
+          inElement:windowElement_ depth:0];
+
+      if (sheet == NULL) return NO;
+      CFRelease(sheet);
+    }
+    if (index == 0) [self captureScreenshotNamed:@"mail-validation-sheet.png"];
+    okay = [self findElementNamed:@"OK" inElement:applicationElement_ depth:0];
+    if (okay == NULL) return NO;
+    AXUIElementPerformAction(okay, kAXPressAction);
+    CFRelease(okay);
+    deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
+    while ([deadline timeIntervalSinceNow] > 0.0) {
+      AXUIElementRef sheet = [self findElementWithRole:kAXSheetRole
+          inElement:windowElement_ depth:0];
+
+      if (sheet == NULL) break;
+      CFRelease(sheet);
+      usleep(100000);
+    }
+    if (![self replaceTextInField:field withString:[originals objectAtIndex:index]]) {
+      return NO;
+    }
+  }
+  return [self waitForConfigurationAtPath:path imapLocalPort:1143
+      imapServer:@"imap.mail.me.com" imapServerPort:993 smtpLocalPort:1587
+      smtpServer:@"smtp.mail.me.com" smtpServerPort:587 timeout:5.0];
+}
+
 - (BOOL)setMailFieldsWithIMAPLocalPort:(NSString *)imapLocalPort
                             imapServer:(NSString *)imapServer
                         imapServerPort:(NSString *)imapServerPort
@@ -781,9 +1076,8 @@ cleanup:
     return NO;
   }
   for (index = 0; index < [values count]; index++) {
-    if (AXUIElementSetAttributeValue(
-            (AXUIElementRef)[fields objectAtIndex:index], kAXValueAttribute,
-            (CFTypeRef)[values objectAtIndex:index]) != kAXErrorSuccess) {
+    if (![self replaceTextInField:(AXUIElementRef)[fields objectAtIndex:index]
+                       withString:[values objectAtIndex:index]]) {
       return NO;
     }
   }

@@ -8,7 +8,6 @@
 @interface DaemonLogView : NSView {
  @private
   NSTextView *textView_;
-  NSTextField *pathLabel_;
   NSTimer *refreshTimer_;
   NSString *logPath_;
 }

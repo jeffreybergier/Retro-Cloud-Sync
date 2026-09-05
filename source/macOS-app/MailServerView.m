@@ -8,15 +8,22 @@
 #import "RCConfiguration.h"
 
 @interface MailServerView (Private)
-- (NSTextField *)newEditableFieldWithFrame:(NSRect)frame;
-- (void)addLabel:(NSString *)text frame:(NSRect)frame;
+- (NSTextField *)newEditableFieldWithFrame:(NSRect)frame
+                          autoresizingMask:(unsigned int)mask;
+- (void)addLabel:(NSString *)text
+           frame:(NSRect)frame
+autoresizingMask:(unsigned int)mask;
 - (void)addServiceBox:(NSString *)title
-                    y:(float)y
+                 frame:(NSRect)boxFrame
        localPortField:(NSTextField **)localPortField
           serverField:(NSTextField **)serverField
       serverPortField:(NSTextField **)serverPortField;
 - (void)saveSettings:(id)sender;
+- (NSString *)validationErrorForField:(NSTextField *)field;
 - (void)showError:(NSString *)message;
+- (void)alertDidEnd:(NSAlert *)alert
+        returnCode:(NSInteger)returnCode
+       contextInfo:(void *)contextInfo;
 @end
 
 @implementation MailServerView
@@ -25,23 +32,33 @@
 {
   self = [super initWithFrame:frame];
   if (self != nil) {
-    NSButton *saveButton;
+    NSRect incomingBoxFrame;
+    NSRect outgoingBoxFrame;
+    const float edgePadding = 8;
+    const float boxSpacing = 8;
+    const float boxHeight = 78;
 
-    [self addServiceBox:@"Incoming Mail (IMAP)" y:252
+    incomingBoxFrame = NSMakeRect(
+        edgePadding, NSHeight(frame) - edgePadding - boxHeight,
+        NSWidth(frame) - (edgePadding * 2), boxHeight);
+    outgoingBoxFrame = NSMakeRect(
+        edgePadding, NSMinY(incomingBoxFrame) - boxSpacing - boxHeight,
+        NSWidth(frame) - (edgePadding * 2), boxHeight);
+
+    [self addServiceBox:@"Incoming Mail (IMAP)" frame:incomingBoxFrame
          localPortField:&imapLocalPortField_
             serverField:&imapServerField_
         serverPortField:&imapServerPortField_];
-    [self addServiceBox:@"Outgoing Mail (SMTP)" y:146
+    [self addServiceBox:@"Outgoing Mail (SMTP)" frame:outgoingBoxFrame
          localPortField:&smtpLocalPortField_
             serverField:&smtpServerField_
         serverPortField:&smtpServerPortField_];
-    saveButton = [[[NSButton alloc]
-        initWithFrame:NSMakeRect(380, 12, 88, 26)] autorelease];
-    [saveButton setTitle:@"Save"];
-    [saveButton setBezelStyle:NSRoundedBezelStyle];
-    [saveButton setTarget:self];
-    [saveButton setAction:@selector(saveSettings:)];
-    [self addSubview:saveButton];
+    [imapLocalPortField_ setNextKeyView:imapServerField_];
+    [imapServerField_ setNextKeyView:imapServerPortField_];
+    [imapServerPortField_ setNextKeyView:smtpLocalPortField_];
+    [smtpLocalPortField_ setNextKeyView:smtpServerField_];
+    [smtpServerField_ setNextKeyView:smtpServerPortField_];
+    [smtpServerPortField_ setNextKeyView:imapLocalPortField_];
 
     [self reloadSettings];
   }
@@ -50,13 +67,31 @@
 
 - (void)dealloc;
 {
+  [imapLocalPortField_ setDelegate:nil];
+  [imapServerField_ setDelegate:nil];
+  [imapServerPortField_ setDelegate:nil];
+  [smtpLocalPortField_ setDelegate:nil];
+  [smtpServerField_ setDelegate:nil];
+  [smtpServerPortField_ setDelegate:nil];
   [imapLocalPortField_ release];
   [imapServerField_ release];
   [imapServerPortField_ release];
   [smtpLocalPortField_ release];
   [smtpServerField_ release];
   [smtpServerPortField_ release];
+  [pendingErrorMessage_ release];
   [super dealloc];
+}
+
+- (void)viewDidMoveToWindow;
+{
+  [super viewDidMoveToWindow];
+  if ([self window] != nil && pendingErrorMessage_ != nil) {
+    NSString *message = [pendingErrorMessage_ autorelease];
+
+    pendingErrorMessage_ = nil;
+    [self showError:message];
+  }
 }
 
 - (void)reloadSettings;
@@ -85,19 +120,49 @@
 
 - (void)showError:(NSString *)message;
 {
-  NSRunAlertPanel(@"Retro Cloud Sync",
-      message != nil ? message : @"Unknown error", @"OK", nil, nil);
+  NSAlert *alert;
+
+  if (showingError_) return;
+  if ([self window] == nil) {
+    [pendingErrorMessage_ release];
+    pendingErrorMessage_ = [(message != nil ? message : @"Unknown error") copy];
+    return;
+  }
+  showingError_ = YES;
+  alert = [[[NSAlert alloc] init] autorelease];
+  [alert setMessageText:@"Retro Cloud Sync"];
+  [alert setInformativeText:message != nil ? message : @"Unknown error"];
+  [alert addButtonWithTitle:@"OK"];
+  [alert beginSheetModalForWindow:[self window]
+                   modalDelegate:self
+                  didEndSelector:@selector(alertDidEnd:returnCode:contextInfo:)
+                     contextInfo:NULL];
 }
 
-- (NSTextField *)newEditableFieldWithFrame:(NSRect)frame;
+- (void)alertDidEnd:(NSAlert *)alert
+        returnCode:(NSInteger)returnCode
+       contextInfo:(void *)contextInfo;
+{
+  (void)alert;
+  (void)returnCode;
+  (void)contextInfo;
+  showingError_ = NO;
+}
+
+- (NSTextField *)newEditableFieldWithFrame:(NSRect)frame
+                          autoresizingMask:(unsigned int)mask;
 {
   NSTextField *field = [[NSTextField alloc] initWithFrame:frame];
 
+  [field setAutoresizingMask:mask];
+  [field setDelegate:self];
   [self addSubview:field];
   return field;
 }
 
-- (void)addLabel:(NSString *)text frame:(NSRect)frame;
+- (void)addLabel:(NSString *)text
+           frame:(NSRect)frame
+autoresizingMask:(unsigned int)mask;
 {
   NSTextField *label = [[[NSTextField alloc] initWithFrame:frame] autorelease];
 
@@ -107,27 +172,119 @@
   [label setSelectable:NO];
   [label setAlignment:NSRightTextAlignment];
   [label setStringValue:text];
+  [label setAutoresizingMask:mask];
   [self addSubview:label];
 }
 
 - (void)addServiceBox:(NSString *)title
-                    y:(float)y
+                 frame:(NSRect)boxFrame
        localPortField:(NSTextField **)localPortField
           serverField:(NSTextField **)serverField
       serverPortField:(NSTextField **)serverPortField;
 {
+  float innerLeft;
+  float innerRight;
+  float firstFieldY;
+  float secondFieldY;
+  float fieldX;
+  float portFieldX;
+  float portLabelX;
+  const float boxPadding = 8;
+  const float controlSpacing = 4;
+  const float boxTitleHeight = 14;
+  const float labelWidth = 70;
+  const float localPortWidth = 72;
+  const float portLabelWidth = 44;
+  const float serverPortWidth = 58;
+  const float fieldHeight = 22;
+  const float labelHeight = 20;
   NSBox *box = [[[NSBox alloc]
-      initWithFrame:NSMakeRect(16, y, 448, 98)] autorelease];
+      initWithFrame:boxFrame] autorelease];
+
+  innerLeft = NSMinX(boxFrame) + boxPadding;
+  innerRight = NSMaxX(boxFrame) - boxPadding;
+  firstFieldY = NSMaxY(boxFrame) - boxTitleHeight - boxPadding - fieldHeight;
+  secondFieldY = firstFieldY - controlSpacing - fieldHeight;
+  fieldX = innerLeft + labelWidth + controlSpacing;
+  portFieldX = innerRight - serverPortWidth;
+  portLabelX = portFieldX - controlSpacing - portLabelWidth;
 
   [box setTitle:title];
+  [box setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   [self addSubview:box];
 
-  [self addLabel:@"Local port:" frame:NSMakeRect(30, y + 49, 78, 20)];
-  *localPortField = [self newEditableFieldWithFrame:NSMakeRect(116, y + 47, 72, 22)];
-  [self addLabel:@"Server:" frame:NSMakeRect(30, y + 20, 78, 20)];
-  *serverField = [self newEditableFieldWithFrame:NSMakeRect(116, y + 18, 220, 22)];
-  [self addLabel:@"Port:" frame:NSMakeRect(340, y + 20, 44, 20)];
-  *serverPortField = [self newEditableFieldWithFrame:NSMakeRect(390, y + 18, 58, 22)];
+  [self addLabel:@"Local port:"
+           frame:NSMakeRect(innerLeft, firstFieldY - 3,
+                            labelWidth, labelHeight)
+autoresizingMask:NSViewMinYMargin];
+  *localPortField = [self newEditableFieldWithFrame:
+      NSMakeRect(fieldX, firstFieldY, localPortWidth, fieldHeight)
+      autoresizingMask:NSViewMinYMargin];
+  [self addLabel:@"Server:"
+           frame:NSMakeRect(innerLeft, secondFieldY - 3,
+                            labelWidth, labelHeight)
+autoresizingMask:NSViewMinYMargin];
+  *serverField = [self newEditableFieldWithFrame:
+      NSMakeRect(fieldX, secondFieldY,
+                 portLabelX - controlSpacing - fieldX, fieldHeight)
+      autoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+  [self addLabel:@"Port:"
+           frame:NSMakeRect(portLabelX, secondFieldY - 3,
+                            portLabelWidth, labelHeight)
+autoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
+  *serverPortField = [self newEditableFieldWithFrame:
+      NSMakeRect(portFieldX, secondFieldY, serverPortWidth, fieldHeight)
+      autoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
+}
+
+- (void)controlTextDidChange:(NSNotification *)notification;
+{
+  [self saveSettings:[notification object]];
+}
+
+- (void)controlTextDidEndEditing:(NSNotification *)notification;
+{
+  NSString *errorMessage = [self validationErrorForField:[notification object]];
+
+  if (errorMessage != nil) [self showError:errorMessage];
+}
+
+- (NSString *)validationErrorForField:(NSTextField *)field;
+{
+  NSString *service = (field == imapLocalPortField_ ||
+      field == imapServerField_ || field == imapServerPortField_) ?
+      @"IMAP" : @"SMTP";
+  NSString *value = [field stringValue];
+
+  if (field == imapServerField_ || field == smtpServerField_) {
+    NSMutableCharacterSet *invalidCharacters =
+        [[[NSCharacterSet whitespaceAndNewlineCharacterSet] mutableCopy]
+            autorelease];
+
+    [invalidCharacters addCharactersInString:@"/:\\"];
+    if ([value length] == 0 || [value UTF8String] == NULL ||
+        [value rangeOfCharacterFromSet:invalidCharacters].location != NSNotFound) {
+      return [NSString stringWithFormat:
+          @"The %@ server must be a hostname without whitespace, a scheme, "
+           "a port, or a path.", service];
+    }
+  } else {
+    BOOL local = field == imapLocalPortField_ || field == smtpLocalPortField_;
+    int minimum = local ? 1024 : 1;
+    int port;
+    NSScanner *scanner = [NSScanner scannerWithString:
+        [value stringByTrimmingCharactersInSet:
+            [NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+
+    [scanner setCharactersToBeSkipped:nil];
+    if (![scanner scanInt:&port] || ![scanner isAtEnd] ||
+        port < minimum || port > 65535) {
+      return [NSString stringWithFormat:
+          @"The %@ %@ port must be a whole number from %d to 65535.",
+          service, local ? @"local" : @"server", minimum];
+    }
+  }
+  return nil;
 }
 
 - (void)saveSettings:(id)sender;

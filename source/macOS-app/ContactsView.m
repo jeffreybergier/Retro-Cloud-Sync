@@ -12,10 +12,36 @@
 
 #include <string.h>
 
+/* Continuous actions update the readout; commit once dragging has finished. */
+@interface RCIntervalSlider : NSSlider {
+  BOOL trackingInterval_;
+}
+- (BOOL)isTrackingInterval;
+@end
+
+@implementation RCIntervalSlider
+- (BOOL)isTrackingInterval;
+{
+  return trackingInterval_;
+}
+
+- (void)mouseDown:(NSEvent *)event;
+{
+  trackingInterval_ = YES;
+  [super mouseDown:event];
+  trackingInterval_ = NO;
+  [self sendAction:[self action] to:[self target]];
+}
+@end
+
 @interface ContactsView (Private)
 - (void)addLabel:(NSString *)text frame:(NSRect)frame;
-- (void)saveSettings:(id)sender;
-- (void)removeAccount:(id)sender;
+- (void)accountButtonClicked:(id)sender;
+- (void)updateAccountButton;
+- (void)syncSettingsChanged:(id)sender;
+- (void)intervalChanged:(id)sender;
+- (void)updateIntervalLabel;
+- (BOOL)saveSyncSettings;
 - (void)setError:(NSString *)message;
 @end
 
@@ -28,13 +54,12 @@
     NSBox *accountBox;
     NSBox *contactsBox;
     NSBox *calendarsBox;
+    NSBox *intervalBox;
     NSButtonCell *radioCell;
-    NSButton *saveButton;
-    NSButton *removeButton;
-    NSTextField *helpLabel;
     NSRect accountBoxFrame;
     NSRect contactsBoxFrame;
     NSRect calendarsBoxFrame;
+    NSRect intervalBoxFrame;
     float innerLeft;
     float innerRight;
     float accountTop;
@@ -44,18 +69,21 @@
     const float boxTitleHeight = 14;
     const float accountBoxHeight = 104;
     const float syncBoxHeight = 98;
+    const float intervalBoxHeight = 70;
     const float actionButtonHeight = 26;
 
     accountBoxFrame = NSMakeRect(
         edgePadding, NSHeight(frame) - edgePadding - accountBoxHeight,
         NSWidth(frame) - (edgePadding * 2), accountBoxHeight);
-    calendarsBoxFrame = NSMakeRect(
-        edgePadding,
-        edgePadding + actionButtonHeight + edgePadding,
-        NSWidth(frame) - (edgePadding * 2), syncBoxHeight);
     contactsBoxFrame = NSMakeRect(
-        edgePadding, NSMaxY(calendarsBoxFrame) + edgePadding,
+        edgePadding, NSMinY(accountBoxFrame) - edgePadding - syncBoxHeight,
         NSWidth(frame) - (edgePadding * 2), syncBoxHeight);
+    calendarsBoxFrame = NSMakeRect(
+        edgePadding, NSMinY(contactsBoxFrame) - edgePadding - syncBoxHeight,
+        NSWidth(frame) - (edgePadding * 2), syncBoxHeight);
+    intervalBoxFrame = NSMakeRect(
+        edgePadding, NSMinY(calendarsBoxFrame) - edgePadding - intervalBoxHeight,
+        NSWidth(frame) - (edgePadding * 2), intervalBoxHeight);
     innerLeft = NSMinX(accountBoxFrame) + boxPadding;
     innerRight = NSMaxX(accountBoxFrame) - boxPadding;
     accountTop = NSMaxY(accountBoxFrame) - boxTitleHeight - boxPadding;
@@ -68,15 +96,48 @@
 
     contactsBox = [[[NSBox alloc]
         initWithFrame:contactsBoxFrame] autorelease];
-    [contactsBox setTitle:@"Contacts Sync"];
+    [contactsBox setTitle:@"Contacts"];
     [contactsBox setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [self addSubview:contactsBox];
 
     calendarsBox = [[[NSBox alloc]
         initWithFrame:calendarsBoxFrame] autorelease];
-    [calendarsBox setTitle:@"Calendar Sync"];
+    [calendarsBox setTitle:@"Calendar"];
     [calendarsBox setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [self addSubview:calendarsBox];
+
+    intervalBox = [[[NSBox alloc]
+        initWithFrame:intervalBoxFrame] autorelease];
+    [intervalBox setTitle:@"Interval"];
+    [intervalBox setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+    [self addSubview:intervalBox];
+
+    intervalLabel_ = [[NSTextField alloc]
+        initWithFrame:[[intervalBox contentView]
+            convertRect:NSMakeRect(innerRight - 120,
+                NSMaxY(intervalBoxFrame) - boxTitleHeight - boxPadding - 20,
+                120, 20) fromView:self]];
+    [intervalLabel_ setBezeled:NO];
+    [intervalLabel_ setDrawsBackground:NO];
+    [intervalLabel_ setEditable:NO];
+    [intervalLabel_ setSelectable:NO];
+    [intervalLabel_ setAlignment:NSRightTextAlignment];
+    [intervalLabel_ setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
+    [[intervalBox contentView] addSubview:intervalLabel_];
+
+    intervalSlider_ = [[RCIntervalSlider alloc]
+        initWithFrame:[[intervalBox contentView]
+            convertRect:NSMakeRect(innerLeft,
+                NSMinY(intervalBoxFrame) + boxPadding,
+                innerRight - innerLeft, 20) fromView:self]];
+    [intervalSlider_ setMinValue:1];
+    [intervalSlider_ setMaxValue:300];
+    [intervalSlider_ setAltIncrementValue:1];
+    [intervalSlider_ setContinuous:YES];
+    [intervalSlider_ setTarget:self];
+    [intervalSlider_ setAction:@selector(intervalChanged:)];
+    [intervalSlider_ setAutoresizingMask:NSViewWidthSizable | NSViewMaxYMargin];
+    [[intervalBox contentView] addSubview:intervalSlider_];
 
     radioCell = [[[NSButtonCell alloc] init] autorelease];
     [radioCell setButtonType:NSRadioButton];
@@ -101,6 +162,8 @@
     [[contactsSyncMatrix_ cellAtRow:2 column:0]
         setTitle:@"2-way Sync: iCloud ↔ Address Book"];
     [[contactsSyncMatrix_ cellAtRow:2 column:0] setEnabled:NO];
+    [contactsSyncMatrix_ setTarget:self];
+    [contactsSyncMatrix_ setAction:@selector(syncSettingsChanged:)];
     [self addSubview:contactsSyncMatrix_];
 
     radioCell = [[[NSButtonCell alloc] init] autorelease];
@@ -126,10 +189,12 @@
     [[calendarsSyncMatrix_ cellAtRow:2 column:0]
         setTitle:@"2-way Sync: iCloud ↔ iCal"];
     [[calendarsSyncMatrix_ cellAtRow:2 column:0] setEnabled:NO];
+    [calendarsSyncMatrix_ setTarget:self];
+    [calendarsSyncMatrix_ setAction:@selector(syncSettingsChanged:)];
     [self addSubview:calendarsSyncMatrix_];
 
     [self addLabel:@"Apple ID:"
-             frame:NSMakeRect(innerLeft, accountTop - 20, 70, 20)];
+             frame:NSMakeRect(innerLeft, accountTop - 24, 70, 20)];
     usernameField_ = [[NSTextField alloc]
         initWithFrame:NSMakeRect(innerLeft + 70 + controlSpacing,
                                  accountTop - 22,
@@ -137,10 +202,11 @@
                                  22)];
     [usernameField_
         setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+    [usernameField_ setDelegate:self];
     [self addSubview:usernameField_];
 
     [self addLabel:@"Password:"
-             frame:NSMakeRect(innerLeft, accountTop - 46, 70, 20)];
+             frame:NSMakeRect(innerLeft, accountTop - 50, 70, 20)];
     passwordField_ = [[NSSecureTextField alloc]
         initWithFrame:NSMakeRect(innerLeft + 70 + controlSpacing,
                                  accountTop - 48,
@@ -150,57 +216,25 @@
         setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [self addSubview:passwordField_];
 
-    [self addLabel:@"Sync every:"
-             frame:NSMakeRect(innerLeft, accountTop - 72, 70, 20)];
-    intervalField_ = [[NSTextField alloc]
-        initWithFrame:NSMakeRect(innerLeft + 70 + controlSpacing,
-                                 accountTop - 74, 64, 22)];
-    [intervalField_ setAutoresizingMask:NSViewMinYMargin];
-    [self addSubview:intervalField_];
-    helpLabel = [[[NSTextField alloc]
-        initWithFrame:NSMakeRect(innerLeft + 70 + controlSpacing + 64 +
-                                     controlSpacing,
-                                 accountTop - 72,
-                                 innerRight - innerLeft - 70 -
-                                     (controlSpacing * 2) - 64,
-                                 20)] autorelease];
-    [helpLabel setBezeled:NO];
-    [helpLabel setDrawsBackground:NO];
-    [helpLabel setEditable:NO];
-    [helpLabel setSelectable:NO];
-    [helpLabel setStringValue:@"minutes"];
-    [helpLabel setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
-    [self addSubview:helpLabel];
-
-    removeButton = [[[NSButton alloc]
-        initWithFrame:NSMakeRect(NSWidth(frame) - edgePadding - 80 -
-                                     controlSpacing - 104,
-                                 edgePadding, 104, 26)] autorelease];
-    [removeButton setTitle:@"Remove Account"];
-    [removeButton setBezelStyle:NSRoundedBezelStyle];
-    [removeButton setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
-    [removeButton setTarget:self];
-    [removeButton setAction:@selector(removeAccount:)];
-    [self addSubview:removeButton];
-
-    saveButton = [[[NSButton alloc]
-        initWithFrame:NSMakeRect(NSWidth(frame) - edgePadding - 80,
-                                 edgePadding, 80, 26)] autorelease];
-    [saveButton setTitle:@"Save"];
-    [saveButton setBezelStyle:NSRoundedBezelStyle];
-    [saveButton setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
-    [saveButton setTarget:self];
-    [saveButton setAction:@selector(saveSettings:)];
-    [self addSubview:saveButton];
+    accountButton_ = [[NSButton alloc]
+        initWithFrame:[[accountBox contentView]
+            convertRect:NSMakeRect(innerRight - 80, accountTop - 76,
+                                   80, actionButtonHeight)
+               fromView:self]];
+    [accountButton_ setTitle:@"Save"];
+    [accountButton_ setBezelStyle:NSRoundedBezelStyle];
+    [accountButton_ setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
+    [accountButton_ setTarget:self];
+    [accountButton_ setAction:@selector(accountButtonClicked:)];
+    [[accountBox contentView] addSubview:accountButton_];
 
     /* Tiger does not reliably infer key order for programmatic views. */
     [contactsSyncMatrix_ setNextKeyView:calendarsSyncMatrix_];
-    [calendarsSyncMatrix_ setNextKeyView:usernameField_];
     [usernameField_ setNextKeyView:passwordField_];
-    [passwordField_ setNextKeyView:intervalField_];
-    [intervalField_ setNextKeyView:removeButton];
-    [removeButton setNextKeyView:saveButton];
-    [saveButton setNextKeyView:contactsSyncMatrix_];
+    [passwordField_ setNextKeyView:accountButton_];
+    [accountButton_ setNextKeyView:contactsSyncMatrix_];
+    [calendarsSyncMatrix_ setNextKeyView:intervalSlider_];
+    [intervalSlider_ setNextKeyView:usernameField_];
 
     [self reloadSettings];
   }
@@ -209,11 +243,14 @@
 
 - (void)dealloc;
 {
+  [usernameField_ setDelegate:nil];
   [contactsSyncMatrix_ release];
   [calendarsSyncMatrix_ release];
   [usernameField_ release];
   [passwordField_ release];
-  [intervalField_ release];
+  [intervalSlider_ release];
+  [intervalLabel_ release];
+  [accountButton_ release];
   [super dealloc];
 }
 
@@ -239,9 +276,6 @@
   NSString *username;
   NSString *contactsSyncMode;
   NSString *calendarsSyncMode;
-  char *password = NULL;
-  size_t passwordLength = 0;
-  RCError credentialError;
 
   if (configuration == nil) {
     [self setError:errorMessage];
@@ -265,23 +299,12 @@
         [[contacts objectForKey:@"CalendarsEnabled"] boolValue])) ? 1 : 0
                                    column:0];
   [usernameField_ setStringValue:username];
-  [intervalField_ setIntValue:
-      [[contacts objectForKey:@"SyncIntervalSeconds"] intValue] / 60];
-  RCErrorClear(&credentialError);
-  if ([username length] != 0 && [username UTF8String] != NULL &&
-      RCICloudCredentialsCopyPassword([username UTF8String], &password,
-                                      &passwordLength, &credentialError)) {
-    NSString *passwordString = [[[NSString alloc]
-        initWithBytes:password
-               length:passwordLength
-             encoding:NSUTF8StringEncoding] autorelease];
-
-    [passwordField_ setStringValue:
-        passwordString != nil ? passwordString : @""];
-  } else {
-    [passwordField_ setStringValue:@""];
-  }
-  RCICloudCredentialsClearPassword(password, passwordLength);
+  syncIntervalSeconds_ =
+      [[contacts objectForKey:@"SyncIntervalSeconds"] longLongValue];
+  [intervalSlider_ setDoubleValue:syncIntervalSeconds_ / 60.0];
+  [self updateIntervalLabel];
+  [passwordField_ setStringValue:@""];
+  [self updateAccountButton];
 }
 
 - (void)setError:(NSString *)message;
@@ -290,125 +313,150 @@
       message != nil ? message : @"Unknown error", @"OK", nil, nil);
 }
 
-- (void)saveSettings:(id)sender;
+- (void)updateAccountButton;
+{
+  NSString *username = [[usernameField_ stringValue]
+      stringByTrimmingCharactersInSet:
+          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+
+  hasCredentials_ = RCICloudCredentialsExist([username UTF8String]);
+  [accountButton_ setTitle:hasCredentials_ ? @"Reset" : @"Save"];
+  [passwordField_ setEnabled:!hasCredentials_];
+  if (hasCredentials_) [passwordField_ setStringValue:@""];
+}
+
+- (void)controlTextDidChange:(NSNotification *)notification;
+{
+  if ([notification object] == usernameField_) {
+    [self updateAccountButton];
+  }
+}
+
+- (void)controlTextDidEndEditing:(NSNotification *)notification;
+{
+  if ([notification object] == usernameField_) {
+    [self syncSettingsChanged:[notification object]];
+  }
+}
+
+- (void)syncSettingsChanged:(id)sender;
+{
+  (void)sender;
+  if (![self saveSyncSettings]) [self reloadSettings];
+}
+
+- (void)updateIntervalLabel;
+{
+  long long minutes = syncIntervalSeconds_ / 60;
+
+  [intervalLabel_ setStringValue:[NSString stringWithFormat:
+      minutes == 1 ? @"%lld minute" : @"%lld minutes", minutes]];
+}
+
+- (void)intervalChanged:(id)sender;
+{
+  int minutes = (int)([intervalSlider_ doubleValue] + 0.5);
+
+  (void)sender;
+  [intervalSlider_ setIntValue:minutes];
+  syncIntervalSeconds_ = (long long)minutes * 60;
+  [self updateIntervalLabel];
+  if (![intervalSlider_ isTrackingInterval]) [self syncSettingsChanged:sender];
+}
+
+- (BOOL)saveSyncSettings;
 {
   NSString *errorMessage = nil;
   NSDictionary *configuration;
   NSDictionary *oldContacts;
-  NSString *oldUsername;
   NSString *username = [[usernameField_ stringValue]
       stringByTrimmingCharactersInSet:
           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-  NSString *password = [passwordField_ stringValue];
-  unsigned int minutes = (unsigned int)[intervalField_ intValue];
   NSString *contactsSyncMode = [contactsSyncMatrix_ selectedRow] == 2 ?
       @"TwoWay" : ([contactsSyncMatrix_ selectedRow] == 1 ?
           @"OneWay" : @"Disabled");
   NSString *calendarsSyncMode = [calendarsSyncMatrix_ selectedRow] == 2 ?
       @"TwoWay" : ([calendarsSyncMatrix_ selectedRow] == 1 ?
           @"OneWay" : @"Disabled");
-  BOOL passwordAlreadyExists = NO;
-  NSString *credentialWarning = nil;
-  RCError credentialError;
   RCServiceController *serviceController =
       [[[RCServiceController alloc] init] autorelease];
   BOOL serviceWasRunning = [serviceController isServiceRunning];
 
-  (void)sender;
-  if ([username length] == 0 || minutes == 0 || minutes > 10080) {
-    [self setError:@"Enter an Apple ID and a sync interval from 1 to 10080 minutes."];
-    return;
-  }
   configuration = [RCConfiguration
       loadConfigurationWithError:&errorMessage];
   if (configuration == nil) {
     [self setError:errorMessage];
-    return;
+    return NO;
   }
   oldContacts = [RCConfiguration
       contactsConfigurationFromConfiguration:configuration];
-  oldUsername = [oldContacts objectForKey:@"Username"];
-  RCErrorClear(&credentialError);
-  if ([username UTF8String] != NULL) {
-    passwordAlreadyExists = RCICloudCredentialsExist([username UTF8String]);
+  if ([[oldContacts objectForKey:@"Username"] isEqualToString:username] &&
+      [[oldContacts objectForKey:@"ContactsSyncMode"]
+          isEqualToString:contactsSyncMode] &&
+      [[oldContacts objectForKey:@"CalendarsSyncMode"]
+          isEqualToString:calendarsSyncMode] &&
+      [[oldContacts objectForKey:@"SyncIntervalSeconds"] longLongValue] ==
+          syncIntervalSeconds_) {
+    return YES;
   }
-  if ([password length] == 0 && !passwordAlreadyExists) {
-    [self setError:@"Enter an app-specific password for this Apple ID."];
+  if (![RCConfiguration saveContactsSyncMode:contactsSyncMode
+      calendarsSyncMode:calendarsSyncMode username:username
+      syncInterval:syncIntervalSeconds_ error:&errorMessage]) {
+    [self setError:errorMessage];
+    return NO;
+  }
+  if (serviceWasRunning &&
+      (![serviceController stopServiceWithError:&errorMessage] ||
+       ![serviceController startServiceWithError:&errorMessage])) {
+    [self setError:errorMessage];
+    return NO;
+  }
+  return YES;
+}
+
+- (void)accountButtonClicked:(id)sender;
+{
+  NSString *username = [[usernameField_ stringValue]
+      stringByTrimmingCharactersInSet:
+          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  NSString *password = [passwordField_ stringValue];
+  NSString *errorMessage = nil;
+  RCError credentialError;
+  RCServiceController *serviceController =
+      [[[RCServiceController alloc] init] autorelease];
+
+  (void)sender;
+  /* Refresh a stale button without turning a Save click into a deletion. */
+  if (hasCredentials_ != RCICloudCredentialsExist([username UTF8String])) {
+    [self updateAccountButton];
     return;
   }
-  if ([password length] != 0) {
+  RCErrorClear(&credentialError);
+  if (hasCredentials_) {
+    if (!RCICloudCredentialsRemove([username UTF8String], &credentialError)) {
+      [self setError:[NSString stringWithUTF8String:credentialError.message]];
+      return;
+    }
+  } else {
+    if ([username length] == 0 || [username UTF8String] == NULL ||
+        [password length] == 0 || [password UTF8String] == NULL) {
+      [self setError:@"Enter an Apple ID and an app-specific password."];
+      return;
+    }
     if (![serviceController prepareServiceFilesWithError:&errorMessage]) {
       [self setError:errorMessage];
       return;
     }
-    RCErrorClear(&credentialError);
-    if ([username UTF8String] == NULL || [password UTF8String] == NULL ||
-        !RCICloudCredentialsSave([username UTF8String], [password UTF8String],
-            strlen([password UTF8String]),
-            [[serviceController installedDaemonPath] fileSystemRepresentation],
-            &credentialError)) {
+    if (!RCICloudCredentialsSave([username UTF8String], [password UTF8String],
+        strlen([password UTF8String]),
+        [[serviceController installedDaemonPath] fileSystemRepresentation],
+        &credentialError)) {
       [self setError:[NSString stringWithUTF8String:credentialError.message]];
       return;
     }
   }
-  if (![RCConfiguration saveContactsSyncMode:contactsSyncMode
-      calendarsSyncMode:calendarsSyncMode username:username
-      syncInterval:minutes * 60 error:&errorMessage]) {
-    [self setError:errorMessage];
-    return;
-  }
-  if (![oldUsername isEqualToString:username] && [oldUsername length] != 0) {
-    RCErrorClear(&credentialError);
-    if (!RCICloudCredentialsRemove([oldUsername UTF8String],
-                                   &credentialError)) {
-      credentialWarning = [NSString stringWithUTF8String:
-          credentialError.message];
-    }
-  }
-  if (serviceWasRunning &&
-      (![serviceController stopServiceWithError:&errorMessage] ||
-       ![serviceController startServiceWithError:&errorMessage])) {
-    [self setError:errorMessage];
-    return;
-  }
-  if (credentialWarning != nil) [self setError:credentialWarning];
-}
-
-- (void)removeAccount:(id)sender;
-{
-  NSString *username = [usernameField_ stringValue];
-  NSString *errorMessage = nil;
-  RCError credentialError;
-  NSString *credentialWarning = nil;
-  RCServiceController *serviceController =
-      [[[RCServiceController alloc] init] autorelease];
-  BOOL serviceWasRunning = [serviceController isServiceRunning];
-
-  (void)sender;
-  if (![RCConfiguration saveContactsSyncMode:@"Disabled"
-      calendarsSyncMode:@"Disabled" username:@"" syncInterval:3600
-      error:&errorMessage]) {
-    [self setError:errorMessage];
-    return;
-  }
-  RCErrorClear(&credentialError);
-  if ([username UTF8String] != NULL &&
-      !RCICloudCredentialsRemove([username UTF8String], &credentialError)) {
-    credentialWarning = [NSString stringWithUTF8String:
-        credentialError.message];
-  }
-  [contactsSyncMatrix_ selectCellAtRow:0 column:0];
-  [calendarsSyncMatrix_ selectCellAtRow:0 column:0];
-  [usernameField_ setStringValue:@""];
   [passwordField_ setStringValue:@""];
-  [intervalField_ setIntValue:60];
-  if (serviceWasRunning &&
-      (![serviceController stopServiceWithError:&errorMessage] ||
-       ![serviceController startServiceWithError:&errorMessage])) {
-    [self setError:errorMessage];
-    return;
-  }
-  if (credentialWarning != nil) [self setError:credentialWarning];
+  [self updateAccountButton];
 }
 
 @end

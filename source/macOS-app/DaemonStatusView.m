@@ -22,40 +22,74 @@
     NSButton *serviceButton;
     NSTextField *statusTitle;
     NSTextField *statusLabel;
+    NSRect boxFrame;
+    float innerLeft;
+    float innerRight;
+    float buttonX;
+    float buttonY;
+    float textY;
+    const float edgePadding = 8;
+    const float boxPadding = 8;
+    const float controlSpacing = 4;
+    const float boxTitleHeight = 14;
+    const float labelWidth = 70;
+    const float buttonWidth = 88;
+    const float buttonHeight = 26;
+    const float textHeight = 20;
+    float boxHeight;
 
     serviceController_ = [[RCServiceController alloc] init];
+    boxHeight = boxTitleHeight + boxPadding + buttonHeight + boxPadding;
+    boxFrame = NSMakeRect(edgePadding,
+        NSHeight(frame) - edgePadding - boxHeight,
+        NSWidth(frame) - (edgePadding * 2), boxHeight);
+    innerLeft = NSMinX(boxFrame) + boxPadding;
+    innerRight = NSMaxX(boxFrame) - boxPadding;
+    buttonX = innerRight - buttonWidth;
+    buttonY = NSMinY(boxFrame) + boxPadding;
+    textY = buttonY + ((buttonHeight - textHeight) / 2);
 
     serviceBox = [[[NSBox alloc]
-        initWithFrame:NSMakeRect(16, 278, 448, 72)] autorelease];
+        initWithFrame:boxFrame] autorelease];
     [serviceBox setTitle:@"Background Service"];
+    [serviceBox setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [self addSubview:serviceBox];
 
     statusTitle = [[[NSTextField alloc]
-        initWithFrame:NSMakeRect(30, 299, 78, 20)] autorelease];
+        initWithFrame:NSMakeRect(innerLeft, textY,
+                                 labelWidth, textHeight)] autorelease];
     [statusTitle setBezeled:NO];
     [statusTitle setDrawsBackground:NO];
     [statusTitle setEditable:NO];
     [statusTitle setSelectable:NO];
     [statusTitle setAlignment:NSRightTextAlignment];
     [statusTitle setStringValue:@"Status:"];
+    [statusTitle setAutoresizingMask:NSViewMinYMargin];
     [self addSubview:statusTitle];
 
     statusLabel = [[NSTextField alloc]
-        initWithFrame:NSMakeRect(116, 299, 220, 20)];
+        initWithFrame:NSMakeRect(innerLeft + labelWidth + controlSpacing,
+            textY,
+            buttonX - controlSpacing -
+                (innerLeft + labelWidth + controlSpacing),
+            textHeight)];
     [statusLabel setBezeled:NO];
     [statusLabel setDrawsBackground:NO];
     [statusLabel setEditable:NO];
     [statusLabel setSelectable:NO];
     [statusLabel setStringValue:@"Stopped"];
+    [statusLabel setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [self addSubview:statusLabel];
     statusLabel_ = statusLabel;
 
     serviceButton = [[NSButton alloc]
-        initWithFrame:NSMakeRect(368, 292, 88, 26)];
+        initWithFrame:NSMakeRect(buttonX, buttonY,
+                                 buttonWidth, buttonHeight)];
     [serviceButton setTitle:@"Start"];
     [serviceButton setBezelStyle:NSRoundedBezelStyle];
     [serviceButton setTarget:self];
     [serviceButton setAction:@selector(serviceButtonClicked:)];
+    [serviceButton setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
     [self addSubview:serviceButton];
     serviceButton_ = serviceButton;
 

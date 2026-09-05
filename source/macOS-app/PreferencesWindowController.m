@@ -66,7 +66,7 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   DaemonLogView *daemonLogView;
   NSToolbar *toolbar;
 
-  frame = NSMakeRect(0, 0, 480, 366);
+  frame = NSMakeRect(0, 0, 480, 410);
   styleMask = NSTitledWindowMask | NSClosableWindowMask |
               NSMiniaturizableWindowMask | NSResizableWindowMask;
   window = [[NSWindow alloc] initWithContentRect:frame
@@ -74,7 +74,7 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
                                          backing:NSBackingStoreBuffered
                                            defer:NO];
   [window setReleasedWhenClosed:NO];
-  [window setContentMinSize:NSMakeSize(480, 366)];
+  [window setContentMinSize:NSMakeSize(480, 410)];
   [window setDelegate:self];
   [window setTitle:@"Retro Cloud Sync"];
 
@@ -149,6 +149,7 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
 - (void)windowWillClose:(NSNotification *)notification;
 {
   (void)notification;
+  [[self window] makeFirstResponder:nil];
   [daemonStatusView_ stopUpdating];
   [daemonLogView_ stopUpdating];
 }
@@ -214,6 +215,7 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
 {
   NSString *identifier = [sender itemIdentifier];
 
+  if (![[self window] makeFirstResponder:nil]) return;
   if ([identifier isEqualToString:kRCMailToolbarItem]) {
     [mailServerView_ reloadSettings];
     [self showView:mailServerView_];

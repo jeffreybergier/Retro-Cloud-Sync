@@ -12,6 +12,7 @@ static const unsigned long long kRCMaximumDisplayedLogSize = 1024 * 1024;
 @interface DaemonLogView (Private)
 - (NSString *)logContents;
 - (void)refreshButtonClicked:(id)sender;
+- (void)revealButtonClicked:(id)sender;
 - (void)refreshTimerFired:(NSTimer *)timer;
 @end
 
@@ -22,25 +23,27 @@ static const unsigned long long kRCMaximumDisplayedLogSize = 1024 * 1024;
   self = [super initWithFrame:frame];
   if (self != nil) {
     RCServiceController *serviceController;
-    NSBox *box;
     NSScrollView *scrollView;
     NSTextView *textView;
-    NSTextField *pathLabel;
     NSButton *refreshButton;
+    NSButton *revealButton;
+    float controlsHeight;
+    float refreshX;
+    const float edgePadding = 8;
+    const float controlSpacing = 4;
+    const float buttonWidth = 88;
+    const float buttonHeight = 26;
 
     serviceController = [[[RCServiceController alloc] init] autorelease];
     logPath_ = [[serviceController daemonLogPath] copy];
-
-    box = [[[NSBox alloc] initWithFrame:NSMakeRect(16, 48, 448, 302)]
-        autorelease];
-    [box setTitle:@"Daemon Log"];
-    [box setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-    [self addSubview:box];
+    controlsHeight = buttonHeight + (edgePadding * 2);
+    refreshX = NSWidth(frame) - edgePadding - buttonWidth;
 
     scrollView = [[[NSScrollView alloc]
-        initWithFrame:NSMakeRect(28, 76, 424, 250)] autorelease];
+        initWithFrame:NSMakeRect(0, controlsHeight, NSWidth(frame),
+                                 NSHeight(frame) - controlsHeight)] autorelease];
     [scrollView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-    [scrollView setBorderType:NSBezelBorder];
+    [scrollView setBorderType:NSNoBorder];
     [scrollView setHasVerticalScroller:YES];
     [scrollView setHasHorizontalScroller:NO];
     [scrollView setAutohidesScrollers:YES];
@@ -59,22 +62,21 @@ static const unsigned long long kRCMaximumDisplayedLogSize = 1024 * 1024;
     [self addSubview:scrollView];
     textView_ = textView;
 
-    pathLabel = [[NSTextField alloc]
-        initWithFrame:NSMakeRect(20, 16, 344, 20)];
-    [pathLabel setAutoresizingMask:NSViewWidthSizable];
-    [pathLabel setBezeled:NO];
-    [pathLabel setDrawsBackground:NO];
-    [pathLabel setEditable:NO];
-    [pathLabel setSelectable:YES];
-    [pathLabel setFont:[NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
-    [pathLabel setStringValue:logPath_];
-    [pathLabel setToolTip:logPath_];
-    [self addSubview:pathLabel];
-    pathLabel_ = pathLabel;
+    revealButton = [[[NSButton alloc]
+        initWithFrame:NSMakeRect(refreshX - controlSpacing - buttonWidth,
+                                 edgePadding, buttonWidth, buttonHeight)]
+        autorelease];
+    [revealButton setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
+    [revealButton setTitle:@"Reveal"];
+    [revealButton setBezelStyle:NSRoundedBezelStyle];
+    [revealButton setTarget:self];
+    [revealButton setAction:@selector(revealButtonClicked:)];
+    [self addSubview:revealButton];
 
     refreshButton = [[[NSButton alloc]
-        initWithFrame:NSMakeRect(380, 10, 88, 26)] autorelease];
-    [refreshButton setAutoresizingMask:NSViewMinXMargin];
+        initWithFrame:NSMakeRect(refreshX, edgePadding,
+                                 buttonWidth, buttonHeight)] autorelease];
+    [refreshButton setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
     [refreshButton setTitle:@"Refresh"];
     [refreshButton setBezelStyle:NSRoundedBezelStyle];
     [refreshButton setTarget:self];
@@ -90,7 +92,6 @@ static const unsigned long long kRCMaximumDisplayedLogSize = 1024 * 1024;
 {
   [self stopUpdating];
   [textView_ release];
-  [pathLabel_ release];
   [logPath_ release];
   [super dealloc];
 }
@@ -190,6 +191,17 @@ static const unsigned long long kRCMaximumDisplayedLogSize = 1024 * 1024;
 {
   (void)sender;
   [self reloadLog];
+}
+
+- (void)revealButtonClicked:(id)sender;
+{
+  (void)sender;
+  if (![[NSWorkspace sharedWorkspace] selectFile:logPath_
+                           inFileViewerRootedAtPath:@""]) {
+    NSRunAlertPanel(@"Retro Cloud Sync",
+        @"The daemon log could not be revealed in Finder. "
+         "It may not have been created yet.", @"OK", nil, nil);
+  }
 }
 
 @end

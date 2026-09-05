@@ -13,6 +13,8 @@
   NSTextField *smtpLocalPortField_;
   NSTextField *smtpServerField_;
   NSTextField *smtpServerPortField_;
+  BOOL showingError_;
+  NSString *pendingErrorMessage_;
 }
 
 - (void)reloadSettings;
