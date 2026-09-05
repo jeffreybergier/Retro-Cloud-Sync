@@ -1,7 +1,7 @@
 # Non-shipped read-only CardDAV diagnostic tool.
 
 CARDDAV_PROBE_NAME := RetroCloudCardDAVProbe
-CARDDAV_PROBE_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-carddav-probe
+CARDDAV_PROBE_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-test/carddav-probe
 CARDDAV_PROBE_BUILD_ROOT := $(BUILD_ROOT)/macOS-carddav-probe/$(CONFIG)
 CARDDAV_PROBE_SOURCE := $(CARDDAV_PROBE_SOURCE_ROOT)/main.c
 CARDDAV_PROBE_INTERMEDIATES := $(CARDDAV_PROBE_BUILD_ROOT)/Intermediates

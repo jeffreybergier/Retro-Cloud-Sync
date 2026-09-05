@@ -1,6 +1,23 @@
 # Retro-Cloud-Sync
 Sync iCloud Email, Contacts, Calendars with Retro Macs 10.4+
 
+## Source layout
+
+- `source/macOS-app`: the graphical application and its bundle resources.
+- `source/macOS-daemon`: the production background service embedded in the app;
+  runs the mail proxy and Contacts/Calendars synchronization.
+- `source/macOS-test`: non-shipped Mac GUI and Sync Services integration tests,
+  fixtures, verifiers, and remote runners. Its `carddav-probe` and `caldav-probe`
+  subfolders contain manual diagnostic tools that download server data into local
+  databases without changing the remote data; they are not automated tests.
+- `source/shared`: reusable synchronization, parsing, and storage code.
+- `source/shared-test`: portable C tests that run on the Linux build host.
+- `source/make`: build rules for the application, libraries, and test tools.
+- `source/dependencies`: dependency preparation scripts.
+
+The probes still use `make carddav-probe` and `make caldav-probe`, with binaries
+under `build/macOS-carddav-probe` and `build/macOS-caldav-probe` respectively.
+
 ## Contacts and Calendars preferences
 
 Open the application and choose **Sync** in the toolbar. Enter the Apple ID

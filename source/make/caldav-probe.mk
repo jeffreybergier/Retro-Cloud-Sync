@@ -1,7 +1,7 @@
 # Non-shipped read-only CalDAV diagnostic tool.
 
 CALDAV_PROBE_NAME := RetroCloudCalDAVProbe
-CALDAV_PROBE_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-caldav-probe
+CALDAV_PROBE_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-test/caldav-probe
 CALDAV_PROBE_BUILD_ROOT := $(BUILD_ROOT)/macOS-caldav-probe/$(CONFIG)
 CALDAV_PROBE_SOURCE := $(CALDAV_PROBE_SOURCE_ROOT)/main.c
 CALDAV_PROBE_INTERMEDIATES := $(CALDAV_PROBE_BUILD_ROOT)/Intermediates
