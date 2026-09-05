@@ -120,7 +120,11 @@ the same arguments as the CardDAV probe below, defaulting to
 no remote writes or Sync Services import.
 
 Calendar integration tests run synthetic data through the real Tiger framework
-and verify iCal using AppleScript. They use a separate test client, preserve a
+and verify iCal using AppleScript. They also register and remove a client using
+the production identifier format and a synthetic account ID, catching Tiger's
+encoded filename length limit without publishing records. Production calendar
+clients use `com.retrocloudsync.cal.v1.` plus the full account sync ID.
+The import tests use a separate test client, preserve a
 baseline of existing calendar/event identifiers, exercise repeated imports,
 updates/deletion and malformed/unsupported replacements, and clean up their
 records. The remote runner opens a Terminal session because an SSH bootstrap

@@ -9,6 +9,7 @@ ssh -o LogLevel=ERROR "$test_host" "mkdir -p '$remote_relative'"
 scp -o LogLevel=ERROR "$build_root/macOS-daemon/release/RetroCloudSyncDaemon" \
     "$build_root/calendar-test/RetroCloudCalendarVerifier" \
     "$build_root/calendar-test/RetroCloudCalendarFixtures" \
+    "$build_root/calendar-test/RetroCloudCalendarClientTests" \
     "$project_root/source/macOS-app/Resources/CalendarSyncClient.plist" \
     "$project_root/source/macOS-test/run-calendar-tests.command" \
     "$test_host:$remote_relative/"

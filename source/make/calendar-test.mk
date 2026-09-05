@@ -36,6 +36,19 @@ $(CALENDAR_MAC_FIXTURES): $(BUILD_ROOT)/calendar-test/fixtures-ppc $(BUILD_ROOT)
 	@$(LIPO) -create $^ -output "$@"
 test-calendar-build: $(CALENDAR_VERIFIER) $(CALENDAR_MAC_FIXTURES)
 .PHONY: test-calendar-build
+CALENDAR_CLIENT_TEST := $(BUILD_ROOT)/calendar-test/RetroCloudCalendarClientTests
+CALENDAR_CLIENT_TEST_SOURCE := $(SOURCE_ROOT)/macOS-test/CalendarClientTests.m
+$(BUILD_ROOT)/calendar-test/client-ppc: $(CALENDAR_CLIENT_TEST_SOURCE) $(DAEMON_SOURCE_ROOT)/RCCalendarSyncClient.h
+	@mkdir -p "$(dir $@)"
+	@MACOSX_DEPLOYMENT_TARGET=10.4 $(PPC_CC) $(COMMON_FLAGS) -arch ppc -isysroot "$(SDK)" "$<" -framework Foundation -framework SyncServices -lobjc -lgcc_s.10.4 -o "$@"
+$(BUILD_ROOT)/calendar-test/client-i386: $(CALENDAR_CLIENT_TEST_SOURCE) $(DAEMON_SOURCE_ROOT)/RCCalendarSyncClient.h
+	@mkdir -p "$(dir $@)"
+	@MACOSX_DEPLOYMENT_TARGET=10.4 $(I386_CC) $(COMMON_FLAGS) -arch i386 -isysroot "$(SDK)" "$<" -framework Foundation -framework SyncServices -lobjc -lgcc_s.10.4 -o "$@"
+$(CALENDAR_CLIENT_TEST): $(BUILD_ROOT)/calendar-test/client-ppc $(BUILD_ROOT)/calendar-test/client-i386
+	@$(LIPO) -create $^ -output "$@"
+test-calendar-client-build: validate-build $(CALENDAR_CLIENT_TEST)
+test-calendar-build: test-calendar-client-build
+.PHONY: test-calendar-client-build
 test-calendar-syncservices: release test-calendar-build
 	@TEST_HOST="$(TEST_HOST)" BUILD_ROOT="$(BUILD_ROOT)" PROJECT_ROOT="$(PROJECT_ROOT)" bash "$(SOURCE_ROOT)/macOS-test/run-calendar-remote.sh"
 .PHONY: test-calendar-syncservices

@@ -103,6 +103,7 @@ end run
 APPLESCRIPT
 }
 export_phase empty empty
+./RetroCloudCalendarClientTests CalendarTestSyncClient.plist
 ./RetroCloudCalendarVerifier snapshot Calendar-baseline.plist
 export_phase initial initial
 echo '[PASS] Calendar, events, recurrence, exception, attendee, and alarm imported'

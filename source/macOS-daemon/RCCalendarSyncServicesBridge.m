@@ -1,4 +1,5 @@
 #import "RCCalendarSyncServicesBridge.h"
+#import "RCCalendarSyncClient.h"
 #import <Foundation/Foundation.h>
 #import <SyncServices/SyncServices.h>
 #include <stdlib.h>
@@ -549,9 +550,8 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
     clientID =
         testClient
             ? testIdentifier
-            : [@"com.retrocloudsync.calendars.v1."
-                  stringByAppendingString:String(
-                                              (const char *)sqlite3_column_text(q, 0))];
+            : RCCalendarSyncClientIdentifier(
+                  String((const char *)sqlite3_column_text(q, 0)));
     generation = sqlite3_column_int64(q, 1);
     sqlite3_finalize(q);
     q = NULL;

@@ -25,6 +25,10 @@ DAEMON_LINK_FLAGS := -framework Foundation -framework CoreFoundation \
 
 daemon-config: validate-build shared-config $(DAEMON_OUTPUT)
 
+$(DAEMON_INTERMEDIATES)/ppc/RCCalendarSyncServicesBridge.o \
+$(DAEMON_INTERMEDIATES)/i386/RCCalendarSyncServicesBridge.o: \
+	$(DAEMON_SOURCE_ROOT)/RCCalendarSyncClient.h
+
 $(DAEMON_OUTPUT): $(DAEMON_INTERMEDIATES)/ppc.bin \
 		$(DAEMON_INTERMEDIATES)/i386.bin
 	@echo " [3/3] Merging daemon universal binary (ppc, i386)..."
