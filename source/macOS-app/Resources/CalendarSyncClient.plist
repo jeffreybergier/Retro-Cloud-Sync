@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Type</key>
+	<string>server</string>
+	<key>DisplayName</key>
+	<string>Retro Cloud Sync Calendars</string>
+	<key>Entities</key>
+	<dict>
+		<key>com.apple.calendars.Calendar</key>
+		<array>
+			<string>com.apple.syncservices.RecordEntityName</string>
+			<string>title</string>
+			<string>url</string>
+			<string>notes</string>
+			<string>read only</string>
+			<string>events</string>
+			<string>tasks</string>
+		</array>
+		<key>com.apple.calendars.Event</key>
+		<array>
+			<string>com.apple.syncservices.RecordEntityName</string>
+			<string>original date</string>
+			<string>summary</string>
+			<string>url</string>
+			<string>description</string>
+			<string>location</string>
+			<string>start date</string>
+			<string>end date</string>
+			<string>all day</string>
+			<string>status</string>
+			<string>exception dates</string>
+			<string>priority</string>
+			<string>classification</string>
+			<string>calendar</string>
+			<string>recurrences</string>
+			<string>audio alarms</string>
+			<string>mail alarms</string>
+			<string>display alarms</string>
+			<string>organizer</string>
+			<string>attendees</string>
+			<string>detached events</string>
+			<string>main event</string>
+		</array>
+		<key>com.apple.calendars.Task</key>
+		<array>
+			<string>com.apple.syncservices.RecordEntityName</string>
+			<string>original date</string>
+			<string>summary</string>
+			<string>url</string>
+			<string>description</string>
+			<string>completion date</string>
+			<string>start date</string>
+			<string>due date is date only</string>
+			<string>due date</string>
+			<string>status</string>
+			<string>exception dates</string>
+			<string>priority</string>
+			<string>classification</string>
+			<string>calendar</string>
+			<string>recurrences</string>
+			<string>audio alarms</string>
+			<string>mail alarms</string>
+			<string>display alarms</string>
+			<string>organizer</string>
+			<string>attendees</string>
+			<string>detached tasks</string>
+			<string>main task</string>
+		</array>
+		<key>com.apple.calendars.Recurrence</key>
+		<array>
+			<string>com.apple.syncservices.RecordEntityName</string>
+			<string>frequency</string>
+			<string>until</string>
+			<string>count</string>
+			<string>interval</string>
+			<string>bymonth</string>
+			<string>byweeknumber</string>
+			<string>byyearday</string>
+			<string>bymonthday</string>
+			<string>bydayfreq</string>
+			<string>bydaydays</string>
+			<string>bysetpos</string>
+			<string>weekstartday</string>
+			<string>owner</string>
+		</array>
+		<key>com.apple.calendars.AudioAlarm</key>
+		<array>
+			<string>com.apple.syncservices.RecordEntityName</string>
+			<string>triggerdate</string>
+			<string>triggerduration</string>
+			<string>repeat count</string>
+			<string>repeat interval</string>
+			<string>description</string>
+			<string>summary</string>
+			<string>owner</string>
+		</array>
+		<key>com.apple.calendars.MailAlarm</key>
+		<array>
+			<string>com.apple.syncservices.RecordEntityName</string>
+			<string>triggerdate</string>
+			<string>triggerduration</string>
+			<string>repeat count</string>
+			<string>repeat interval</string>
+			<string>description</string>
+			<string>summary</string>
+			<string>recipients</string>
+			<string>owner</string>
+		</array>
+		<key>com.apple.calendars.DisplayAlarm</key>
+		<array>
+			<string>com.apple.syncservices.RecordEntityName</string>
+			<string>triggerdate</string>
+			<string>triggerduration</string>
+			<string>repeat count</string>
+			<string>repeat interval</string>
+			<string>description</string>
+			<string>owner</string>
+		</array>
+		<key>com.apple.calendars.Organizer</key>
+		<array>
+			<string>com.apple.syncservices.RecordEntityName</string>
+			<string>directory entry</string>
+			<string>common name</string>
+			<string>email</string>
+			<string>owner</string>
+		</array>
+		<key>com.apple.calendars.Attendee</key>
+		<array>
+			<string>com.apple.syncservices.RecordEntityName</string>
+			<string>directory entry</string>
+			<string>common name</string>
+			<string>email</string>
+			<string>user type</string>
+			<string>role</string>
+			<string>status</string>
+			<string>rsvp</string>
+			<string>delegatedto</string>
+			<string>delegatedfrom</string>
+			<string>owner</string>
+		</array>
+	</dict>
+	<key>PushOnlyEntities</key>
+	<array>
+		<string>com.apple.calendars.Calendar</string>
+		<string>com.apple.calendars.Event</string>
+		<string>com.apple.calendars.Task</string>
+		<string>com.apple.calendars.Recurrence</string>
+		<string>com.apple.calendars.AudioAlarm</string>
+		<string>com.apple.calendars.MailAlarm</string>
+		<string>com.apple.calendars.DisplayAlarm</string>
+		<string>com.apple.calendars.Organizer</string>
+		<string>com.apple.calendars.Attendee</string>
+	</array>
+</dict>
+</plist>

@@ -159,11 +159,11 @@ static int RCValidateDestination(const char *url, const char *hostSuffix,
     goto finished;
   }
   if (strcasecmp(scheme, "https") != 0) {
-    RCErrorSet(error, 1, "Refusing non-HTTPS CardDAV destination");
+    RCErrorSet(error, 1, "Refusing non-HTTPS DAV destination");
     goto finished;
   }
   if (!RCHostHasSuffix(host, hostSuffix)) {
-    RCErrorSet(error, 1, "Refusing CardDAV credentials for unexpected host");
+    RCErrorSet(error, 1, "Refusing DAV credentials for unexpected host");
     goto finished;
   }
   valid = 1;
@@ -325,7 +325,7 @@ int RCHTTPClientRequest(RCHTTPClient *client, const char *method,
                "Content-Type: %.140s", contentType);
       headers = curl_slist_append(headers, contentTypeHeader);
     }
-    headers = curl_slist_append(headers, "Accept: application/xml, text/vcard, */*");
+    headers = curl_slist_append(headers, "Accept: application/xml, text/vcard, text/calendar, */*");
 
     curl_easy_setopt(curl, CURLOPT_URL, currentURL);
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
@@ -363,7 +363,7 @@ int RCHTTPClientRequest(RCHTTPClient *client, const char *method,
     if (curlResult != CURLE_OK) {
       RCErrorSet(error, (int)curlResult,
                  writeContext.exceededLimit ? "HTTP response exceeded size limit" :
-                 "CardDAV request failed: %s", curl_easy_strerror(curlResult));
+                 "DAV request failed: %s", curl_easy_strerror(curlResult));
       free(currentURL);
       return 0;
     }
@@ -374,7 +374,7 @@ int RCHTTPClientRequest(RCHTTPClient *client, const char *method,
           !RCURLResolve(response->effectiveURL, response->location,
                         &redirectURL, error)) {
         if (error->code == 0) {
-          RCErrorSet(error, 1, "Invalid or excessive CardDAV redirects");
+          RCErrorSet(error, 1, "Invalid or excessive DAV redirects");
         }
         free(currentURL);
         return 0;
@@ -387,6 +387,6 @@ int RCHTTPClientRequest(RCHTTPClient *client, const char *method,
     return 1;
   }
   free(currentURL);
-  RCErrorSet(error, 1, "Too many CardDAV redirects");
+  RCErrorSet(error, 1, "Too many DAV redirects");
   return 0;
 }

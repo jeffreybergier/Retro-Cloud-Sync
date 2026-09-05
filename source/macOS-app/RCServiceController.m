@@ -283,9 +283,12 @@ static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
       pathForResource:@"SyncClient" ofType:@"plist"];
   NSString *installedSyncClientPath = [[self applicationSupportDirectory]
       stringByAppendingPathComponent:kRCSyncClientDescriptionName];
+  NSArray *calendarResources =
+      [NSArray arrayWithObjects:@"CalendarSyncClient.plist", @"zoneinfo", nil];
+  NSEnumerator *calendarResourceEnumerator;
+  NSString *calendarResource;
   NSString *launchAgentPath = [self launchAgentPath];
-  NSString *launchAgentsDirectory =
-      [launchAgentPath stringByDeletingLastPathComponent];
+  NSString *launchAgentsDirectory = [launchAgentPath stringByDeletingLastPathComponent];
   NSString *logPath = [self daemonLogPath];
   NSString *logDirectory = [logPath stringByDeletingLastPathComponent];
   NSDictionary *launchAgent;
@@ -293,16 +296,26 @@ static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
   if (![fileManager fileExistsAtPath:embeddedDaemonPath] ||
       embeddedCertificatePath == nil || embeddedSyncClientPath == nil) {
     if (errorMessage != NULL) {
-      *errorMessage = @"The embedded daemon, CA certificates, or Sync Services description is missing";
+      *errorMessage = @"The embedded daemon, CA certificates, or Sync Services "
+                      @"description is missing";
     }
     return NO;
   }
   if (![self ensureDirectoryExists:[self applicationSupportDirectory]
                              error:errorMessage] ||
       ![self ensureDirectoryExists:logDirectory error:errorMessage] ||
-      ![self ensureDirectoryExists:launchAgentsDirectory
-                             error:errorMessage]) {
+      ![self ensureDirectoryExists:launchAgentsDirectory error:errorMessage]) {
     return NO;
+  }
+  calendarResourceEnumerator = [calendarResources objectEnumerator];
+  while ((calendarResource = [calendarResourceEnumerator nextObject]) != nil) {
+    NSString *resourcePath = [[[NSBundle mainBundle] resourcePath]
+        stringByAppendingPathComponent:calendarResource];
+    if (![fileManager fileExistsAtPath:resourcePath]) {
+      if (errorMessage)
+        *errorMessage = @"The embedded calendar resources are missing";
+      return NO;
+    }
   }
   if (![RCConfiguration ensureConfigurationExistsWithError:errorMessage]) {
     return NO;
@@ -353,17 +366,32 @@ static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
     }
     return NO;
   }
+  calendarResourceEnumerator = [calendarResources objectEnumerator];
+  while ((calendarResource = [calendarResourceEnumerator nextObject]) != nil) {
+    NSString *source = [[[NSBundle mainBundle] resourcePath]
+        stringByAppendingPathComponent:calendarResource];
+    NSString *destination = [[self applicationSupportDirectory]
+        stringByAppendingPathComponent:calendarResource];
+    if (([fileManager fileExistsAtPath:destination] &&
+         ![fileManager removeFileAtPath:destination handler:nil]) ||
+        ![fileManager copyPath:source toPath:destination handler:nil]) {
+      if (errorMessage)
+        *errorMessage = @"Could not install calendar resources";
+      return NO;
+    }
+  }
 
-  launchAgent = [NSDictionary dictionaryWithObjectsAndKeys:
-      kRCServiceLabel, @"Label",
-      [NSArray arrayWithObjects:installedDaemonPath, @"--config",
-                                [RCConfiguration configurationPath], nil],
-      @"ProgramArguments",
-      [NSNumber numberWithBool:YES], @"RunAtLoad",
-      [NSNumber numberWithBool:YES], @"KeepAlive",
-      logPath, @"StandardOutPath",
-      logPath, @"StandardErrorPath",
-      nil];
+  launchAgent = [NSDictionary
+      dictionaryWithObjectsAndKeys:kRCServiceLabel, @"Label",
+                                   [NSArray arrayWithObjects:installedDaemonPath,
+                                                             @"--config",
+                                                             [RCConfiguration
+                                                                 configurationPath],
+                                                             nil],
+                                   @"ProgramArguments", [NSNumber numberWithBool:YES],
+                                   @"RunAtLoad", [NSNumber numberWithBool:YES],
+                                   @"KeepAlive", logPath, @"StandardOutPath", logPath,
+                                   @"StandardErrorPath", nil];
   if (![launchAgent writeToFile:launchAgentPath atomically:YES]) {
     if (errorMessage != NULL) {
       *errorMessage = @"Could not write the LaunchAgent property list";

@@ -33,12 +33,12 @@ APP_LINK_FLAGS := -framework AppKit -framework CoreServices \
 	-framework ApplicationServices -framework Security -lobjc -lgcc_s.10.4
 
 ALL_SOURCE_PATHS = $(APP_SOURCE_PATHS) $(DAEMON_SOURCE_PATHS) \
-	$(SHARED_SOURCE_PATHS) $(TEST_SOURCE_PATHS) $(CARDDAV_PROBE_SOURCE)
+	$(SHARED_SOURCE_PATHS) $(TEST_SOURCE_PATHS) $(CARDDAV_PROBE_SOURCE) $(CALDAV_PROBE_SOURCE)
 
 app-config: validate-build daemon-config $(APP_ZIP)
 
-$(APP_ZIP): $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
-		$(APP_SYNC_CLIENT_PLIST) \
+$(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
+		$(APP_SYNC_CLIENT_PLIST) $(APP_RESOURCES_ROOT)/CalendarSyncClient.plist $(ICAL_PREPARE) \
 		$(ALTIVECCORE_CA_CERTS) $(ALTIVECCOCOA_FONTS) \
 		$(ALTIVECCOCOA_FONT_LICENSE)
 	@echo " [4/5] Building app bundle and embedding daemon..."
@@ -55,6 +55,11 @@ $(APP_ZIP): $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
 	@cp "$(APP_INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"
 	@cp "$(APP_SYNC_CLIENT_PLIST)" \
 		"$(APP_BUNDLE)/Contents/Resources/SyncClient.plist"
+	@cp "$(APP_RESOURCES_ROOT)/CalendarSyncClient.plist" "$(APP_BUNDLE)/Contents/Resources/"
+	@cp -R "$(ICAL_SOURCE)/zoneinfo" "$(APP_BUNDLE)/Contents/Resources/zoneinfo"
+	@cp "$(ICAL_SOURCE)/LICENSE.MPL2.txt" "$(APP_BUNDLE)/Contents/Resources/LICENSE-libical.txt"
+	@mkdir -p "$(APP_BUNDLE)/Contents/Resources/libical-source"
+	@cp "$(ICAL_ROOT)/libical-3.0.20.tar.gz" "$(ICAL_SCRIPT)" "$(APP_BUNDLE)/Contents/Resources/libical-source/"
 	@cp "$(ALTIVECCORE_CA_CERTS)" \
 		"$(APP_BUNDLE)/Contents/Resources/cacert.pem"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources/Fonts"

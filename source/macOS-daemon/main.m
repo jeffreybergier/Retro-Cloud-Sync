@@ -10,6 +10,8 @@
 #include "RCCardDAVMirror.h"
 #include "RCICloudCredentials.h"
 #include "RCSyncServicesBridge.h"
+#include "RCCalDAVMirror.h"
+#include "RCCalendarSyncServicesBridge.h"
 
 #include <Security/Security.h>
 #include <pthread.h>
@@ -48,24 +50,38 @@ typedef struct {
   char *databasePath;
   char *certificatePath;
   char *syncClientDescriptionPath;
-} RCContactWorker;
+  char *calendarDatabasePath;
+  char *calendarDescriptionPath;
+  int contactsEnabled;
+  int calendarsEnabled;
+} RCSyncWorker;
 
 static char *RCCopyCString(const char *string)
 {
   size_t length;
   char *copy;
 
-  if (string == NULL) return NULL;
+  if (string == NULL)
+    return NULL;
   length = strlen(string);
   copy = (char *)malloc(length + 1);
-  if (copy != NULL) memcpy(copy, string, length + 1);
+  if (copy != NULL)
+    memcpy(copy, string, length + 1);
   return copy;
 }
 
 static void RCContactProgress(const char *message, void *context)
 {
   (void)context;
-  if (message != NULL) NSLog(@"Contacts: %s", message);
+  if (message != NULL)
+    NSLog(@"Contacts: %s", message);
+}
+
+static void RCCalendarProgress(const char *message, void *context)
+{
+  (void)context;
+  if (message)
+    NSLog(@"Calendars: %s", message);
 }
 
 static NSString *RCSyncModeFromConfiguration(NSDictionary *configuration,
@@ -78,22 +94,23 @@ static NSString *RCSyncModeFromConfiguration(NSDictionary *configuration,
 
   if (mode != nil) {
     if ([mode isKindOfClass:[NSString class]] &&
-        ([mode isEqualToString:@"Disabled"] ||
-         [mode isEqualToString:@"OneWay"] ||
+        ([mode isEqualToString:@"Disabled"] || [mode isEqualToString:@"OneWay"] ||
          [mode isEqualToString:@"TwoWay"])) {
       return mode;
     }
     return nil;
   }
   enabled = [configuration objectForKey:legacyEnabledKey];
-  if (enabled == nil && !legacyValueIsRequired) return @"Disabled";
-  if (![enabled isKindOfClass:[NSNumber class]]) return nil;
+  if (enabled == nil && !legacyValueIsRequired)
+    return @"Disabled";
+  if (![enabled isKindOfClass:[NSNumber class]])
+    return nil;
   return [enabled boolValue] ? @"OneWay" : @"Disabled";
 }
 
-static void *RCContactWorkerMain(void *context)
+static void *RCSyncWorkerMain(void *context)
 {
-  RCContactWorker *worker = (RCContactWorker *)context;
+  RCSyncWorker *worker = (RCSyncWorker *)context;
 
   SecKeychainSetUserInteractionAllowed(0);
   for (;;) {
@@ -118,13 +135,13 @@ static void *RCContactWorkerMain(void *context)
     }
 
     RCErrorClear(&error);
-    if (!RCICloudCredentialsCopyPassword(worker->username, &password,
-                                         &passwordLength, &error)) {
-      NSLog(@"Contacts sync skipped: %s", error.message);
-    } else if ((store = RCContactStoreOpen(worker->databasePath, &error)) ==
-               NULL) {
+    if (!RCICloudCredentialsCopyPassword(worker->username, &password, &passwordLength,
+                                         &error)) {
+      NSLog(@"Account sync skipped: %s", error.message);
+    } else if (worker->contactsEnabled &&
+               (store = RCContactStoreOpen(worker->databasePath, &error)) == NULL) {
       NSLog(@"Contacts sync failed: %s", error.message);
-    } else {
+    } else if (worker->contactsEnabled) {
       memset(&mirrorConfig, 0, sizeof(mirrorConfig));
       mirrorConfig.serviceURL = worker->serviceURL;
       mirrorConfig.username = worker->username;
@@ -139,11 +156,9 @@ static void *RCContactWorkerMain(void *context)
               result.downloadedResourceCount, result.unchangedResourceCount,
               statistics.availableCount, statistics.missingCount);
         RCErrorClear(&error);
-        if (RCSyncServicesPushContacts(store,
-            worker->syncClientDescriptionPath,
-            &syncRecordCount, &error)) {
-          NSLog(@"Sync Services export complete: %ld records",
-                syncRecordCount);
+        if (RCSyncServicesPushContacts(store, worker->syncClientDescriptionPath,
+                                       &syncRecordCount, &error)) {
+          NSLog(@"Sync Services export complete: %ld records", syncRecordCount);
         } else {
           NSLog(@"Sync Services export failed: %s", error.message);
         }
@@ -152,6 +167,40 @@ static void *RCContactWorkerMain(void *context)
       }
     }
     RCContactStoreClose(store);
+    if (worker->calendarsEnabled) {
+      RCCalendarStore *calendarStore;
+      RCErrorClear(&error);
+      calendarStore =
+          RCCalendarStoreOpen(worker->calendarDatabasePath, worker->username, &error);
+      if (calendarStore == NULL)
+        NSLog(@"Calendar database failed: %s", error.message);
+      else {
+        memset(&mirrorConfig, 0, sizeof(mirrorConfig));
+        mirrorConfig.serviceURL = "https://caldav.icloud.com";
+        mirrorConfig.username = worker->username;
+        mirrorConfig.password = password;
+        mirrorConfig.certificatePath = worker->certificatePath;
+        mirrorConfig.allowedHostSuffix = ".icloud.com";
+        mirrorConfig.progress = RCCalendarProgress;
+        if (password != NULL) {
+          if (RCCalDAVMirrorFetch(&mirrorConfig, calendarStore, &result, &error))
+            NSLog(@"Calendars sync complete: %ld calendars, %ld downloaded, %ld "
+                  @"unchanged",
+                  result.collectionCount, result.downloadedResourceCount,
+                  result.unchangedResourceCount);
+          else
+            NSLog(@"Calendars sync failed: %s", error.message);
+        }
+        RCErrorClear(&error);
+        if (RCSyncServicesPushCalendars(calendarStore, worker->calendarDescriptionPath,
+                                        0, &syncRecordCount, &error))
+          NSLog(@"Calendar Sync Services export complete: %ld records",
+                syncRecordCount);
+        else
+          NSLog(@"Calendar Sync Services export failed: %s", error.message);
+        RCCalendarStoreClose(calendarStore);
+      }
+    }
     RCICloudCredentialsClearPassword(password, passwordLength);
     [pool release];
 
@@ -163,14 +212,14 @@ static void *RCContactWorkerMain(void *context)
     }
     shouldStop = worker->shouldStop;
     pthread_mutex_unlock(&worker->mutex);
-    if (shouldStop) break;
+    if (shouldStop)
+      break;
   }
   return NULL;
 }
 
-static BOOL RCContactWorkerStart(RCContactWorker *worker,
-                                 NSDictionary *configuration,
-                                 NSString *daemonDirectory)
+static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
+                              NSString *daemonDirectory)
 {
   NSDictionary *contacts = [configuration objectForKey:@"Contacts"];
   NSString *username;
@@ -188,68 +237,69 @@ static BOOL RCContactWorkerStart(RCContactWorker *worker,
     NSLog(@"Calendar sync is disabled");
     return YES;
   }
-  if (![contacts isKindOfClass:[NSDictionary class]]) return NO;
-  contactsSyncMode = RCSyncModeFromConfiguration(
-      contacts, @"ContactsSyncMode", @"Enabled", YES);
-  calendarsSyncMode = RCSyncModeFromConfiguration(
-      contacts, @"CalendarsSyncMode", @"CalendarsEnabled", NO);
+  if (![contacts isKindOfClass:[NSDictionary class]])
+    return NO;
+  contactsSyncMode =
+      RCSyncModeFromConfiguration(contacts, @"ContactsSyncMode", @"Enabled", YES);
+  calendarsSyncMode = RCSyncModeFromConfiguration(contacts, @"CalendarsSyncMode",
+                                                  @"CalendarsEnabled", NO);
   if (contactsSyncMode == nil || calendarsSyncMode == nil) {
     NSLog(@"Contacts and Calendars sync mode configuration is invalid");
     return NO;
   }
-  if ([calendarsSyncMode isEqualToString:@"Disabled"]) {
-    NSLog(@"Calendar sync is disabled");
-  } else if ([calendarsSyncMode isEqualToString:@"TwoWay"]) {
-    NSLog(@"Calendar 2-way sync is not implemented yet");
-  } else {
-    NSLog(@"Calendar 1-way sync is not implemented yet");
-  }
-  if ([contactsSyncMode isEqualToString:@"Disabled"]) {
-    NSLog(@"Contacts sync is disabled");
-    return YES;
-  }
-  if ([contactsSyncMode isEqualToString:@"TwoWay"]) {
+  worker->contactsEnabled = [contactsSyncMode isEqualToString:@"OneWay"];
+  worker->calendarsEnabled = [calendarsSyncMode isEqualToString:@"OneWay"];
+  if ([contactsSyncMode isEqualToString:@"TwoWay"])
     NSLog(@"Contacts 2-way sync is not implemented yet");
+  if ([calendarsSyncMode isEqualToString:@"TwoWay"])
+    NSLog(@"Calendar 2-way sync is not implemented yet");
+  if (!worker->contactsEnabled)
+    NSLog(@"Contacts sync is disabled");
+  if (!worker->calendarsEnabled)
+    NSLog(@"Calendar sync is disabled");
+  if (!worker->contactsEnabled && !worker->calendarsEnabled)
     return YES;
-  }
   username = [contacts objectForKey:@"Username"];
   serviceURL = [contacts objectForKey:@"ServiceURL"];
   interval = [contacts objectForKey:@"SyncIntervalSeconds"];
   if (![username isKindOfClass:[NSString class]] || [username length] == 0 ||
       ![serviceURL isKindOfClass:[NSString class]] ||
       ![serviceURL isEqualToString:@"https://contacts.icloud.com"] ||
-      ![interval isKindOfClass:[NSNumber class]] ||
-      [interval unsignedIntValue] < 60 ||
-      [interval unsignedIntValue] > 604800 ||
-      [username UTF8String] == NULL ||
+      ![interval isKindOfClass:[NSNumber class]] || [interval unsignedIntValue] < 60 ||
+      [interval unsignedIntValue] > 604800 || [username UTF8String] == NULL ||
       [serviceURL UTF8String] == NULL) {
-    NSLog(@"Contacts configuration is invalid; contact sync is disabled");
+    NSLog(@"Account configuration is invalid; synchronization is disabled");
     return NO;
   }
-  databasePath = [daemonDirectory stringByAppendingPathComponent:
-      @"Contacts.sqlite"];
-  certificatePath = [daemonDirectory stringByAppendingPathComponent:
-      kRCCertificateName];
-  syncClientDescriptionPath = [daemonDirectory stringByAppendingPathComponent:
-      kRCSyncClientDescriptionName];
+  databasePath = [daemonDirectory stringByAppendingPathComponent:@"Contacts.sqlite"];
+  certificatePath = [daemonDirectory stringByAppendingPathComponent:kRCCertificateName];
+  syncClientDescriptionPath =
+      [daemonDirectory stringByAppendingPathComponent:kRCSyncClientDescriptionName];
   worker->username = RCCopyCString([username UTF8String]);
   worker->serviceURL = RCCopyCString([serviceURL UTF8String]);
   worker->databasePath = RCCopyCString([databasePath fileSystemRepresentation]);
-  worker->certificatePath = RCCopyCString(
-      [certificatePath fileSystemRepresentation]);
-  worker->syncClientDescriptionPath = RCCopyCString(
-      [syncClientDescriptionPath fileSystemRepresentation]);
+  worker->certificatePath = RCCopyCString([certificatePath fileSystemRepresentation]);
+  worker->syncClientDescriptionPath =
+      RCCopyCString([syncClientDescriptionPath fileSystemRepresentation]);
+  worker->calendarDatabasePath = RCCopyCString([[daemonDirectory
+      stringByAppendingPathComponent:@"Calendar.sqlite"] fileSystemRepresentation]);
+  worker->calendarDescriptionPath = RCCopyCString(
+      [[daemonDirectory stringByAppendingPathComponent:@"CalendarSyncClient.plist"]
+          fileSystemRepresentation]);
+  set_zone_directory([[daemonDirectory stringByAppendingPathComponent:@"zoneinfo"]
+      fileSystemRepresentation]);
   worker->interval = [interval unsignedIntValue];
   if (worker->username == NULL || worker->serviceURL == NULL ||
       worker->databasePath == NULL || worker->certificatePath == NULL ||
-      worker->syncClientDescriptionPath == NULL) {
-    NSLog(@"Could not allocate contact worker configuration");
+      worker->syncClientDescriptionPath == NULL ||
+      worker->calendarDatabasePath == NULL || worker->calendarDescriptionPath == NULL) {
+    NSLog(@"Could not allocate sync worker configuration");
     goto failed;
   }
   pthread_mutex_init(&worker->mutex, NULL);
   pthread_cond_init(&worker->condition, NULL);
-  if (pthread_create(&worker->thread, NULL, RCContactWorkerMain, worker) != 0) {
-    NSLog(@"Could not start the contact sync worker");
+  if (pthread_create(&worker->thread, NULL, RCSyncWorkerMain, worker) != 0) {
+    NSLog(@"Could not start the account sync worker");
     pthread_cond_destroy(&worker->condition);
     pthread_mutex_destroy(&worker->mutex);
     goto failed;
@@ -263,11 +313,13 @@ failed:
   free(worker->databasePath);
   free(worker->certificatePath);
   free(worker->syncClientDescriptionPath);
+  free(worker->calendarDatabasePath);
+  free(worker->calendarDescriptionPath);
   memset(worker, 0, sizeof(*worker));
   return NO;
 }
 
-static void RCContactWorkerStop(RCContactWorker *worker)
+static void RCSyncWorkerStop(RCSyncWorker *worker)
 {
   if (worker->started) {
     pthread_mutex_lock(&worker->mutex);
@@ -283,6 +335,8 @@ static void RCContactWorkerStop(RCContactWorker *worker)
   free(worker->databasePath);
   free(worker->certificatePath);
   free(worker->syncClientDescriptionPath);
+  free(worker->calendarDatabasePath);
+  free(worker->calendarDescriptionPath);
   memset(worker, 0, sizeof(*worker));
 }
 
@@ -481,7 +535,7 @@ int main(int argc, char *argv[])
   NSDictionary *configuration = nil;
   RCMailProxyConfig mailConfigs[2];
   RCMailProxy *mailProxy;
-  RCContactWorker contactWorker;
+  RCSyncWorker syncWorker;
   pthread_t networkTestThread;
   int networkTestStarted = 0;
 
@@ -490,7 +544,21 @@ int main(int argc, char *argv[])
   signal(SIGPIPE, SIG_IGN);
 
   processPool = [[NSAutoreleasePool alloc] init];
-  memset(&contactWorker, 0, sizeof(contactWorker));
+  memset(&syncWorker, 0, sizeof(syncWorker));
+  if (argc == 4 && strcmp(argv[1], "--test-calendar-syncservices") == 0) {
+    RCError error;
+    RCCalendarStore *store=RCCalendarStoreOpen(argv[2],"calendar-test",&error);
+    long count=0;
+    int ok=store && RCSyncServicesPushCalendars(store,argv[3],1,&count,&error);
+    if (ok) NSLog(@"Calendar test export complete: %ld records",count);
+    else NSLog(@"Calendar test export failed: %s",error.message);
+    RCCalendarStoreClose(store); [processPool release]; return ok?0:1;
+  }
+  if (argc == 2 && strcmp(argv[1], "--unregister-calendar-test-client") == 0) {
+    RCError error; int ok=RCSyncServicesUnregisterCalendarTestClient(&error);
+    if (!ok) NSLog(@"Calendar test cleanup failed: %s",error.message);
+    [processPool release]; return ok?0:1;
+  }
   if (argc == 4 && strcmp(argv[1], "--test-syncservices") == 0) {
     RCContactStore *store;
     RCError error;
@@ -564,7 +632,7 @@ int main(int argc, char *argv[])
     return 1;
   }
   if (configuration != nil) {
-    if (!RCContactWorkerStart(&contactWorker, configuration, daemonDirectory)) {
+    if (!RCSyncWorkerStart(&syncWorker, configuration, daemonDirectory)) {
       RCMailProxyStop(mailProxy);
       curl_global_cleanup();
       [configuration release];
@@ -601,7 +669,7 @@ int main(int argc, char *argv[])
   [[NSRunLoop currentRunLoop] removePort:keepAlivePort
                                  forMode:NSDefaultRunLoopMode];
   [keepAlivePort release];
-  RCContactWorkerStop(&contactWorker);
+  RCSyncWorkerStop(&syncWorker);
   RCMailProxyStop(mailProxy);
   if (networkTestStarted) pthread_join(networkTestThread, NULL);
 
