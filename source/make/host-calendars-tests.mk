@@ -3,7 +3,7 @@ CALENDAR_TEST_OUTPUT := $(BUILD_ROOT)/tests/host/calendars/RetroCloudCalendarCod
 CALENDAR_FIXTURE_ROOT := $(SOURCE_ROOT)/tests/fixtures/calendars
 CALENDAR_COMMON_SOURCES := $(CALENDAR_FIXTURE_ROOT)/CalendarFixtures.c \
 	$(SHARED_SOURCE_ROOT)/RCError.c $(SHARED_SOURCE_ROOT)/RCICalendar.c \
-	$(SHARED_SOURCE_ROOT)/RCCalendarStore.c
+	$(SHARED_SOURCE_ROOT)/RCCalendarStore.c $(SHARED_SOURCE_ROOT)/RCWriteJournal.c
 CALENDAR_TEST_SOURCES := $(SOURCE_ROOT)/tests/portable/CalendarCodecStoreTests.c \
 	$(CALENDAR_COMMON_SOURCES)
 CALENDAR_FIXTURE_SOURCES := $(CALENDAR_FIXTURE_ROOT)/CalendarFixtureGenerator.c \
@@ -20,7 +20,7 @@ CALENDAR_DAV_TEST := $(BUILD_ROOT)/tests/host/calendars/RetroCloudCalDAVMirrorTe
 CALENDAR_DAV_SOURCES := $(SOURCE_ROOT)/tests/portable/CalDAVMirrorTests.c \
 	$(SHARED_SOURCE_ROOT)/RCCalDAVMirror.c $(SHARED_SOURCE_ROOT)/RCDAVClient.c \
 	$(SHARED_SOURCE_ROOT)/RCError.c $(SHARED_SOURCE_ROOT)/RCICalendar.c \
-	$(SHARED_SOURCE_ROOT)/RCCalendarStore.c
+	$(SHARED_SOURCE_ROOT)/RCCalendarStore.c $(SHARED_SOURCE_ROOT)/RCWriteJournal.c
 $(CALENDAR_DAV_TEST): $(CALENDAR_DAV_SOURCES) $(ICAL_HOST_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror $(ICAL_HOST_FLAGS) \

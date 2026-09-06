@@ -46,4 +46,10 @@ int RCHTTPClientRequest(RCHTTPClient *client,
 int RCURLResolve(const char *baseURL, const char *href, char **resolvedURL,
                  RCError *error);
 
+/* Conditional mutations never follow redirects: the journal owns a fixed href.
+   PUT requires exactly one condition; DELETE requires a strong If-Match. */
+int RCHTTPClientConditionalRequest(RCHTTPClient *, const char *method,
+    const char *url, const char *contentType, const void *body, size_t bodyLength,
+    const char *ifMatch, int ifNoneMatch, RCHTTPResponse *, RCError *);
+
 #endif

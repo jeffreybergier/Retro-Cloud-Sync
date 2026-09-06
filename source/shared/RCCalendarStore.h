@@ -2,6 +2,7 @@
 #define RC_CALENDAR_STORE_H
 #include "RCDAVClient.h"
 #include "RCICalendar.h"
+#include "RCWriteJournal.h"
 #include <AltivecCore/sqlite3.h>
 /* One connection belongs to one account worker. SQL is also used by the native
    mapper; never hand this connection to another thread. */
@@ -21,5 +22,9 @@ int RCCalendarStoreSeen(RCCalendarStore *, long long, const char *, const char *
 int RCCalendarStoreSave(RCCalendarStore *, long long, const char *, const char *,
                         const unsigned char *, size_t, RCError *);
 int RCCalendarStoreFinishRun(RCCalendarStore *, int, const char *, RCError *);
+RCWriteJournal RCCalendarStoreWriteJournal(RCCalendarStore *);
+/* Must join the bridge's publication transaction, after export_ical/export_etag
+   have been updated to the versions actually submitted to Sync Services. */
+int RCCalendarStoreSnapshotWriteBases(RCCalendarStore *, long long generation, RCError *);
 char *RCCalendarStoreIdentity(RCCalendarStore *, const char *, const char *, RCError *);
 #endif

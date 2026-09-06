@@ -12,6 +12,7 @@ and transfers tools to `TEST_HOST` (default `x4-vm`) and runs them on the Mac.
 | --- | --- | --- | --- |
 | Contacts | vCard parsing, SQLite storage, identities, account isolation, mirror rollback and recovery | Linux, offline; simulated HTTP | `make test-host-contacts` |
 | Calendars | iCalendar codec, SQLite storage, discovery, inventory and failure handling | Linux, offline; simulated HTTP | `make test-host-calendars` |
+| Write safety | Durable outgoing operations, crash recovery, conflicts, base revisions, loss-preserving edits and production HTTP preconditions/TLS | Linux; synthetic fixtures and local TLS server; Python 3, OpenSSL CLI, native libcurl | `make test-host-writes` |
 | App GUI | Preferences, autosave/validation, Start/Stop, installation, logs and loopback mail listeners | Mac desktop with Accessibility; controls the service and local listeners | `make test-mac-app TEST_HOST=x4-vm` |
 | Network | A fresh HTTPS image download using the legacy TLS library | Mac command line and internet; no GUI, service or credentials | `make test-mac-network TEST_HOST=x4-vm` |
 | Contacts Sync Services | Synthetic records through the production daemon bridge into Sync Services and Address Book; update, identity, recovery and cleanup checks | Mac desktop, offline; production daemon stopped | `make test-mac-contacts-syncservices TEST_HOST=x4-vm` |
@@ -19,7 +20,7 @@ and transfers tools to `TEST_HOST` (default `x4-vm`) and runs them on the Mac.
 | vCard on Mac | The same parser regressions compiled against the legacy runtime | Mac command line; offline; manual execution | `make build-mac-vcard-tests` |
 | libicalvcal comparison | Production vCard parser versus an unused candidate parser | Linux, offline; optional Mac builds | `make compare-host-libicalvcal` |
 
-`make test-host` runs both normal host suites. `make build-mac-tests` builds all
+`make test-host` runs all three host suites. `make build-mac-tests` builds all
 normal Mac test executables and their fixture inputs, including the standalone
 network diagnostic. It excludes probes and the parser experiment.
 

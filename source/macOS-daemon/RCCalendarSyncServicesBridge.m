@@ -595,7 +595,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
     q = NULL;
     if (sqlite3_prepare_v2(
             store->db,
-            "SELECT r.id,r.calendar_id,r.raw_ical,r.export_ical,r.parse_error FROM "
+            "SELECT r.id,r.calendar_id,r.raw_ical,r.export_ical,r.parse_error,r.etag FROM "
             "calendar_resources r JOIN calendars c ON "
             "c.id=r.calendar_id WHERE c.account_id=? AND "
             "c.remote_missing=0 AND r.remote_missing=0 ORDER BY r.id",
@@ -618,6 +618,8 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
         mapped = MapResource(store, resource, calendarID, sqlite3_column_blob(q, 2),
                              (size_t)sqlite3_column_bytes(q, 2), &mappingError);
       if (mapped) {
+        [update setObject:String((const char *)sqlite3_column_text(q, 5)) ?: @""
+                   forKey:@"etag"];
         [update setObject:[NSData dataWithBytes:sqlite3_column_blob(q, 2)
                                          length:(NSUInteger)sqlite3_column_bytes(q, 2)]
                    forKey:@"raw"];
@@ -731,8 +733,9 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
       NSDictionary *update;
       if (sqlite3_prepare_v2(store->db,
                              "UPDATE calendar_resources SET "
-                             "export_ical=COALESCE(?,export_ical),export_status=?,"
-                             "export_error=? WHERE id=?",
+                             "export_etag=CASE WHEN ?1 IS NOT NULL THEN ?5 ELSE export_etag END,"
+                             "export_ical=COALESCE(?1,export_ical),export_status=?2,"
+                             "export_error=?3 WHERE id=?4",
                              -1, &q, NULL) != SQLITE_OK)
         goto sqlError;
       while ((update = [it nextObject])) {
@@ -746,12 +749,14 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
         sqlite3_bind_text(q, 3, [[update objectForKey:@"error"] UTF8String], -1,
                           SQLITE_TRANSIENT);
         sqlite3_bind_int64(q, 4, [[update objectForKey:@"resource"] longLongValue]);
+        sqlite3_bind_text(q, 5, [[update objectForKey:@"etag"] UTF8String], -1, SQLITE_TRANSIENT);
         if (sqlite3_step(q) != SQLITE_DONE)
           goto sqlError;
       }
       sqlite3_finalize(q);
       q = NULL;
     }
+    if (!RCCalendarStoreSnapshotWriteBases(store, generation, error)) goto done;
     if (!RCCalendarStoreSQL(
             store, error,
             "UPDATE accounts SET published_generation=%lld WHERE id=%lld;COMMIT",

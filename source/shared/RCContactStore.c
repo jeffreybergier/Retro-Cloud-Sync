@@ -57,7 +57,7 @@ static void RCBindText(sqlite3_stmt *statement, int index, const char *value)
 
 static const char kRCSchema[] =
   "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);"
-  "INSERT INTO schema_version(version) SELECT 3 "
+  "INSERT INTO schema_version(version) SELECT 4 "
     "WHERE NOT EXISTS (SELECT 1 FROM schema_version);"
   "CREATE TABLE IF NOT EXISTS accounts ("
     "id INTEGER PRIMARY KEY, username TEXT COLLATE NOCASE NOT NULL UNIQUE,"
@@ -74,7 +74,7 @@ static const char kRCSchema[] =
     "id INTEGER PRIMARY KEY, collection_id INTEGER NOT NULL, href TEXT NOT NULL,"
     "uid TEXT, etag TEXT, vcard_version TEXT, formatted_name TEXT,"
     "given_name TEXT, family_name TEXT, organization TEXT, title TEXT,"
-    "birthday TEXT, raw_vcard BLOB NOT NULL, usable_vcard BLOB, parse_error TEXT,"
+    "birthday TEXT, raw_vcard BLOB NOT NULL, usable_vcard BLOB, usable_etag TEXT, parse_error TEXT,"
     "sync_record_id TEXT NOT NULL UNIQUE, seen_run_id INTEGER NOT NULL,"
     "remote_missing INTEGER NOT NULL DEFAULT 0,"
     "UNIQUE(collection_id, href),"
@@ -148,10 +148,13 @@ RCContactStore *RCContactStoreOpen(const char *path, const char *username,
     version = sqlite3_column_int(statement, 0);
     sqlite3_finalize(statement);
   }
-  if (version != 3) {
+  if (version != 4) {
     RCErrorSet(error, 1, "Unsupported contact database schema version %d", version);
     RCContactStoreClose(store);
     return NULL;
+  }
+  if (!RCWriteJournalInitialize(store->database, error)) {
+    RCContactStoreClose(store); return NULL;
   }
   {
     sqlite3_stmt *statement = NULL;
@@ -201,6 +204,13 @@ const char *RCContactStoreSyncIdentifier(RCContactStore *store)
   return store != NULL ? store->syncIdentifier : NULL;
 }
 
+RCWriteJournal RCContactStoreWriteJournal(RCContactStore *store)
+{
+  RCWriteJournal journal;
+  journal.db = store->database; journal.account = store->account;
+  return journal;
+}
+
 int RCContactStoreGetPublicationState(RCContactStore *store,
                                       long long *generation,
                                       long long *publishedGeneration,
@@ -233,20 +243,44 @@ int RCContactStoreMarkPublished(RCContactStore *store, long long generation,
     RCErrorSet(error, 1, "Cannot acknowledge an incomplete contact inventory");
     return 0;
   }
+  if (!RCExecute(store, "BEGIN IMMEDIATE", error)) return 0;
   if (!RCPrepare(store,
       "UPDATE accounts SET published_generation=? WHERE id=? AND generation=?",
-      &statement, error)) return 0;
+      &statement, error)) goto failed;
   sqlite3_bind_int64(statement, 1, generation);
   sqlite3_bind_int64(statement, 2, store->account);
   sqlite3_bind_int64(statement, 3, generation);
   result = sqlite3_step(statement);
   sqlite3_finalize(statement);
-  if (result != SQLITE_DONE) return RCStoreError(store, error, "Could not acknowledge contact publication");
+  statement = NULL;
+  if (result != SQLITE_DONE) {
+    RCStoreError(store, error, "Could not acknowledge contact publication"); goto failed;
+  }
   if (sqlite3_changes(store->database) != 1) {
     RCErrorSet(error, 1, "Contact inventory changed during publication");
-    return 0;
+    goto failed;
   }
+  /* Snapshot exactly the body actually published, never the ETag of a malformed
+     replacement. Pending operations retain their own immutable copies. */
+  if (!RCPrepare(store, "DELETE FROM write_bases WHERE account_id=?", &statement, error)) goto failed;
+  sqlite3_bind_int64(statement, 1, store->account);
+  result = sqlite3_step(statement); sqlite3_finalize(statement); statement = NULL;
+  if (result != SQLITE_DONE) goto database_error;
+  if (!RCPrepare(store, "INSERT INTO write_bases(account_id,resource_key,href,etag,body,local_revision) "
+      "SELECT b.account_id,c.sync_record_id,c.href,c.usable_etag,c.usable_vcard,? "
+      "FROM contacts c JOIN collections b ON b.id=c.collection_id WHERE b.account_id=? "
+      "AND b.remote_missing=0 AND c.remote_missing=0 AND c.usable_vcard IS NOT NULL", &statement, error)) goto failed;
+  sqlite3_bind_int64(statement, 1, generation); sqlite3_bind_int64(statement, 2, store->account);
+  result = sqlite3_step(statement); sqlite3_finalize(statement); statement = NULL;
+  if (result != SQLITE_DONE) goto database_error;
+  if (!RCExecute(store, "COMMIT", error)) goto failed;
   return 1;
+database_error:
+  RCStoreError(store, error, "Could not snapshot contact publication bases");
+failed:
+  sqlite3_finalize(statement);
+  RCExecute(store, "ROLLBACK", NULL);
+  return 0;
 }
 
 static int RCCheckCollection(RCContactStore *store, long long identifier,
@@ -558,7 +592,7 @@ int RCContactStoreSaveVCard(RCContactStore *store,
   if (!RCPrepare(store,
       "UPDATE contacts SET uid=?, etag=?, vcard_version=?, formatted_name=?, "
       "given_name=?, family_name=?, organization=?, title=?, birthday=?, "
-      "raw_vcard=?, usable_vcard=?10, parse_error=NULL, seen_run_id=?, remote_missing=0 "
+      "raw_vcard=?, usable_vcard=?10, usable_etag=?2, parse_error=NULL, seen_run_id=?, remote_missing=0 "
       "WHERE collection_id=? AND href=?", &statement, error)) goto finished;
   RCBindText(statement, 1, document->uid);
   RCBindText(statement, 2, etag);

@@ -50,6 +50,14 @@ The configuration stores `ContactsSyncMode` and `CalendarsSyncMode` as
 booleans remain in the plist for compatibility. Two-way synchronization is not implemented. Unsupported modes are logged
 and are never treated as one-way sync by the daemon.
 
+The shared write-safety foundations now include durable outgoing operations,
+published base revisions, conditional DAV writes with interruption recovery,
+and edits that preserve unrecognized resource fields. These APIs are not yet
+connected to local change collection or automatic uploads. See
+[WRITE_SAFETY.md](WRITE_SAFETY.md) for the state machine, APIs and tests.
+This version requires fresh Contacts and Calendar databases (schema 4 and 2);
+there is no migration from the previous test databases.
+
 When enabled, the daemon downloads contacts immediately after it starts and
 then at the configured interval. Its read-only mirror is stored at:
 

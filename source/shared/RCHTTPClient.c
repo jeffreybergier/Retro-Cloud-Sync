@@ -1,8 +1,10 @@
 #include "RCHTTPClient.h"
+#include "RCWriteJournal.h"
 
 #include <AltivecCore/curl/curl.h>
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -276,11 +278,11 @@ int RCURLResolve(const char *baseURL, const char *href, char **resolvedURL,
   return 1;
 }
 
-int RCHTTPClientRequest(RCHTTPClient *client, const char *method,
+static int RCRequest(RCHTTPClient *client, const char *method,
                         const char *url, const char *depth,
                         const char *contentType, const void *body,
                         size_t bodyLength, RCHTTPResponse *response,
-                        RCError *error)
+                        RCError *error, const char *ifMatch, int ifNoneMatch)
 {
   char *currentURL = RCCopyString(url);
   int redirectCount;
@@ -325,32 +327,72 @@ int RCHTTPClientRequest(RCHTTPClient *client, const char *method,
                "Content-Type: %.140s", contentType);
       headers = curl_slist_append(headers, contentTypeHeader);
     }
-    headers = curl_slist_append(headers, "Accept: application/xml, text/vcard, text/calendar, */*");
-
-    curl_easy_setopt(curl, CURLOPT_URL, currentURL);
-    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
-    curl_easy_setopt(curl, CURLOPT_USERNAME, client->username);
-    curl_easy_setopt(curl, CURLOPT_PASSWORD, client->password);
-    curl_easy_setopt(curl, CURLOPT_HTTPAUTH, (long)CURLAUTH_BASIC);
-    curl_easy_setopt(curl, CURLOPT_CAINFO, client->certificatePath);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-    curl_easy_setopt(curl, CURLOPT_PROTOCOLS, (long)CURLPROTO_HTTPS);
-    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, (long)CURLPROTO_HTTPS);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, client->userAgent);
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, RCReceiveBody);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeContext);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, RCReceiveHeader);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, response);
-    if (body != NULL || bodyLength != 0) {
-      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
-      curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)bodyLength);
+    if (ifMatch != NULL) {
+      size_t length = strlen(ifMatch) + 11;
+      char *header = (char *)malloc(length);
+      struct curl_slist *added;
+      if (header == NULL) {
+        curl_slist_free_all(headers); curl_easy_cleanup(curl); free(currentURL);
+        RCErrorSet(error, 1, "Out of memory setting write precondition"); return 0;
+      }
+      snprintf(header, length, "If-Match: %s", ifMatch);
+      added = curl_slist_append(headers, header);
+      free(header);
+      if (added == NULL) {
+        curl_slist_free_all(headers); curl_easy_cleanup(curl); free(currentURL);
+        RCErrorSet(error, 1, "Could not set write precondition"); return 0;
+      }
+      headers = added;
+    } else if (ifNoneMatch) {
+      struct curl_slist *added = curl_slist_append(headers, "If-None-Match: *");
+      if (added == NULL) {
+        curl_slist_free_all(headers); curl_easy_cleanup(curl); free(currentURL);
+        RCErrorSet(error, 1, "Could not set create precondition"); return 0;
+      }
+      headers = added;
     }
+    {
+      struct curl_slist *added = curl_slist_append(headers,
+          "Accept: application/xml, text/vcard, text/calendar, */*");
+      if (added == NULL) {
+        curl_slist_free_all(headers); curl_easy_cleanup(curl); free(currentURL);
+        RCErrorSet(error, 1, "Could not set DAV request headers"); return 0;
+      }
+      headers = added;
+    }
+
+    /* Configuration failure must never turn a conditional write into a
+       request with a different method, body or trust policy. */
+#define RC_SET_OPTION(option, value) do { \
+    curlResult = curl_easy_setopt(curl, (option), (value)); \
+    if (curlResult != CURLE_OK) goto request_setup_failed; \
+  } while (0)
+    RC_SET_OPTION(CURLOPT_URL, currentURL);
+    RC_SET_OPTION(CURLOPT_CUSTOMREQUEST, method);
+    RC_SET_OPTION(CURLOPT_USERNAME, client->username);
+    RC_SET_OPTION(CURLOPT_PASSWORD, client->password);
+    RC_SET_OPTION(CURLOPT_HTTPAUTH, (long)CURLAUTH_BASIC);
+    RC_SET_OPTION(CURLOPT_CAINFO, client->certificatePath);
+    RC_SET_OPTION(CURLOPT_SSL_VERIFYPEER, 1L);
+    RC_SET_OPTION(CURLOPT_SSL_VERIFYHOST, 2L);
+    RC_SET_OPTION(CURLOPT_PROTOCOLS, (long)CURLPROTO_HTTPS);
+    RC_SET_OPTION(CURLOPT_REDIR_PROTOCOLS, (long)CURLPROTO_HTTPS);
+    RC_SET_OPTION(CURLOPT_FOLLOWLOCATION, 0L);
+    RC_SET_OPTION(CURLOPT_NOSIGNAL, 1L);
+    RC_SET_OPTION(CURLOPT_CONNECTTIMEOUT, 20L);
+    RC_SET_OPTION(CURLOPT_TIMEOUT, 120L);
+    RC_SET_OPTION(CURLOPT_USERAGENT, client->userAgent);
+    RC_SET_OPTION(CURLOPT_HTTPHEADER, headers);
+    RC_SET_OPTION(CURLOPT_WRITEFUNCTION, RCReceiveBody);
+    RC_SET_OPTION(CURLOPT_WRITEDATA, &writeContext);
+    RC_SET_OPTION(CURLOPT_HEADERFUNCTION, RCReceiveHeader);
+    RC_SET_OPTION(CURLOPT_HEADERDATA, response);
+    if (body != NULL || bodyLength != 0) {
+      RC_SET_OPTION(CURLOPT_POSTFIELDS, body);
+      RC_SET_OPTION(CURLOPT_POSTFIELDSIZE, (long)bodyLength);
+    }
+
+#undef RC_SET_OPTION
 
     curlResult = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response->statusCode);
@@ -367,8 +409,9 @@ int RCHTTPClientRequest(RCHTTPClient *client, const char *method,
       free(currentURL);
       return 0;
     }
-    if (response->statusCode == 301 || response->statusCode == 302 ||
-        response->statusCode == 307 || response->statusCode == 308) {
+    if (ifMatch == NULL && !ifNoneMatch &&
+        (response->statusCode == 301 || response->statusCode == 302 ||
+         response->statusCode == 307 || response->statusCode == 308)) {
       char *redirectURL = NULL;
       if (response->location == NULL || redirectCount == RC_HTTP_REDIRECT_LIMIT ||
           !RCURLResolve(response->effectiveURL, response->location,
@@ -385,8 +428,43 @@ int RCHTTPClientRequest(RCHTTPClient *client, const char *method,
     }
     free(currentURL);
     return 1;
+
+request_setup_failed:
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(currentURL);
+    RCErrorSet(error, (int)curlResult, "Could not configure DAV request: %s",
+               curl_easy_strerror(curlResult));
+    return 0;
   }
   free(currentURL);
   RCErrorSet(error, 1, "Too many DAV redirects");
   return 0;
+}
+
+int RCHTTPClientRequest(RCHTTPClient *client, const char *method, const char *url,
+    const char *depth, const char *contentType, const void *body, size_t length,
+    RCHTTPResponse *response, RCError *error)
+{
+  /* Do not allow a future caller to accidentally bypass conditional writes. */
+  if (strcasecmp(method, "PUT") == 0 || strcasecmp(method, "DELETE") == 0) {
+    RCErrorSet(error, 1, "DAV mutations require a conditional request"); return 0;
+  }
+  return RCRequest(client, method, url, depth, contentType, body, length,
+                   response, error, NULL, 0);
+}
+
+int RCHTTPClientConditionalRequest(RCHTTPClient *client, const char *method,
+    const char *url, const char *type, const void *body, size_t length,
+    const char *ifMatch, int ifNoneMatch, RCHTTPResponse *response, RCError *error)
+{
+  if (method == NULL || length > LONG_MAX ||
+      (strcmp(method,"PUT") && strcmp(method,"DELETE")) ||
+      (ifMatch ? (!RCWriteETagIsStrong(ifMatch) || ifNoneMatch) : !ifNoneMatch) ||
+      (!strcmp(method,"DELETE") && (!ifMatch || body || length)) ||
+      (!strcmp(method,"PUT") && (!body || !length))) {
+    RCErrorSet(error, 1, "Invalid conditional DAV mutation"); return 0;
+  }
+  return RCRequest(client, method, url, NULL, type, body, length,
+                   response, error, ifMatch, ifNoneMatch);
 }

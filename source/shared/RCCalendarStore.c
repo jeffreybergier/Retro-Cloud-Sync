@@ -51,7 +51,7 @@ static long long RCFind(RCCalendarStore *s, const char *format, ...)
 }
 static const char schema[] =
     "CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);"
-    "INSERT INTO schema_version SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM "
+    "INSERT INTO schema_version SELECT 2 WHERE NOT EXISTS(SELECT 1 FROM "
     "schema_version);"
     "CREATE TABLE IF NOT EXISTS accounts(id INTEGER PRIMARY KEY,username TEXT UNIQUE "
     "NOT NULL,sync_id TEXT NOT NULL,generation INTEGER NOT NULL DEFAULT "
@@ -65,7 +65,7 @@ static const char schema[] =
     "NULL DEFAULT 0,UNIQUE(account_id,url));"
     "CREATE TABLE IF NOT EXISTS calendar_resources(id INTEGER PRIMARY KEY,calendar_id "
     "INTEGER NOT NULL REFERENCES calendars(id),href TEXT NOT NULL,uid TEXT,etag "
-    "TEXT,raw_ical BLOB NOT NULL,export_ical BLOB,parse_error TEXT,export_error "
+    "TEXT,raw_ical BLOB NOT NULL,export_ical BLOB,export_etag TEXT,parse_error TEXT,export_error "
     "TEXT,export_status TEXT NOT NULL DEFAULT 'pending',seen_run "
     "INTEGER,remote_missing INTEGER NOT NULL DEFAULT 0,UNIQUE(calendar_id,href));"
     "CREATE INDEX IF NOT EXISTS resource_uid ON calendar_resources(calendar_id,uid);"
@@ -154,10 +154,11 @@ RCCalendarStore *RCCalendarStoreOpen(const char *path, const char *username,
   if (!RCCalendarStoreSQL(s, error, "PRAGMA foreign_keys=ON") ||
       !RCCalendarStoreSQL(s, error, "%s", schema))
     goto fail;
-  if (RCScalar(s, "SELECT version FROM schema_version") != 1) {
+  if (RCScalar(s, "SELECT version FROM schema_version") != 2) {
     RCErrorSet(error, 1, "Unsupported calendar database version");
     goto fail;
   }
+  if (!RCWriteJournalInitialize(s->db, error)) goto fail;
   if (!RCCalendarStoreSQL(s, error,
                           "INSERT OR IGNORE INTO accounts(username,sync_id) "
                           "VALUES(%Q,lower(hex(randomblob(16))))",
@@ -172,6 +173,27 @@ RCCalendarStore *RCCalendarStoreOpen(const char *path, const char *username,
 fail:
   RCCalendarStoreClose(s);
   return NULL;
+}
+
+RCWriteJournal RCCalendarStoreWriteJournal(RCCalendarStore *s)
+{
+  RCWriteJournal journal;
+  journal.db = s->db; journal.account = s->account; return journal;
+}
+
+int RCCalendarStoreSnapshotWriteBases(RCCalendarStore *s, long long generation, RCError *e)
+{
+  if (sqlite3_get_autocommit(s->db) || generation <= 0 || s->run ||
+      RCFind(s, "SELECT generation FROM accounts WHERE id=%lld", s->account) != generation) {
+    RCErrorSet(e, 1, "Calendar write bases require the publication transaction"); return 0;
+  }
+  return RCCalendarStoreSQL(s, e,
+      "DELETE FROM write_bases WHERE account_id=%lld;"
+      "INSERT INTO write_bases(account_id,resource_key,href,etag,body,local_revision) "
+      "SELECT c.account_id,'resource-'||r.id,r.href,r.export_etag,r.export_ical,%lld "
+      "FROM calendar_resources r JOIN calendars c ON c.id=r.calendar_id WHERE "
+      "c.account_id=%lld AND c.remote_missing=0 AND r.remote_missing=0 AND r.export_ical IS NOT NULL",
+      s->account, generation, s->account);
 }
 void RCCalendarStoreClose(RCCalendarStore *s)
 {

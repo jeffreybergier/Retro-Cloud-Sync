@@ -141,7 +141,7 @@ int main(void)
   RCContactStoreClose(store);
   store = NULL;
   if (RCScalar(path, "SELECT COUNT(*) FROM contacts") != 1 ||
-      RCScalar(path, "SELECT version FROM schema_version") != 3 ||
+      RCScalar(path, "SELECT version FROM schema_version") != 4 ||
       RCScalar(path, "SELECT COUNT(*) FROM contacts WHERE sync_record_id IS NULL") != 0 ||
       RCScalar(path, "SELECT COUNT(*) FROM contact_properties WHERE sync_record_id IS NULL") != 0 ||
       RCScalar(path, "SELECT COUNT(*) FROM contact_properties") !=

@@ -13,6 +13,10 @@ ifneq ($(strip $(SHARED_SOURCE_NAMES)),)
   PPC_SHARED_LIBRARY := $(SHARED_BUILD_ROOT)/ppc/libRetroCloudShared.a
   I386_SHARED_LIBRARY := $(SHARED_BUILD_ROOT)/i386/libRetroCloudShared.a
 
+# Shared structs (including durable write operations) cross compilation units.
+# Rebuild their consumers when a shared header changes.
+$(PPC_SHARED_OBJECTS) $(I386_SHARED_OBJECTS): $(wildcard $(SHARED_SOURCE_ROOT)/*.h)
+
 shared-config: validate-build $(PPC_SHARED_LIBRARY) $(I386_SHARED_LIBRARY)
 
 $(PPC_SHARED_LIBRARY): $(PPC_SHARED_OBJECTS)

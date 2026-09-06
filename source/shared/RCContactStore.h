@@ -3,6 +3,7 @@
 
 #include "RCError.h"
 #include "RCVCard.h"
+#include "RCWriteJournal.h"
 
 #include <stddef.h>
 
@@ -25,6 +26,7 @@ RCContactStore *RCContactStoreOpen(const char *path, const char *username,
 void RCContactStoreClose(RCContactStore *store);
 int RCContactStoreIsAccount(RCContactStore *store, const char *username);
 const char *RCContactStoreSyncIdentifier(RCContactStore *store);
+RCWriteJournal RCContactStoreWriteJournal(RCContactStore *store);
 int RCContactStoreGetPublicationState(RCContactStore *store,
                                       long long *generation,
                                       long long *publishedGeneration,

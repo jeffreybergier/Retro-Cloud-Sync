@@ -51,7 +51,7 @@ $(SYNC_TEST_I386_OBJECT): $(SYNC_TEST_VERIFIER_SOURCE)
 
 $(SYNC_TEST_FIXTURE_GENERATOR): $(SYNC_TEST_FIXTURE_SOURCE) \
 		$(SHARED_SOURCE_ROOT)/RCError.c $(SHARED_SOURCE_ROOT)/RCVCard.c \
-		$(SHARED_SOURCE_ROOT)/RCContactStore.c $(LIBVC_HOST_LIBRARY)
+		$(SHARED_SOURCE_ROOT)/RCContactStore.c $(SHARED_SOURCE_ROOT)/RCWriteJournal.c $(LIBVC_HOST_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@echo "  > building Sync Services fixture generator"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror \
