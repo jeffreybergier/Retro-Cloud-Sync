@@ -51,7 +51,7 @@ static long long RCFind(RCCalendarStore *s, const char *format, ...)
 }
 static const char schema[] =
     "CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);"
-    "INSERT INTO schema_version SELECT 2 WHERE NOT EXISTS(SELECT 1 FROM "
+    "INSERT INTO schema_version SELECT 3 WHERE NOT EXISTS(SELECT 1 FROM "
     "schema_version);"
     "CREATE TABLE IF NOT EXISTS accounts(id INTEGER PRIMARY KEY,username TEXT UNIQUE "
     "NOT NULL,sync_id TEXT NOT NULL,generation INTEGER NOT NULL DEFAULT "
@@ -67,7 +67,8 @@ static const char schema[] =
     "INTEGER NOT NULL REFERENCES calendars(id),href TEXT NOT NULL,uid TEXT,etag "
     "TEXT,raw_ical BLOB NOT NULL,export_ical BLOB,export_etag TEXT,parse_error TEXT,export_error "
     "TEXT,export_status TEXT NOT NULL DEFAULT 'pending',seen_run "
-    "INTEGER,remote_missing INTEGER NOT NULL DEFAULT 0,UNIQUE(calendar_id,href));"
+    "INTEGER,remote_missing INTEGER NOT NULL DEFAULT 0,"
+    "scope_excluded INTEGER NOT NULL DEFAULT 0,UNIQUE(calendar_id,href));"
     "CREATE INDEX IF NOT EXISTS resource_uid ON calendar_resources(calendar_id,uid);"
     "CREATE TABLE IF NOT EXISTS sync_record_ids(owner TEXT NOT NULL,object_key TEXT "
     "NOT NULL,sync_id TEXT NOT NULL UNIQUE,PRIMARY KEY(owner,object_key));"
@@ -94,7 +95,7 @@ static const char schema[] =
     "CREATE VIEW IF NOT EXISTS available_events AS SELECT c.display_name AS "
     "calendar_name,e.*,r.href,r.etag,r.parse_error,r.export_error,r.export_status FROM "
     "events e JOIN calendar_resources r ON r.id=e.resource_id JOIN calendars c ON "
-    "c.id=r.calendar_id WHERE r.remote_missing=0 AND c.remote_missing=0;"
+    "c.id=r.calendar_id WHERE r.remote_missing=0 AND c.remote_missing=0 AND r.scope_excluded=0;"
     "CREATE VIEW IF NOT EXISTS recurrence_rules AS SELECT "
     "p.component_id,p.position,p.value AS rule FROM ical_properties p WHERE "
     "p.name='RRULE';"
@@ -154,7 +155,22 @@ RCCalendarStore *RCCalendarStoreOpen(const char *path, const char *username,
   if (!RCCalendarStoreSQL(s, error, "PRAGMA foreign_keys=ON") ||
       !RCCalendarStoreSQL(s, error, "%s", schema))
     goto fail;
-  if (RCScalar(s, "SELECT version FROM schema_version") != 2) {
+  if (RCScalar(s, "SELECT version FROM schema_version") == 2) {
+    /* Preserve existing cache and Sync Services identities when adding scope. */
+    if (!RCCalendarStoreSQL(s, error,
+        "BEGIN IMMEDIATE;ALTER TABLE calendar_resources ADD COLUMN "
+        "scope_excluded INTEGER NOT NULL DEFAULT 0;"
+        "DROP VIEW available_events;"
+        "CREATE VIEW available_events AS SELECT c.display_name AS calendar_name,e.*,"
+        "r.href,r.etag,r.parse_error,r.export_error,r.export_status FROM events e "
+        "JOIN calendar_resources r ON r.id=e.resource_id JOIN calendars c ON c.id=r.calendar_id "
+        "WHERE r.remote_missing=0 AND c.remote_missing=0 AND r.scope_excluded=0;"
+        "UPDATE schema_version SET version=3;COMMIT")) {
+      RCCalendarStoreSQL(s, NULL, "ROLLBACK");
+      goto fail;
+    }
+  }
+  if (RCScalar(s, "SELECT version FROM schema_version") != 3) {
     RCErrorSet(error, 1, "Unsupported calendar database version");
     goto fail;
   }
@@ -192,7 +208,8 @@ int RCCalendarStoreSnapshotWriteBases(RCCalendarStore *s, long long generation, 
       "INSERT INTO write_bases(account_id,resource_key,href,etag,body,local_revision) "
       "SELECT c.account_id,'resource-'||r.id,r.href,r.export_etag,r.export_ical,%lld "
       "FROM calendar_resources r JOIN calendars c ON c.id=r.calendar_id WHERE "
-      "c.account_id=%lld AND c.remote_missing=0 AND r.remote_missing=0 AND r.export_ical IS NOT NULL",
+      "c.account_id=%lld AND c.remote_missing=0 AND r.remote_missing=0 "
+      "AND r.scope_excluded=0 AND r.export_ical IS NOT NULL",
       s->account, generation, s->account);
 }
 void RCCalendarStoreClose(RCCalendarStore *s)
@@ -208,6 +225,11 @@ void RCCalendarStoreClose(RCCalendarStore *s)
 }
 int RCCalendarStoreBeginRun(RCCalendarStore *s, RCError *error)
 {
+  return RCCalendarStoreBeginScopedRun(s, 0, error);
+}
+
+int RCCalendarStoreBeginScopedRun(RCCalendarStore *s, int scoped, RCError *error)
+{
   if (s->run) {
     RCErrorSet(error, 1, "Calendar fetch already active");
     return 0;
@@ -220,6 +242,7 @@ int RCCalendarStoreBeginRun(RCCalendarStore *s, RCError *error)
     s->run = 0;
     return 0;
   }
+  s->scopedRun = scoped != 0;
   return 1;
 }
 int RCCalendarStoreCollection(RCCalendarStore *s, const RCDAVCollection *c,
@@ -245,13 +268,13 @@ int RCCalendarStoreSeen(RCCalendarStore *s, long long calendar, const char *href
 {
   *current = RCFind(s,
                     "SELECT COUNT(*) FROM calendar_resources WHERE calendar_id=%lld "
-                    "AND href=%Q AND etag=%Q",
+                    "AND href=%Q AND etag=%Q AND length(raw_ical)>0",
                     calendar, href, etag) == 1;
   if (!*current)
     return 1;
   return RCCalendarStoreSQL(
       s, error,
-      "UPDATE calendar_resources SET seen_run=%lld,remote_missing=0 WHERE "
+      "UPDATE calendar_resources SET seen_run=%lld,remote_missing=0,scope_excluded=0 WHERE "
       "calendar_id=%lld AND href=%Q",
       s->run, calendar, href);
 }
@@ -418,7 +441,7 @@ int RCCalendarStoreSave(RCCalendarStore *s, long long calendar, const char *href
           s->db,
           "UPDATE calendar_resources SET "
           "href=?,etag=?,raw_ical=?,parse_error=?,uid=COALESCE(?,uid),seen_run=?,"
-          "remote_missing=0,export_status='pending' WHERE id=?",
+          "remote_missing=0,scope_excluded=0,export_status='pending' WHERE id=?",
           -1, &q, NULL) != SQLITE_OK)
     goto sql_error;
   sqlite3_bind_text(q, 1, href, -1, SQLITE_TRANSIENT);
@@ -455,25 +478,74 @@ int RCCalendarStoreFinishRun(RCCalendarStore *s, int success, const char *messag
   if (!run)
     return 0;
   if (success) {
-    success = RCCalendarStoreSQL(
-        s, error,
-        "UPDATE calendars SET remote_missing=(seen_run IS NULL OR seen_run!=%lld) "
-        "WHERE account_id=%lld;UPDATE calendar_resources SET remote_missing=(seen_run "
-        "IS NULL OR seen_run!=%lld) WHERE calendar_id IN(SELECT id FROM calendars "
-        "WHERE account_id=%lld);UPDATE accounts SET generation=%lld WHERE id=%lld",
-        run, s->account, run, s->account, run, s->account);
+    /* A time-range query cannot establish remote deletion. Keep that distinct
+       from a resource leaving the selected scope, including after a narrower run. */
+    success = RCCalendarStoreSQL(s, error,
+        s->scopedRun ?
+        "UPDATE calendar_resources SET scope_excluded=(seen_run IS NULL OR seen_run!=%lld) "
+        "WHERE calendar_id IN(SELECT id FROM calendars WHERE account_id=%lld)" :
+        "UPDATE calendar_resources SET scope_excluded=0,remote_missing=(seen_run IS NULL OR seen_run!=%lld) "
+        "WHERE calendar_id IN(SELECT id FROM calendars WHERE account_id=%lld)",
+        run, s->account);
+    if (success)
+      success = RCCalendarStoreSQL(
+          s, error,
+          "UPDATE calendars SET remote_missing=(seen_run IS NULL OR seen_run!=%lld) "
+          "WHERE account_id=%lld;UPDATE accounts SET generation=%lld WHERE id=%lld",
+          run, s->account, run, s->account);
     if (success)
       success = RCCalendarStoreSQL(s, error, "COMMIT");
   }
   if (!success)
     RCCalendarStoreSQL(s, NULL, "ROLLBACK");
   s->run = 0;
+  s->scopedRun = 0;
   return RCCalendarStoreSQL(
              s, error,
              "UPDATE sync_runs SET "
              "finished_at=CURRENT_TIMESTAMP,succeeded=%d,message=%Q WHERE id=%lld",
              success, message, run) &&
          success;
+}
+
+int RCCalendarStorePruneHistory(RCCalendarStore *s, RCError *error)
+{
+  long long freePages, pages;
+  if (s->run || !sqlite3_get_autocommit(s->db) ||
+      RCFind(s, "SELECT count(*) FROM accounts WHERE id=%lld AND generation>0 "
+                "AND published_generation=generation", s->account) != 1) {
+    RCErrorSet(error, 1, "Calendar history cleanup requires a published inventory");
+    return 0;
+  }
+  /* Retain small identity rows so widening the window reuses the same records.
+     Never discard data needed by an outgoing operation awaiting resolution. */
+  if (!RCCalendarStoreSQL(s, error,
+      "BEGIN IMMEDIATE;"
+      "CREATE TEMP TABLE IF NOT EXISTS calendar_prune_ids(id INTEGER PRIMARY KEY);"
+      "DELETE FROM calendar_prune_ids;"
+      "INSERT INTO calendar_prune_ids SELECT r.id FROM calendar_resources r "
+      "JOIN calendars c ON c.id=r.calendar_id WHERE c.account_id=%lld AND r.scope_excluded=1 "
+      "AND r.export_status!='outside history window' "
+      "AND NOT EXISTS(SELECT 1 FROM write_operations w WHERE w.account_id=c.account_id "
+      "AND (w.resource_key='resource-'||r.id OR w.href=r.href) "
+      "AND w.state NOT IN ('acknowledged','cancelled'));"
+      "DELETE FROM ical_components WHERE resource_id IN(SELECT id FROM calendar_prune_ids);"
+      "DELETE FROM write_bases WHERE account_id=%lld AND resource_key IN "
+      "(SELECT 'resource-'||id FROM calendar_prune_ids);"
+      "UPDATE calendar_resources SET raw_ical=X'',export_ical=NULL,export_etag=NULL,etag=NULL,"
+      "parse_error=NULL,export_error=NULL,export_status='outside history window' "
+      "WHERE id IN(SELECT id FROM calendar_prune_ids);"
+      "DROP TABLE calendar_prune_ids;COMMIT", s->account, s->account)) {
+    RCCalendarStoreSQL(s, NULL, "ROLLBACK");
+    return 0;
+  }
+  /* DELETE makes pages reusable but does not shrink the file. Avoid rewriting
+     the database on every poll; compact only when significant space is free. */
+  freePages = RCScalar(s, "PRAGMA freelist_count");
+  pages = RCScalar(s, "PRAGMA page_count");
+  if (freePages >= 256 && pages > 0 && freePages > pages / 5)
+    return RCCalendarStoreSQL(s, error, "VACUUM");
+  return 1;
 }
 char *RCCalendarStoreIdentity(RCCalendarStore *s, const char *owner, const char *key,
                               RCError *error)

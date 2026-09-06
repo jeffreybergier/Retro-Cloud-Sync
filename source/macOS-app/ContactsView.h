@@ -11,6 +11,7 @@
  @private
   NSMatrix *contactsSyncMatrix_;
   NSMatrix *calendarsSyncMatrix_;
+  NSPopUpButton *calendarHistoryPopup_;
   NSTextField *usernameField_;
   NSSecureTextField *passwordField_;
   RCIntervalSlider *intervalSlider_;

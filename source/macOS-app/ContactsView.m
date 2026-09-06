@@ -171,12 +171,12 @@
     calendarsSyncMatrix_ = [[NSMatrix alloc]
         initWithFrame:NSMakeRect(innerLeft,
                                  NSMinY(calendarsBoxFrame) + boxPadding,
-                                 innerRight - innerLeft, 68)
+                                 innerRight - innerLeft - 160, 68)
                   mode:NSRadioModeMatrix
              prototype:radioCell
           numberOfRows:3
        numberOfColumns:1];
-    [calendarsSyncMatrix_ setCellSize:NSMakeSize(innerRight - innerLeft, 20)];
+    [calendarsSyncMatrix_ setCellSize:NSMakeSize(innerRight - innerLeft - 160, 20)];
     [calendarsSyncMatrix_ setIntercellSpacing:
         NSMakeSize(0, controlSpacing)];
     [calendarsSyncMatrix_ setAutosizesCells:YES];
@@ -192,6 +192,30 @@
     [calendarsSyncMatrix_ setTarget:self];
     [calendarsSyncMatrix_ setAction:@selector(syncSettingsChanged:)];
     [self addSubview:calendarsSyncMatrix_];
+
+    {
+      NSTextField *historyLabel = [[[NSTextField alloc] initWithFrame:
+          NSMakeRect(innerRight - 152, NSMinY(calendarsBoxFrame) + 50, 148, 20)] autorelease];
+      [historyLabel setBezeled:NO];
+      [historyLabel setDrawsBackground:NO];
+      [historyLabel setEditable:NO];
+      [historyLabel setSelectable:NO];
+      [historyLabel setAlignment:NSRightTextAlignment];
+      [historyLabel setStringValue:@"Past events:"];
+      [historyLabel setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
+      [self addSubview:historyLabel];
+    }
+    calendarHistoryPopup_ = [[NSPopUpButton alloc]
+        initWithFrame:NSMakeRect(innerRight - 152, NSMinY(calendarsBoxFrame) + 22, 152, 26)
+        pullsDown:NO];
+    [calendarHistoryPopup_ addItemWithTitle:@"All history"];
+    [calendarHistoryPopup_ addItemWithTitle:@"Last 1 year"];
+    [calendarHistoryPopup_ addItemWithTitle:@"Last 2 years"];
+    [calendarHistoryPopup_ setToolTip:@"All future events are included. Older imported events leave iCal; iCloud keeps them. Ongoing recurring series are kept in full."];
+    [calendarHistoryPopup_ setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
+    [calendarHistoryPopup_ setTarget:self];
+    [calendarHistoryPopup_ setAction:@selector(syncSettingsChanged:)];
+    [self addSubview:calendarHistoryPopup_];
 
     [self addLabel:@"Apple ID:"
              frame:NSMakeRect(innerLeft, accountTop - 24, 70, 20)];
@@ -233,7 +257,8 @@
     [usernameField_ setNextKeyView:passwordField_];
     [passwordField_ setNextKeyView:accountButton_];
     [accountButton_ setNextKeyView:contactsSyncMatrix_];
-    [calendarsSyncMatrix_ setNextKeyView:intervalSlider_];
+    [calendarsSyncMatrix_ setNextKeyView:calendarHistoryPopup_];
+    [calendarHistoryPopup_ setNextKeyView:intervalSlider_];
     [intervalSlider_ setNextKeyView:usernameField_];
 
     [self reloadSettings];
@@ -246,6 +271,7 @@
   [usernameField_ setDelegate:nil];
   [contactsSyncMatrix_ release];
   [calendarsSyncMatrix_ release];
+  [calendarHistoryPopup_ release];
   [usernameField_ release];
   [passwordField_ release];
   [intervalSlider_ release];
@@ -286,6 +312,11 @@
   username = [contacts objectForKey:@"Username"];
   contactsSyncMode = [contacts objectForKey:@"ContactsSyncMode"];
   calendarsSyncMode = [contacts objectForKey:@"CalendarsSyncMode"];
+  {
+    id history = [contacts objectForKey:@"CalendarHistoryYears"];
+    int years = [history isKindOfClass:[NSNumber class]] ? [history intValue] : 2;
+    [calendarHistoryPopup_ selectItemAtIndex:years >= 0 && years <= 2 ? years : 2];
+  }
   [contactsSyncMatrix_ selectCellAtRow:
       [contactsSyncMode isEqualToString:@"TwoWay"] ? 2 :
       ([contactsSyncMode isEqualToString:@"OneWay"] ||
@@ -396,12 +427,17 @@
       [[oldContacts objectForKey:@"CalendarsSyncMode"]
           isEqualToString:calendarsSyncMode] &&
       [[oldContacts objectForKey:@"SyncIntervalSeconds"] longLongValue] ==
-          syncIntervalSeconds_) {
+          syncIntervalSeconds_ &&
+      [[oldContacts objectForKey:@"CalendarHistoryYears"] intValue] ==
+          [calendarHistoryPopup_ indexOfSelectedItem] &&
+      [oldContacts objectForKey:@"CalendarHistoryYears"] != nil) {
     return YES;
   }
   if (![RCConfiguration saveContactsSyncMode:contactsSyncMode
       calendarsSyncMode:calendarsSyncMode username:username
-      syncInterval:syncIntervalSeconds_ error:&errorMessage]) {
+      syncInterval:syncIntervalSeconds_
+      calendarHistoryYears:(int)[calendarHistoryPopup_ indexOfSelectedItem]
+      error:&errorMessage]) {
     [self setError:errorMessage];
     return NO;
   }

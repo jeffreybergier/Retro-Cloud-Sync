@@ -42,8 +42,26 @@ int main(void)
   if (fd < 0)
     return 1;
   close(fd);
+  /* Upgrade an actual v2 resource table without rebuilding resource identities. */
+  {
+    sqlite3 *legacy = NULL;
+    int status = sqlite3_open(path, &legacy);
+    if (status == SQLITE_OK) status = sqlite3_exec(legacy,
+        "CREATE TABLE schema_version(version INTEGER NOT NULL);INSERT INTO schema_version VALUES(2);"
+        "CREATE TABLE calendar_resources(id INTEGER PRIMARY KEY,calendar_id INTEGER NOT NULL REFERENCES calendars(id),"
+        "href TEXT NOT NULL,uid TEXT,etag TEXT,raw_ical BLOB NOT NULL,export_ical BLOB,export_etag TEXT,"
+        "parse_error TEXT,export_error TEXT,export_status TEXT NOT NULL DEFAULT 'pending',seen_run INTEGER,"
+        "remote_missing INTEGER NOT NULL DEFAULT 0,UNIQUE(calendar_id,href));"
+        "INSERT INTO calendar_resources(id,calendar_id,href,uid,raw_ical) VALUES(4242,1,'legacy','legacy',X'010203')",
+        NULL, NULL, NULL);
+    sqlite3_close(legacy);
+    CHECK(status == SQLITE_OK);
+  }
   s = RCCalendarStoreOpen(path, "calendar-test", &error);
   CHECK(s);
+  CHECK(scalar(s, "SELECT version FROM schema_version") == 3);
+  CHECK(scalar(s, "SELECT length(raw_ical) FROM calendar_resources WHERE id=4242 AND scope_excluded=0") == 3);
+  CHECK(RCCalendarStoreSQL(s, &error, "DELETE FROM calendar_resources WHERE id=4242"));
   CHECK(RCCalendarFixturePopulate(s, "initial", &error));
   CHECK(scalar(s, "SELECT count(*) FROM events") == 5);
   CHECK(scalar(s, "SELECT count(*) FROM alarms") == 1);

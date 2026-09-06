@@ -11,7 +11,8 @@ static void RCPrintUsage(const char *program)
 {
   fprintf(stderr,
       "Usage: %s --username address --database path --ca cacert.pem\n"
-      "       [--url https://caldav.icloud.com]\n", program);
+      "       [--url https://caldav.icloud.com] [--history-years 0|1|2]\n"
+      "       History defaults to 2 years; 0 downloads all history.\n", program);
 }
 
 static void RCPrintProgress(const char *message, void *context)
@@ -34,6 +35,8 @@ int main(int argc, char **argv)
   int index;
   int status = 1;
   int curlInitialized = 0;
+  int historyYears = 2;
+  char today[9], historyStart[17];
 
   for (index = 1; index < argc; index++) {
     if (strcmp(argv[index], "--username") == 0 && index + 1 < argc) {
@@ -44,6 +47,10 @@ int main(int argc, char **argv)
       certificatePath = argv[++index];
     } else if (strcmp(argv[index], "--url") == 0 && index + 1 < argc) {
       serviceURL = argv[++index];
+    } else if (strcmp(argv[index], "--history-years") == 0 && index + 1 < argc &&
+               strlen(argv[index + 1]) == 1 && argv[index + 1][0] >= '0' &&
+               argv[index + 1][0] <= '2') {
+      historyYears = argv[++index][0] - '0';
     } else {
       RCPrintUsage(argv[0]);
       return 2;
@@ -74,7 +81,13 @@ int main(int argc, char **argv)
   config.certificatePath = certificatePath;
   config.allowedHostSuffix = ".icloud.com";
   config.progress = RCPrintProgress;
-  if (!RCCalDAVMirrorFetch(&config, store, &result, &error)) goto failed;
+  if (historyYears) {
+    struct icaltimetype now = icaltime_current_time_with_zone(icaltimezone_get_utc_timezone());
+    snprintf(today, sizeof(today), "%04d%02d%02d", now.year, now.month, now.day);
+    if (!RCCalDAVHistoryStart(today, historyYears, historyStart, &error)) goto failed;
+  }
+  if (!RCCalDAVMirrorFetchSince(&config, store, historyYears ? historyStart : NULL,
+                               &result, &error)) goto failed;
 
   printf("Read-only CalDAV fetch complete.\n");
   printf("Collections: %ld\n", result.collectionCount);

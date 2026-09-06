@@ -3,8 +3,15 @@
 Contacts and Calendars still run one-way. The daemon records publication bases,
 but does not collect local edits, enqueue writes, or run the outgoing writer.
 The shared APIs provide durable state, conditional transport, recovery and value
-editing for the future two-way coordinator. Fresh databases are required:
-Contacts schema 4 and Calendars schema 2. There is no migration.
+editing for the future two-way coordinator. Contacts requires schema 4;
+Calendars schema 3 upgrades schema 2 in place. Earlier test schemas have no migration.
+
+Calendar history windows use `scope_excluded` separately from `remote_missing`:
+absence from a time-range query does not establish remote deletion. Publication
+bases exclude those resources. After successful publication, history cleanup
+can release their cached bodies while preserving identities and all unresolved
+outgoing operations. A future two-way coordinator must also keep scope changes
+separate from user-requested deletions.
 
 ## Publication bases
 

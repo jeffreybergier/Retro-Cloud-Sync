@@ -49,6 +49,7 @@ typedef struct {
   char *calendarDescriptionPath;
   int contactsEnabled;
   int calendarsEnabled;
+  int calendarHistoryYears;
 } RCSyncWorker;
 
 static char *RCCopyCString(const char *string)
@@ -187,7 +188,13 @@ static void *RCSyncWorkerMain(void *context)
         mirrorConfig.allowedHostSuffix = ".icloud.com";
         mirrorConfig.progress = RCCalendarProgress;
         if (password != NULL) {
-          if (RCCalDAVMirrorFetch(&mirrorConfig, calendarStore, &result, &error))
+          char historyStart[17];
+          const char *today = [[[NSDate date] descriptionWithCalendarFormat:@"%Y%m%d"
+              timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil] UTF8String];
+          if ((worker->calendarHistoryYears == 0 ||
+               RCCalDAVHistoryStart(today, worker->calendarHistoryYears, historyStart, &error)) &&
+              RCCalDAVMirrorFetchSince(&mirrorConfig, calendarStore,
+                  worker->calendarHistoryYears ? historyStart : NULL, &result, &error))
             NSLog(@"Calendars sync complete: %ld calendars, %ld downloaded, %ld "
                   @"unchanged",
                   result.collectionCount, result.downloadedResourceCount,
@@ -197,10 +204,12 @@ static void *RCSyncWorkerMain(void *context)
         }
         RCErrorClear(&error);
         if (RCSyncServicesPushCalendars(calendarStore, worker->calendarDescriptionPath,
-                                        0, &syncRecordCount, &error))
+                                        0, &syncRecordCount, &error)) {
           NSLog(@"Calendar Sync Services export complete: %ld records",
                 syncRecordCount);
-        else
+          if (!RCCalendarStorePruneHistory(calendarStore, &error))
+            NSLog(@"Calendar history cleanup failed: %s", error.message);
+        } else
           NSLog(@"Calendar Sync Services export failed: %s", error.message);
         RCCalendarStoreClose(calendarStore);
       }
@@ -229,6 +238,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
   NSString *username;
   NSString *serviceURL;
   NSNumber *interval;
+  id historyYears;
   NSString *contactsSyncMode;
   NSString *calendarsSyncMode;
   NSString *databasePath;
@@ -253,6 +263,15 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
   }
   worker->contactsEnabled = [contactsSyncMode isEqualToString:@"OneWay"];
   worker->calendarsEnabled = [calendarsSyncMode isEqualToString:@"OneWay"];
+  historyYears = [contacts objectForKey:@"CalendarHistoryYears"];
+  worker->calendarHistoryYears = historyYears == nil ? 2 :
+      ([historyYears isKindOfClass:[NSNumber class]] ? [historyYears intValue] : -1);
+  if (worker->calendarHistoryYears < 0 || worker->calendarHistoryYears > 2 ||
+      (historyYears != nil && [historyYears isKindOfClass:[NSNumber class]] &&
+       [historyYears doubleValue] != worker->calendarHistoryYears)) {
+    NSLog(@"Calendar history must be 0 (all history), 1, or 2 years");
+    return NO;
+  }
   if ([contactsSyncMode isEqualToString:@"TwoWay"])
     NSLog(@"Contacts 2-way sync is not implemented yet");
   if ([calendarsSyncMode isEqualToString:@"TwoWay"])

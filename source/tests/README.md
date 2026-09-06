@@ -47,7 +47,10 @@ access for assistive devices” for the test client's confirmation dialogs.
   recovery, long values and concurrent parsing. Also compiled for PPC/i386.
 - `portable/CardDAVMirrorTests.c`: real mirror/store logic with simulated HTTP.
 - `portable/CalendarCodecStoreTests.c`: calendar parsing and database regressions.
-- `portable/CalDAVMirrorTests.c`: real calendar mirror logic with simulated HTTP.
+- `portable/CalDAVMirrorTests.c`: real calendar mirror logic with simulated HTTP,
+  history REPORT shape, old recurring series/future/overlapping events, failed
+  scope changes, window expansion, publication-gated cache cleanup, account and
+  pending-write retention, and actual SQLite file compaction.
 - `macOS/app/`: `AppGUITestRunner` and its command-line entry point.
 - `macOS/network/`: standalone `HTTPSDownloadTest.m` and its remote runner.
 - `macOS/contacts-syncservices/`: `ContactsSyncServicesVerifier.m` and runners.

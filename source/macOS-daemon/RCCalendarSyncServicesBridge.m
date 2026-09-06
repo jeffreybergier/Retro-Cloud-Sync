@@ -598,7 +598,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
             "SELECT r.id,r.calendar_id,r.raw_ical,r.export_ical,r.parse_error,r.etag FROM "
             "calendar_resources r JOIN calendars c ON "
             "c.id=r.calendar_id WHERE c.account_id=? AND "
-            "c.remote_missing=0 AND r.remote_missing=0 ORDER BY r.id",
+            "c.remote_missing=0 AND r.remote_missing=0 AND r.scope_excluded=0 ORDER BY r.id",
             -1, &q, NULL) != SQLITE_OK)
       goto sqlError;
     sqlite3_bind_int64(q, 1, store->account);

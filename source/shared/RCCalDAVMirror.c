@@ -1,6 +1,28 @@
 #include "RCCalDAVMirror.h"
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
+
+int RCCalDAVHistoryStart(const char *today, int years, char start[17], RCError *error)
+{
+  struct icaltimetype date;
+  size_t i;
+  if (!today || strlen(today) != 8 || (years != 1 && years != 2)) goto invalid;
+  for (i = 0; i < 8; i++)
+    if (today[i] < '0' || today[i] > '9') goto invalid;
+  date = icaltime_from_string(today);
+  if (!icaltime_is_valid_time(date) || date.year <= years || date.month < 1 ||
+      date.month > 12 || date.day < 1 ||
+      date.day > icaltime_days_in_month(date.month, date.year)) goto invalid;
+  date.year -= years;
+  if (date.day > icaltime_days_in_month(date.month, date.year))
+    date.day = icaltime_days_in_month(date.month, date.year);
+  snprintf(start, 17, "%04d%02d%02dT000000Z", date.year, date.month, date.day);
+  return 1;
+invalid:
+  RCErrorSet(error, 1, "Calendar history requires a valid UTC date and 1 or 2 years");
+  return 0;
+}
 static const char principalRequest[] =
     "<?xml version=\"1.0\"?><d:propfind "
     "xmlns:d=\"DAV:\"><d:prop><d:current-user-principal/></d:prop></d:propfind>";
@@ -14,6 +36,12 @@ static void progress(const RCCardDAVMirrorConfig *c, const char *message)
 }
 int RCCalDAVMirrorFetch(const RCCardDAVMirrorConfig *config, RCCalendarStore *store,
                         RCCardDAVMirrorResult *result, RCError *error)
+{
+  return RCCalDAVMirrorFetchSince(config, store, NULL, result, error);
+}
+
+int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStore *store,
+                             const char *start, RCCardDAVMirrorResult *result, RCError *error)
 {
   RCHTTPClientConfig http;
   RCHTTPClient *client = NULL;
@@ -38,7 +66,7 @@ int RCCalDAVMirrorFetch(const RCCardDAVMirrorConfig *config, RCCalendarStore *st
   http.allowedHostSuffix = config->allowedHostSuffix;
   http.userAgent = "RetroCloudSync-CalDAV/0.1";
   client = RCHTTPClientCreate(&http, error);
-  if (!client || !RCCalendarStoreBeginRun(store, error))
+  if (!client || !RCCalendarStoreBeginScopedRun(store, start != NULL, error))
     goto done;
   started = 1;
   progress(config, "Discovering calendar principal and home");
@@ -52,9 +80,12 @@ int RCCalDAVMirrorFetch(const RCCardDAVMirrorConfig *config, RCCalendarStore *st
   result->collectionCount = (long)count;
   for (i = 0; i < count; i++) {
     long long calendar;
-    if (!RCCalendarStoreCollection(store, &collections[i], &calendar, error) ||
-        !RCDAVListResources(client, collections[i].url, &resources, &resourceCount,
-                            error))
+    if (!RCCalendarStoreCollection(store, &collections[i], &calendar, error))
+      goto done;
+    if (!(start ? RCDAVListCalendarResourcesSince(client, collections[i].url, start,
+                                                  &resources, &resourceCount, error)
+                : RCDAVListResources(client, collections[i].url, &resources,
+                                     &resourceCount, error)))
       goto done;
     result->listedResourceCount += (long)resourceCount;
     for (j = 0; j < resourceCount; j++) {

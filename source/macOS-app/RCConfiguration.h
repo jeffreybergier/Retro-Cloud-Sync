@@ -19,6 +19,7 @@
            calendarsSyncMode:(NSString *)calendarsSyncMode
                      username:(NSString *)username
                  syncInterval:(long long)syncInterval
+         calendarHistoryYears:(int)calendarHistoryYears
                         error:(NSString **)errorMessage;
 + (BOOL)saveMailProxy:(NSDictionary *)mailProxy
                  error:(NSString **)errorMessage;

@@ -57,6 +57,7 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
           [NSNumber numberWithBool:NO], kRCCalendarsEnabled,
           @"Disabled", kRCContactsSyncMode,
           @"Disabled", kRCCalendarsSyncMode,
+          [NSNumber numberWithInt:2], @"CalendarHistoryYears",
           @"", kRCUsername,
           @"https://contacts.icloud.com", kRCServiceURL,
           [NSNumber numberWithInt:3600], kRCSyncIntervalSeconds, nil],
@@ -156,6 +157,7 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
            calendarsSyncMode:(NSString *)calendarsSyncMode
                      username:(NSString *)username
                  syncInterval:(long long)syncInterval
+         calendarHistoryYears:(int)calendarHistoryYears
                         error:(NSString **)errorMessage;
 {
   NSDictionary *loaded = [self loadConfigurationWithError:errorMessage];
@@ -163,6 +165,10 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
   NSDictionary *contacts;
 
   if (loaded == nil) return NO;
+  if (calendarHistoryYears < 0 || calendarHistoryYears > 2) {
+    if (errorMessage != NULL) *errorMessage = @"Calendar history must be 0, 1, or 2 years";
+    return NO;
+  }
   configuration = [NSMutableDictionary dictionaryWithDictionary:loaded];
   contacts = [NSDictionary dictionaryWithObjectsAndKeys:
       [NSNumber numberWithBool:
@@ -172,6 +178,7 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
       kRCCalendarsEnabled,
       contactsSyncMode, kRCContactsSyncMode,
       calendarsSyncMode, kRCCalendarsSyncMode,
+      [NSNumber numberWithInt:calendarHistoryYears], @"CalendarHistoryYears",
       username, kRCUsername,
       @"https://contacts.icloud.com", kRCServiceURL,
       [NSNumber numberWithLongLong:syncInterval],

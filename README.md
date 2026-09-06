@@ -55,8 +55,9 @@ published base revisions, conditional DAV writes with interruption recovery,
 and edits that preserve unrecognized resource fields. These APIs are not yet
 connected to local change collection or automatic uploads. See
 [WRITE_SAFETY.md](WRITE_SAFETY.md) for the state machine, APIs and tests.
-This version requires fresh Contacts and Calendar databases (schema 4 and 2);
-there is no migration from the previous test databases.
+Contacts requires schema 4. Calendars uses schema 3 and automatically upgrades
+schema 2 while retaining cached data and Sync Services identities. Earlier test
+database schemas still require fresh databases.
 
 When enabled, the daemon downloads contacts immediately after it starts and
 then at the configured interval. Its read-only mirror is stored at:
@@ -115,8 +116,36 @@ at the shared sync interval. The database is:
 ~/Library/Application Support/RetroCloudSync/Calendar.sqlite
 ```
 
+In **Sync → Calendar**, **Past events** selects **Last 1 year**, **Last 2 years**
+(the default), or **All history**. The rolling cutoff is midnight UTC on today's
+date one or two calendar years ago (February 29 clamps to February 28).
+All future events are included. The daemon uses a CalDAV `calendar-query REPORT`
+to request only matching event resource URLs and ETags, then downloads changed
+resources. The server matches recurrence instances and event overlap, so a series
+that began years ago but still occurs is included. Matching series are retained
+in full, including their old instances, exceptions and time zones; the window
+does not truncate their recurrence rules or raw bodies. Limited mode queries
+VEVENT resources; **All history** retains the previous full-resource inventory,
+including stored tasks.
+
+Events outside the selected window leave the app's one-way iCal projection;
+their originals remain in iCloud. After successful Sync Services publication,
+the daemon clears excluded cached bodies and parsed rows and compacts SQLite
+when substantial free space has accumulated. Small identity records remain so
+widening the window downloads older resources using the same identities.
+Unresolved outgoing operations protect their cached resources. Filtering only
+at the Sync Services stage would not reduce the mirror database, so history is
+limited at fetch time instead.
+
+Failed, incomplete, or rejected queries preserve the previous committed scope
+and are logged/retried; they do not trigger an automatic full-history download.
+The preference is stored as `Contacts.CalendarHistoryYears`: `0`, `1`, or `2`;
+existing configurations without the key also default to two years. The CalDAV
+probe accepts `--history-years 0|1|2` and defaults to two years. It does not publish
+to iCal or run the post-publication cache cleanup.
+
 `calendars` and `events` contain readable fields. `calendar_resources` retains
-original `.ics` bytes and the last successfully exported body. Ordered
+original `.ics` bytes and the last successfully exported body for retained resources. Ordered
 `ical_components`, `ical_properties`, and `ical_parameters` retain additional
 properties. SQL views expose available events, recurrence, participants, alarms,
 and time zones. Newly created files use a format readable by Tiger's `sqlite3`:

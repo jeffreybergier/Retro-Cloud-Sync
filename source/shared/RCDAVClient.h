@@ -17,6 +17,10 @@ int RCDAVListCollections(RCHTTPClient *, const char *, const char *, const char 
                          RCDAVCollection **, size_t *, RCError *);
 int RCDAVListResources(RCHTTPClient *, const char *, RCDAVResource **, size_t *,
                        RCError *);
+/* Calendar-query inventory; start is a validated UTC YYYYMMDDTHHMMSSZ value.
+   No end bound: ongoing recurring series and all future events are included. */
+int RCDAVListCalendarResourcesSince(RCHTTPClient *, const char *, const char *,
+                                    RCDAVResource **, size_t *, RCError *);
 void RCDAVFreeCollections(RCDAVCollection *, size_t);
 void RCDAVFreeResources(RCDAVResource *, size_t);
 #endif

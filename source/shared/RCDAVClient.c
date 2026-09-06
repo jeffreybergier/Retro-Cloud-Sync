@@ -2,6 +2,7 @@
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 static const char kDAVNamespace[] = "DAV:";
@@ -303,8 +304,9 @@ static int RCAppendResource(RCDAVResource **resources, size_t *count, char *url,
   return 1;
 }
 
-int RCDAVListResources(RCHTTPClient *client, const char *collectionURL,
-                       RCDAVResource **resources, size_t *count, RCError *error)
+static int RCListResources(RCHTTPClient *client, const char *collectionURL,
+                           const char *method, const char *request,
+                           RCDAVResource **resources, size_t *count, RCError *error)
 {
   RCHTTPResponse response;
   xmlDocPtr document = NULL;
@@ -313,14 +315,18 @@ int RCDAVListResources(RCHTTPClient *client, const char *collectionURL,
   *resources = NULL;
   *count = 0;
   RCHTTPResponseInit(&response);
-  if (!RCHTTPClientRequest(client, "PROPFIND", collectionURL, "1",
-                           "application/xml; charset=utf-8", kInventoryRequest,
-                           strlen(kInventoryRequest), &response, error) ||
+  if (!RCHTTPClientRequest(client, method, collectionURL, "1",
+                           "application/xml; charset=utf-8", request,
+                           strlen(request), &response, error) ||
       !RCRequireMultiStatus(&response, "Resource inventory", error))
     goto finished;
   document = RCParseXML(&response, error);
   if (document == NULL)
     goto finished;
+  if (RCFindDescendant(xmlDocGetRootElement(document), "error", kDAVNamespace)) {
+    RCErrorSet(error, 1, "DAV inventory contains an error or truncated result");
+    goto finished;
+  }
   for (node = xmlDocGetRootElement(document)->children; node != NULL;
        node = node->next) {
     xmlNodePtr resourceType;
@@ -329,6 +335,11 @@ int RCDAVListResources(RCHTTPClient *client, const char *collectionURL,
     char *etag;
     if (!RCNodeIs(node, "response", kDAVNamespace))
       continue;
+    if (RCFindChild(node, "status", kDAVNamespace) &&
+        !RCPropertyStatusIsSuccessful(node)) {
+      RCErrorSet(error, 1, "DAV inventory contains an unsuccessful resource response");
+      goto finished;
+    }
     resourceType = RCSuccessfulProperty(node, "resourcetype", kDAVNamespace);
     if (resourceType != NULL &&
         RCFindChild(resourceType, "collection", kDAVNamespace) != NULL)
@@ -362,6 +373,39 @@ finished:
     xmlFreeDoc(document);
   RCHTTPResponseClear(&response);
   return success;
+}
+
+int RCDAVListResources(RCHTTPClient *client, const char *url,
+                       RCDAVResource **resources, size_t *count, RCError *error)
+{
+  return RCListResources(client, url, "PROPFIND", kInventoryRequest,
+                         resources, count, error);
+}
+
+int RCDAVListCalendarResourcesSince(RCHTTPClient *client, const char *url,
+                                    const char *start, RCDAVResource **resources,
+                                    size_t *count, RCError *error)
+{
+  char request[512];
+  size_t i;
+  *resources = NULL;
+  *count = 0;
+  /* Validate before embedding a caller-supplied value in XML. */
+  if (!start || strlen(start) != 16 || start[8] != 'T' || start[15] != 'Z')
+    goto invalid;
+  for (i = 0; i < 15; i++)
+    if (i != 8 && (start[i] < '0' || start[i] > '9')) goto invalid;
+  snprintf(request, sizeof(request),
+      "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+      "<c:calendar-query xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\">"
+      "<d:prop><d:getetag/></d:prop><c:filter>"
+      "<c:comp-filter name=\"VCALENDAR\"><c:comp-filter name=\"VEVENT\">"
+      "<c:time-range start=\"%s\"/>"
+      "</c:comp-filter></c:comp-filter></c:filter></c:calendar-query>", start);
+  return RCListResources(client, url, "REPORT", request, resources, count, error);
+invalid:
+  RCErrorSet(error, 1, "Calendar history start must be a UTC date-time");
+  return 0;
 }
 
 void RCDAVFreeCollections(RCDAVCollection *collections, size_t count)

@@ -10,11 +10,16 @@ typedef struct {
   sqlite3 *db;
   long long account;
   long long run;
+  int scopedRun;
 } RCCalendarStore;
 RCCalendarStore *RCCalendarStoreOpen(const char *, const char *, RCError *);
 void RCCalendarStoreClose(RCCalendarStore *);
 int RCCalendarStoreSQL(RCCalendarStore *, RCError *, const char *, ...);
 int RCCalendarStoreBeginRun(RCCalendarStore *, RCError *);
+int RCCalendarStoreBeginScopedRun(RCCalendarStore *, int scoped, RCError *);
+/* After successful publication only: release excluded cached bodies/parsed rows,
+   retaining identities and all unresolved outgoing operations; reclaim disk space. */
+int RCCalendarStorePruneHistory(RCCalendarStore *, RCError *);
 int RCCalendarStoreCollection(RCCalendarStore *, const RCDAVCollection *, long long *,
                               RCError *);
 int RCCalendarStoreSeen(RCCalendarStore *, long long, const char *, const char *, int *,
