@@ -75,7 +75,7 @@ $(SYNC_TEST_EMPTY_DATABASE): $(SYNC_TEST_UPDATED_DATABASE) \
 .PHONY: syncservices-test-config
 
 # Derive every phase from a predecessor to retain production SQLite identities.
-SYNC_TEST_EXTRA_PHASES := reordered stripped malformed missing-identity
+SYNC_TEST_EXTRA_PHASES := reordered stripped malformed missing-identity retained interrupted fresh
 syncservices-test-config: $(addprefix $(SYNC_TEST_BUILD_ROOT)/Contacts-,$(addsuffix .sqlite,$(SYNC_TEST_EXTRA_PHASES)))
 $(SYNC_TEST_BUILD_ROOT)/Contacts-reordered.sqlite: $(SYNC_TEST_INITIAL_DATABASE) $(SYNC_TEST_FIXTURE_GENERATOR)
 	@cp "$<" "$@"
@@ -86,3 +86,13 @@ $(SYNC_TEST_BUILD_ROOT)/Contacts-stripped.sqlite: $(SYNC_TEST_UPDATED_DATABASE) 
 $(SYNC_TEST_BUILD_ROOT)/Contacts-malformed.sqlite $(SYNC_TEST_BUILD_ROOT)/Contacts-missing-identity.sqlite: $(SYNC_TEST_INITIAL_DATABASE) $(SYNC_TEST_FIXTURE_GENERATOR)
 	@cp "$<" "$@"
 	@"$(SYNC_TEST_FIXTURE_GENERATOR)" "$(patsubst Contacts-%,%,$(basename $(notdir $@)))" "$@"
+
+$(SYNC_TEST_BUILD_ROOT)/Contacts-retained.sqlite $(SYNC_TEST_BUILD_ROOT)/Contacts-interrupted.sqlite: $(SYNC_TEST_INITIAL_DATABASE) $(SYNC_TEST_FIXTURE_GENERATOR)
+	@cp "$<" "$@"
+	@"$(SYNC_TEST_FIXTURE_GENERATOR)" "$(patsubst Contacts-%,%,$(basename $(notdir $@)))" "$@"
+
+$(SYNC_TEST_BUILD_ROOT)/Contacts-fresh.sqlite: $(SYNC_TEST_FIXTURE_GENERATOR)
+	@rm -f "$@"
+	@"$(SYNC_TEST_FIXTURE_GENERATOR)" fresh "$@"
+
+$(SYNC_TEST_PPC_OBJECT) $(SYNC_TEST_I386_OBJECT): $(DAEMON_SOURCE_ROOT)/RCContactSyncClient.h

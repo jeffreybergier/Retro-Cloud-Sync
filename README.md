@@ -56,17 +56,38 @@ toolbar to follow that log. It is stored at:
 ~/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log
 ```
 
-After a successful CardDAV download, the daemon submits the available contacts
-to Tiger's Sync Services Contacts schema. This is a one-way, push-only bridge:
+The daemon submits the last complete contact inventory to Tiger's Sync Services
+Contacts schema, even if the latest download or Keychain access failed. This is a
+one-way, push-only bridge:
 it does not upload Address Book edits to iCloud or treat existing local Address
 Book cards as CardDAV records. Tiger's Address Book application identifier is
 `com.apple.AddressBook`; the separate Sync Services data class is named
 `com.apple.Contacts`.
 
-The contact database schema is upgraded automatically to add stable Sync
-Services identifiers for contacts and their child properties. Re-enter and
-save the app-specific password after installing a newly built application so
-the replacement daemon is authorized by the login Keychain.
+Contacts are scoped by account in SQLite and use a separate stable Sync Services
+client per account. Switching accounts pauses publication of the previous
+account's cached contacts; it does not remove them from Address Book. Returning
+to an account reuses its contact and child identities. Account names compare
+case-insensitively. The new contact schema requires a fresh database; there is no
+migration from the earlier unscoped schema.
+
+A contact inventory commits atomically after successful home discovery and
+complete downloads from every address book. A vanished address book, including
+a successfully discovered empty home, retires its contacts only in that account.
+Failed or interrupted runs keep the previous complete inventory available.
+`accounts.generation` and `published_generation` record durable download and
+publication progress; publication is acknowledged only after Sync Services
+finishes. A new account with no complete inventory is never published as empty.
+
+Malformed downloaded vCards are retained in `contacts.raw_vcard` with a
+`parse_error`. Their last usable body stays in `usable_vcard`, with matching
+parsed properties and child identities, so one bad card does not block other
+contacts. A malformed new card stays cached until a usable revision arrives.
+The daemon log and CardDAV probe report invalid-resource counts. The bridge
+builds the complete contact graph before opening a Sync Services session.
+
+Re-enter and save the app-specific password after installing a newly built
+application so the replacement daemon is authorized by the login Keychain.
 
 ## Calendar database and iCal import
 
@@ -205,8 +226,18 @@ and child counts, values, Unicode names/notes, birthday, company display,
 labels, preferred phone/email entries, relationship back-references, stable
 contact identities, and removal of old child records. Fixtures exercise repeat
 exports, reordered vCard properties, updates/contact deletion, and removal of
-all optional fields. Corrupt vCards and missing child identities must fail
-without publishing a partial export; a valid replay must then succeed.
+all optional fields. Corrupt usable cached vCards and missing child identities must fail
+without publishing a partial export; a valid replay must then succeed. Additional
+fixtures check that malformed remote replacements retain the previous graph,
+failed inventories can replay the complete cache, and a never-completed mirror
+cannot remove existing records. The verifier also registers and removes a
+synthetic account client using the production identifier format, checking
+Tiger's encoded filename limit without publishing any records.
+
+`make test-shared` includes deterministic CardDAV tests for account switching
+with identical URLs and UIDs, mismatched credentials, deleted/reappearing
+collections, empty homes, invalid new/replacement cards, partial DAV failures,
+publication acknowledgements, and process termination during a transaction.
 
 Before exporting, the harness snapshots existing people and groups, including
 property contents, images, multivalue labels/identities and group membership

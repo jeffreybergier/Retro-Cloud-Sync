@@ -1,4 +1,5 @@
 #import "RCSyncServicesBridge.h"
+#import "RCContactSyncClient.h"
 
 #import <Foundation/Foundation.h>
 #import <SyncServices/SyncServices.h>
@@ -20,14 +21,12 @@ static NSString * const kRCGroupEntity = @"com.apple.contacts.Group";
 static NSString * const kRCSmartGroupEntity = @"com.apple.contacts.SmartGroup";
 static NSString * const kRCIMEntity = @"com.apple.contacts.IM";
 static NSString * const kRCRelatedNameEntity = @"com.apple.contacts.Related Name";
-static NSString * const kRCProductionClientIdentifier =
-    @"com.retrocloudsync.contacts.v1";
 static NSString * const kRCTestClientIdentifier =
     @"com.retrocloudsync.contacts.test.v1";
 
 typedef struct {
   RCContactStore *store;
-  ISyncSession *session;
+  NSMutableDictionary *records;
   long recordCount;
 } RCSyncExportContext;
 
@@ -207,7 +206,7 @@ static int RCPushChild(RCSyncExportContext *context, long long contactIdentifier
       [record setObject:value forKey:@"value"];
     }
   }
-  [context->session pushChangesFromRecord:record withIdentifier:recordIdentifier];
+  [context->records setObject:record forKey:recordIdentifier];
   [identifiers addObject:recordIdentifier];
   if (primaryIdentifier != NULL && *primaryIdentifier == nil &&
       RCParameterContains(property, "TYPE", "PREF")) {
@@ -318,8 +317,7 @@ static int RCExportContact(long long contactIdentifier,
                                         forKey:@"primary street address"];
   if (primaryURL != nil) [contact setObject:[NSArray arrayWithObject:primaryURL]
                                     forKey:@"primary URL"];
-  [context->session pushChangesFromRecord:contact
-                           withIdentifier:contactSyncIdentifier];
+  [context->records setObject:contact forKey:contactSyncIdentifier];
   context->recordCount++;
   RCVCardDocumentClear(&document);
   return 1;
@@ -338,6 +336,7 @@ static int RCSyncServicesPushContactsForClient(
   ISyncClient *client;
   ISyncSession *session = nil;
   RCSyncExportContext context;
+  long long generation, publishedGeneration;
   int success = 0;
 
   RCErrorClear(error);
@@ -347,6 +346,21 @@ static int RCSyncServicesPushContactsForClient(
     return 0;
   }
   @try {
+    if (!RCContactStoreGetPublicationState(store, &generation,
+                                           &publishedGeneration, error)) return 0;
+    if (generation == 0) {
+      RCErrorSet(error, 1, "Contact mirror has no complete inventory yet");
+      return 0;
+    }
+    /* Assemble the complete graph before touching Sync Services. A corrupt
+       cached body or missing child identity must not publish a partial graph.
+       Stable IDs and the unacknowledged generation make interrupted sessions
+       replayable, including when the next network attempt fails. */
+    memset(&context, 0, sizeof(context));
+    context.store = store;
+    context.records = [NSMutableDictionary dictionary];
+    if (!RCContactStoreForEachAvailableContact(store, RCExportContact,
+                                               &context, error)) return 0;
     manager = [ISyncManager sharedManager];
     if (![manager isEnabled]) {
       RCErrorSet(error, 1, "Sync Services is disabled or unavailable");
@@ -369,12 +383,19 @@ static int RCSyncServicesPushContactsForClient(
        related entities to use the same slow/fast mode, even when this client
        has no records for some of those entities. */
     [session clientWantsToPushAllRecordsForEntityNames:entities];
-    memset(&context, 0, sizeof(context));
-    context.store = store;
-    context.session = session;
-    if ([session shouldPushChangesForEntityName:kRCContactEntity] &&
-        !RCContactStoreForEachAvailableContact(store, RCExportContact,
-                                               &context, error)) goto finished;
+    {
+      NSEnumerator *keys = [context.records keyEnumerator];
+      NSString *key;
+      while ((key = [keys nextObject]) != nil) {
+        NSDictionary *record = [context.records objectForKey:key];
+        if (![session shouldPushChangesForEntityName:
+                [record objectForKey:ISyncRecordEntityNameKey]]) {
+          RCErrorSet(error, 1, "Sync Services did not permit the contact push");
+          goto finished;
+        }
+        [session pushChangesFromRecord:record withIdentifier:key];
+      }
+    }
     {
       NSEnumerator *enumerator = [entities objectEnumerator];
       NSString *entity;
@@ -406,6 +427,7 @@ static int RCSyncServicesPushContactsForClient(
     }
     [session finishSyncing];
     session = nil;
+    if (!RCContactStoreMarkPublished(store, generation, error)) goto finished;
     if (recordCount != NULL) *recordCount = context.recordCount;
     success = 1;
   }
@@ -431,7 +453,8 @@ int RCSyncServicesPushContacts(RCContactStore *store,
                                long *recordCount, RCError *error)
 {
   return RCSyncServicesPushContactsForClient(store, clientDescriptionPath,
-      kRCProductionClientIdentifier, recordCount, error);
+      store == NULL ? nil : RCContactSyncClientIdentifier(
+          RCString(RCContactStoreSyncIdentifier(store))), recordCount, error);
 }
 
 int RCSyncServicesPushTestContacts(RCContactStore *store,

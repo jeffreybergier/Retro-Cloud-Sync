@@ -64,10 +64,9 @@ static int RCFetchCollection(const RCCardDAVMirrorConfig *config,
       result->unchangedResourceCount++;
     } else {
       RCHTTPResponse response;
-      RCVCardDocument document;
+      int parseFailed;
       const char *etag;
       RCHTTPResponseInit(&response);
-      RCVCardDocumentInit(&document);
       RCProgress(config, "Downloading changed contact");
       if (!RCHTTPClientRequest(client, "GET", resources[index].url, NULL,
           NULL, NULL, 0, &response, error)) {
@@ -80,20 +79,16 @@ static int RCFetchCollection(const RCCardDAVMirrorConfig *config,
         RCHTTPResponseClear(&response);
         goto finished;
       }
-      if (!RCVCardParse(response.body, response.bodyLength, &document, error)) {
-        RCHTTPResponseClear(&response);
-        goto finished;
-      }
       etag = response.etag != NULL ? response.etag : resources[index].etag;
-      if (!RCContactStoreSaveVCard(store, collectionIdentifier, runIdentifier,
+      if (!RCContactStoreSaveResource(store, collectionIdentifier, runIdentifier,
           resources[index].url, etag, response.body, response.bodyLength,
-          &document, error)) {
-        RCVCardDocumentClear(&document);
+          &parseFailed, error)) {
         RCHTTPResponseClear(&response);
         goto finished;
       }
       result->downloadedResourceCount++;
-      RCVCardDocumentClear(&document);
+      if (parseFailed)
+        RCProgress(config, "Invalid contact retained; keeping its last usable version if available");
       RCHTTPResponseClear(&response);
     }
   }
@@ -136,6 +131,10 @@ int RCCardDAVMirrorFetch(const RCCardDAVMirrorConfig *config,
     RCErrorSet(error, 1, "CardDAV mirror configuration is incomplete");
     return 0;
   }
+  if (!RCContactStoreIsAccount(store, config->username)) {
+    RCErrorSet(error, 1, "CardDAV credentials do not match the contact database account");
+    return 0;
+  }
   memset(&httpConfig, 0, sizeof(httpConfig));
   httpConfig.username = config->username;
   httpConfig.password = config->password;
@@ -157,10 +156,6 @@ int RCCardDAVMirrorFetch(const RCCardDAVMirrorConfig *config,
   RCProgress(config, "Discovering address books");
   if (!RCDAVListCollections(client, homeURL, "addressbook", kCardDAVNamespace, &collections, &collectionCount,
                          error)) goto finished;
-  if (collectionCount == 0) {
-    RCErrorSet(error, 1, "No CardDAV address books were found");
-    goto finished;
-  }
   result->collectionCount = (long)collectionCount;
   for (index = 0; index < collectionCount; index++) {
     if (!RCFetchCollection(config, client, store, &collections[index],

@@ -18,3 +18,20 @@ $(SHARED_TEST_OUTPUT): $(SHARED_TEST_SOURCES)
 		$(SHARED_TEST_SOURCES) -lsqlite3 -o "$@"
 
 .PHONY: shared-test-run
+
+CONTACT_DAV_TEST_OUTPUT := $(SHARED_TEST_BUILD_ROOT)/RetroCloudContactDAVTests
+CONTACT_DAV_TEST_SOURCES := $(SOURCE_ROOT)/shared-test/ContactDAVTests.c \
+	$(SHARED_SOURCE_ROOT)/RCError.c $(SHARED_SOURCE_ROOT)/RCVCard.c \
+	$(SHARED_SOURCE_ROOT)/RCContactStore.c $(SHARED_SOURCE_ROOT)/RCCardDAVMirror.c \
+	$(SHARED_SOURCE_ROOT)/RCDAVClient.c
+
+$(CONTACT_DAV_TEST_OUTPUT): $(CONTACT_DAV_TEST_SOURCES)
+	@mkdir -p "$(dir $@)"
+	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror \
+		-I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include -I/usr/include/libxml2 \
+		$(CONTACT_DAV_TEST_SOURCES) -lsqlite3 -lxml2 -o "$@"
+
+shared-test-run: contact-dav-test
+contact-dav-test: $(CONTACT_DAV_TEST_OUTPUT)
+	@"$(CONTACT_DAV_TEST_OUTPUT)"
+.PHONY: contact-dav-test

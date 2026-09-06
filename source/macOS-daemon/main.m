@@ -137,24 +137,35 @@ static void *RCSyncWorkerMain(void *context)
     RCErrorClear(&error);
     if (!RCICloudCredentialsCopyPassword(worker->username, &password, &passwordLength,
                                          &error)) {
-      NSLog(@"Account sync skipped: %s", error.message);
-    } else if (worker->contactsEnabled &&
-               (store = RCContactStoreOpen(worker->databasePath, &error)) == NULL) {
-      NSLog(@"Contacts sync failed: %s", error.message);
-    } else if (worker->contactsEnabled) {
-      memset(&mirrorConfig, 0, sizeof(mirrorConfig));
-      mirrorConfig.serviceURL = worker->serviceURL;
-      mirrorConfig.username = worker->username;
-      mirrorConfig.password = password;
-      mirrorConfig.certificatePath = worker->certificatePath;
-      mirrorConfig.allowedHostSuffix = ".icloud.com";
-      mirrorConfig.progress = RCContactProgress;
-      if (RCCardDAVMirrorFetch(&mirrorConfig, store, &result, &error) &&
-          RCContactStoreGetStatistics(store, &statistics, &error)) {
-        NSLog(@"Contacts sync complete: %ld downloaded, %ld unchanged, "
-              @"%ld available, %ld remotely absent",
-              result.downloadedResourceCount, result.unchangedResourceCount,
-              statistics.availableCount, statistics.missingCount);
+      NSLog(@"Account download skipped: %s", error.message);
+    }
+    if (worker->contactsEnabled) {
+      RCErrorClear(&error);
+      store = RCContactStoreOpen(worker->databasePath, worker->username, &error);
+      if (store == NULL) {
+        NSLog(@"Contacts database failed: %s", error.message);
+      } else {
+        memset(&mirrorConfig, 0, sizeof(mirrorConfig));
+        mirrorConfig.serviceURL = worker->serviceURL;
+        mirrorConfig.username = worker->username;
+        mirrorConfig.password = password;
+        mirrorConfig.certificatePath = worker->certificatePath;
+        mirrorConfig.allowedHostSuffix = ".icloud.com";
+        mirrorConfig.progress = RCContactProgress;
+        if (password != NULL) {
+          if (RCCardDAVMirrorFetch(&mirrorConfig, store, &result, &error) &&
+              RCContactStoreGetStatistics(store, &statistics, &error)) {
+            NSLog(@"Contacts sync complete: %ld downloaded, %ld unchanged, "
+                  @"%ld available, %ld remotely absent, %ld invalid resources",
+                  result.downloadedResourceCount, result.unchangedResourceCount,
+                  statistics.availableCount, statistics.missingCount,
+                  statistics.parseErrorCount);
+          } else {
+            NSLog(@"Contacts sync failed: %s", error.message);
+          }
+        }
+        /* A failed fetch (or locked Keychain) must not prevent retrying the
+           last committed mirror. The bridge refuses a never-completed mirror. */
         RCErrorClear(&error);
         if (RCSyncServicesPushContacts(store, worker->syncClientDescriptionPath,
                                        &syncRecordCount, &error)) {
@@ -162,8 +173,6 @@ static void *RCSyncWorkerMain(void *context)
         } else {
           NSLog(@"Sync Services export failed: %s", error.message);
         }
-      } else {
-        NSLog(@"Contacts sync failed: %s", error.message);
       }
     }
     RCContactStoreClose(store);
@@ -566,7 +575,7 @@ int main(int argc, char *argv[])
     int status;
 
     RCErrorClear(&error);
-    store = RCContactStoreOpen(argv[2], &error);
+    store = RCContactStoreOpen(argv[2], "syncservices-test", &error);
     status = store != NULL && RCSyncServicesPushTestContacts(
         store, argv[3], &recordCount, &error);
     if (status) {

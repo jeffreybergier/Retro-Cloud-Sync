@@ -4,10 +4,15 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 
 struct RCContactStore {
   sqlite3 *database;
+  long long account;
+  long long activeRun;
+  char *username;
+  char syncIdentifier[33];
 };
 
 static int RCStoreError(RCContactStore *store, RCError *error,
@@ -52,26 +57,32 @@ static void RCBindText(sqlite3_stmt *statement, int index, const char *value)
 
 static const char kRCSchema[] =
   "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);"
-  "INSERT INTO schema_version(version) SELECT 1 "
+  "INSERT INTO schema_version(version) SELECT 3 "
     "WHERE NOT EXISTS (SELECT 1 FROM schema_version);"
+  "CREATE TABLE IF NOT EXISTS accounts ("
+    "id INTEGER PRIMARY KEY, username TEXT COLLATE NOCASE NOT NULL UNIQUE,"
+    "sync_id TEXT NOT NULL UNIQUE, generation INTEGER NOT NULL DEFAULT 0,"
+    "published_generation INTEGER NOT NULL DEFAULT 0);"
   "CREATE TABLE IF NOT EXISTS sync_runs ("
     "id INTEGER PRIMARY KEY, started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-    "finished_at TEXT, succeeded INTEGER, message TEXT);"
+    "finished_at TEXT, succeeded INTEGER, message TEXT, account_id INTEGER NOT NULL REFERENCES accounts(id));"
   "CREATE TABLE IF NOT EXISTS collections ("
-    "id INTEGER PRIMARY KEY, url TEXT NOT NULL UNIQUE, display_name TEXT,"
-    "last_complete_run_id INTEGER);"
+    "id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL REFERENCES accounts(id),"
+    "url TEXT NOT NULL, display_name TEXT, last_complete_run_id INTEGER,"
+    "remote_missing INTEGER NOT NULL DEFAULT 0, UNIQUE(account_id,url));"
   "CREATE TABLE IF NOT EXISTS contacts ("
     "id INTEGER PRIMARY KEY, collection_id INTEGER NOT NULL, href TEXT NOT NULL,"
     "uid TEXT, etag TEXT, vcard_version TEXT, formatted_name TEXT,"
     "given_name TEXT, family_name TEXT, organization TEXT, title TEXT,"
-    "birthday TEXT, raw_vcard BLOB NOT NULL, seen_run_id INTEGER NOT NULL,"
+    "birthday TEXT, raw_vcard BLOB NOT NULL, usable_vcard BLOB, parse_error TEXT,"
+    "sync_record_id TEXT NOT NULL UNIQUE, seen_run_id INTEGER NOT NULL,"
     "remote_missing INTEGER NOT NULL DEFAULT 0,"
     "UNIQUE(collection_id, href),"
     "FOREIGN KEY(collection_id) REFERENCES collections(id));"
   "CREATE TABLE IF NOT EXISTS contact_properties ("
     "id INTEGER PRIMARY KEY, contact_id INTEGER NOT NULL, position INTEGER NOT NULL,"
     "group_name TEXT, property_name TEXT NOT NULL, decoded_value TEXT,"
-    "original_value TEXT, value_type TEXT,"
+    "original_value TEXT, value_type TEXT, sync_record_id TEXT UNIQUE,"
     "FOREIGN KEY(contact_id) REFERENCES contacts(id) ON DELETE CASCADE);"
   "CREATE TABLE IF NOT EXISTS contact_parameters ("
     "id INTEGER PRIMARY KEY, property_id INTEGER NOT NULL, position INTEGER NOT NULL,"
@@ -86,44 +97,15 @@ static const char kRCSchema[] =
   "CREATE INDEX IF NOT EXISTS properties_contact "
     "ON contact_properties(contact_id, position);";
 
-static int RCMigrateSchema(RCContactStore *store, int version, RCError *error)
-{
-  if (version == 1) {
-    if (!RCExecute(store, "BEGIN IMMEDIATE", error) ||
-        !RCExecute(store,
-          "ALTER TABLE contacts ADD COLUMN sync_record_id TEXT;"
-          "ALTER TABLE contact_properties ADD COLUMN sync_record_id TEXT;"
-          "UPDATE contacts SET sync_record_id=lower(hex(randomblob(16))) "
-            "WHERE sync_record_id IS NULL;"
-          "UPDATE contact_properties SET sync_record_id=lower(hex(randomblob(16))) "
-            "WHERE sync_record_id IS NULL;"
-          "CREATE UNIQUE INDEX contacts_sync_record_id "
-            "ON contacts(sync_record_id);"
-          "CREATE UNIQUE INDEX properties_sync_record_id "
-            "ON contact_properties(sync_record_id);"
-          "UPDATE schema_version SET version=2;", error)) {
-      RCExecute(store, "ROLLBACK", NULL);
-      return 0;
-    }
-    if (!RCExecute(store, "COMMIT", error)) return 0;
-    version = 2;
-  }
-  if (version != 2) {
-    RCErrorSet(error, 1, "Unsupported contact database schema version %d",
-               version);
-    return 0;
-  }
-  return 1;
-}
-
-RCContactStore *RCContactStoreOpen(const char *path, RCError *error)
+RCContactStore *RCContactStoreOpen(const char *path, const char *username,
+                                  RCError *error)
 {
   RCContactStore *store;
   int version = 0;
 
   RCErrorClear(error);
-  if (path == NULL) {
-    RCErrorSet(error, 1, "Database path is missing");
+  if (path == NULL || username == NULL || username[0] == '\0') {
+    RCErrorSet(error, 1, "Contact database path/account is missing");
     return NULL;
   }
   store = (RCContactStore *)calloc(1, sizeof(*store));
@@ -144,6 +126,12 @@ RCContactStore *RCContactStoreOpen(const char *path, RCError *error)
     return NULL;
   }
   sqlite3_busy_timeout(store->database, 5000);
+  if (sqlite3_db_config(store->database, SQLITE_DBCONFIG_LEGACY_FILE_FORMAT,
+                        1, NULL) != SQLITE_OK) {
+    RCErrorSet(error, 1, "Could not enable Tiger-compatible SQLite file format");
+    RCContactStoreClose(store);
+    return NULL;
+  }
   if (!RCExecute(store, "PRAGMA foreign_keys=ON;", error) ||
       !RCExecute(store, kRCSchema, error)) {
     RCContactStoreClose(store);
@@ -160,25 +148,148 @@ RCContactStore *RCContactStoreOpen(const char *path, RCError *error)
     version = sqlite3_column_int(statement, 0);
     sqlite3_finalize(statement);
   }
-  if (!RCMigrateSchema(store, version, error)) {
+  if (version != 3) {
+    RCErrorSet(error, 1, "Unsupported contact database schema version %d", version);
     RCContactStoreClose(store);
     return NULL;
   }
-  return store;
+  {
+    sqlite3_stmt *statement = NULL;
+    int result;
+    store->username = strdup(username);
+    if (store->username == NULL || !RCPrepare(store,
+        "INSERT OR IGNORE INTO accounts(username,sync_id) VALUES(?,lower(hex(randomblob(16))))",
+        &statement, error)) goto account_failed;
+    RCBindText(statement, 1, username);
+    result = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    statement = NULL;
+    if (result != SQLITE_DONE || !RCPrepare(store,
+        "SELECT id,sync_id FROM accounts WHERE username=?", &statement, error))
+      goto account_failed;
+    RCBindText(statement, 1, username);
+    if (sqlite3_step(statement) != SQLITE_ROW ||
+        sqlite3_column_bytes(statement, 1) != 32) goto account_failed;
+    store->account = sqlite3_column_int64(statement, 0);
+    memcpy(store->syncIdentifier, sqlite3_column_text(statement, 1), 32);
+    sqlite3_finalize(statement);
+    return store;
+  account_failed:
+    sqlite3_finalize(statement);
+    RCErrorSet(error, 1, "Could not open contact database account");
+    RCContactStoreClose(store);
+    return NULL;
+  }
 }
 
 void RCContactStoreClose(RCContactStore *store)
 {
   if (store == NULL) return;
   if (store->database != NULL) sqlite3_close(store->database);
+  free(store->username);
   free(store);
+}
+
+int RCContactStoreIsAccount(RCContactStore *store, const char *username)
+{
+  return store != NULL && username != NULL &&
+      strcasecmp(store->username, username) == 0;
+}
+
+const char *RCContactStoreSyncIdentifier(RCContactStore *store)
+{
+  return store != NULL ? store->syncIdentifier : NULL;
+}
+
+int RCContactStoreGetPublicationState(RCContactStore *store,
+                                      long long *generation,
+                                      long long *publishedGeneration,
+                                      RCError *error)
+{
+  sqlite3_stmt *statement = NULL;
+  int result;
+  if (store->activeRun) {
+    RCErrorSet(error, 1, "Cannot publish an incomplete contact inventory");
+    return 0;
+  }
+  if (!RCPrepare(store, "SELECT generation,published_generation FROM accounts WHERE id=?",
+                 &statement, error)) return 0;
+  sqlite3_bind_int64(statement, 1, store->account);
+  result = sqlite3_step(statement);
+  if (result == SQLITE_ROW) {
+    *generation = sqlite3_column_int64(statement, 0);
+    *publishedGeneration = sqlite3_column_int64(statement, 1);
+  }
+  sqlite3_finalize(statement);
+  return result == SQLITE_ROW ? 1 : RCStoreError(store, error, "Could not read contact publication state");
+}
+
+int RCContactStoreMarkPublished(RCContactStore *store, long long generation,
+                                RCError *error)
+{
+  sqlite3_stmt *statement = NULL;
+  int result;
+  if (store->activeRun || generation <= 0) {
+    RCErrorSet(error, 1, "Cannot acknowledge an incomplete contact inventory");
+    return 0;
+  }
+  if (!RCPrepare(store,
+      "UPDATE accounts SET published_generation=? WHERE id=? AND generation=?",
+      &statement, error)) return 0;
+  sqlite3_bind_int64(statement, 1, generation);
+  sqlite3_bind_int64(statement, 2, store->account);
+  sqlite3_bind_int64(statement, 3, generation);
+  result = sqlite3_step(statement);
+  sqlite3_finalize(statement);
+  if (result != SQLITE_DONE) return RCStoreError(store, error, "Could not acknowledge contact publication");
+  if (sqlite3_changes(store->database) != 1) {
+    RCErrorSet(error, 1, "Contact inventory changed during publication");
+    return 0;
+  }
+  return 1;
+}
+
+static int RCCheckCollection(RCContactStore *store, long long identifier,
+                             RCError *error)
+{
+  sqlite3_stmt *statement = NULL;
+  int result;
+  if (!RCPrepare(store, "SELECT id FROM collections WHERE id=? AND account_id=?",
+                 &statement, error)) return 0;
+  sqlite3_bind_int64(statement, 1, identifier);
+  sqlite3_bind_int64(statement, 2, store->account);
+  result = sqlite3_step(statement);
+  sqlite3_finalize(statement);
+  if (result == SQLITE_ROW) return 1;
+  RCErrorSet(error, 1, "Contact collection does not belong to this account");
+  return 0;
+}
+
+static int RCCheckRun(RCContactStore *store, long long run, RCError *error)
+{
+  if (run > 0 && store->activeRun == run) return 1;
+  RCErrorSet(error, 1, "Contact inventory is not active");
+  return 0;
 }
 
 int RCContactStoreBeginRun(RCContactStore *store, long long *runIdentifier,
                            RCError *error)
 {
-  if (!RCExecute(store, "INSERT INTO sync_runs DEFAULT VALUES", error)) return 0;
+  sqlite3_stmt *statement = NULL;
+  int result;
+  if (store->activeRun) {
+    RCErrorSet(error, 1, "A contact inventory is already active");
+    return 0;
+  }
+  if (!RCPrepare(store, "INSERT INTO sync_runs(account_id) VALUES(?)",
+                 &statement, error)) return 0;
+  sqlite3_bind_int64(statement, 1, store->account);
+  result = sqlite3_step(statement);
+  sqlite3_finalize(statement);
+  if (result != SQLITE_DONE) return RCStoreError(store, error, "Could not begin contact run");
   *runIdentifier = sqlite3_last_insert_rowid(store->database);
+  if (!RCExecute(store, "BEGIN IMMEDIATE", error)) return 0;
+  store->activeRun = *runIdentifier;
   return 1;
 }
 
@@ -191,28 +302,31 @@ int RCContactStoreGetCollection(RCContactStore *store, const char *url,
   int result;
 
   if (!RCPrepare(store,
-      "INSERT OR IGNORE INTO collections(url, display_name) VALUES(?, ?)",
+      "INSERT OR IGNORE INTO collections(url, display_name, account_id) VALUES(?, ?, ?)",
       &statement, error)) return 0;
   RCBindText(statement, 1, url);
   RCBindText(statement, 2, displayName);
+  sqlite3_bind_int64(statement, 3, store->account);
   result = sqlite3_step(statement);
   sqlite3_finalize(statement);
   if (result != SQLITE_DONE) return RCStoreError(store, error,
                                                   "Could not add collection");
 
   if (!RCPrepare(store,
-      "UPDATE collections SET display_name=COALESCE(?, display_name) WHERE url=?",
+      "UPDATE collections SET display_name=COALESCE(?, display_name) WHERE url=? AND account_id=?",
       &statement, error)) return 0;
   RCBindText(statement, 1, displayName);
   RCBindText(statement, 2, url);
+  sqlite3_bind_int64(statement, 3, store->account);
   result = sqlite3_step(statement);
   sqlite3_finalize(statement);
   if (result != SQLITE_DONE) return RCStoreError(store, error,
                                                   "Could not update collection");
 
-  if (!RCPrepare(store, "SELECT id FROM collections WHERE url=?", &statement,
+  if (!RCPrepare(store, "SELECT id FROM collections WHERE url=? AND account_id=?", &statement,
                  error)) return 0;
   RCBindText(statement, 1, url);
+  sqlite3_bind_int64(statement, 2, store->account);
   result = sqlite3_step(statement);
   if (result == SQLITE_ROW) *collectionIdentifier = sqlite3_column_int64(statement, 0);
   sqlite3_finalize(statement);
@@ -230,6 +344,7 @@ int RCContactStoreResourceIsCurrent(RCContactStore *store,
   int result;
 
   *isCurrent = 0;
+  if (!RCCheckCollection(store, collectionIdentifier, error)) return 0;
   if (!RCPrepare(store,
       "SELECT etag FROM contacts WHERE collection_id=? AND href=?", &statement,
       error)) return 0;
@@ -254,6 +369,8 @@ int RCContactStoreMarkSeen(RCContactStore *store,
 {
   sqlite3_stmt *statement = NULL;
   int result;
+  if (!RCCheckRun(store, runIdentifier, error) ||
+      !RCCheckCollection(store, collectionIdentifier, error)) return 0;
   if (!RCPrepare(store,
       "UPDATE contacts SET seen_run_id=?, remote_missing=0 "
       "WHERE collection_id=? AND href=?", &statement, error)) return 0;
@@ -420,7 +537,9 @@ int RCContactStoreSaveVCard(RCContactStore *store,
   int result;
   int success = 0;
 
-  if (!RCExecute(store, "BEGIN IMMEDIATE", error)) return 0;
+  if (!RCCheckRun(store, runIdentifier, error) ||
+      !RCCheckCollection(store, collectionIdentifier, error) ||
+      !RCExecute(store, "SAVEPOINT contact_resource", error)) return 0;
   if (!RCPrepare(store,
       "INSERT OR IGNORE INTO contacts(collection_id, href, raw_vcard, seen_run_id, "
       "sync_record_id) VALUES(?, ?, ?, ?, lower(hex(randomblob(16))))",
@@ -439,7 +558,7 @@ int RCContactStoreSaveVCard(RCContactStore *store,
   if (!RCPrepare(store,
       "UPDATE contacts SET uid=?, etag=?, vcard_version=?, formatted_name=?, "
       "given_name=?, family_name=?, organization=?, title=?, birthday=?, "
-      "raw_vcard=?, seen_run_id=?, remote_missing=0 "
+      "raw_vcard=?, usable_vcard=?10, parse_error=NULL, seen_run_id=?, remote_missing=0 "
       "WHERE collection_id=? AND href=?", &statement, error)) goto finished;
   RCBindText(statement, 1, document->uid);
   RCBindText(statement, 2, etag);
@@ -487,14 +606,73 @@ int RCContactStoreSaveVCard(RCContactStore *store,
   statement = NULL;
   if (!RCInsertProperties(store, contactIdentifier, document,
                           propertySyncIdentifiers, error)) goto finished;
-  success = RCExecute(store, "COMMIT", error);
+  success = RCExecute(store, "RELEASE contact_resource", error);
   RCFreePropertyIdentifiers(propertySyncIdentifiers, document->propertyCount);
   return success;
 
 finished:
   sqlite3_finalize(statement);
-  RCExecute(store, "ROLLBACK", NULL);
+  RCExecute(store, "ROLLBACK TO contact_resource; RELEASE contact_resource", NULL);
   RCFreePropertyIdentifiers(propertySyncIdentifiers, document->propertyCount);
+  return 0;
+}
+
+int RCContactStoreSaveResource(RCContactStore *store,
+                               long long collectionIdentifier,
+                               long long runIdentifier, const char *href,
+                               const char *etag, const unsigned char *bytes,
+                               size_t length, int *parseFailed, RCError *error)
+{
+  RCVCardDocument document;
+  RCError parseError;
+  sqlite3_stmt *statement = NULL;
+  int result;
+  const unsigned char *storedBytes = bytes != NULL ? bytes : (const unsigned char *)"";
+  *parseFailed = 0;
+  if (RCVCardParse(bytes, length, &document, &parseError)) {
+    result = RCContactStoreSaveVCard(store, collectionIdentifier, runIdentifier,
+                                    href, etag, bytes, length, &document, error);
+    RCVCardDocumentClear(&document);
+    return result;
+  }
+  RCVCardDocumentClear(&document);
+  *parseFailed = 1;
+  if (!RCCheckRun(store, runIdentifier, error) ||
+      !RCCheckCollection(store, collectionIdentifier, error) ||
+      !RCExecute(store, "SAVEPOINT contact_resource", error)) return 0;
+  if (!RCPrepare(store,
+      "INSERT OR IGNORE INTO contacts(collection_id,href,raw_vcard,seen_run_id,sync_record_id) "
+      "VALUES(?,?,?,?,lower(hex(randomblob(16))))", &statement, error)) goto failed;
+  sqlite3_bind_int64(statement, 1, collectionIdentifier);
+  RCBindText(statement, 2, href);
+  /* A successful GET may have an empty body and a NULL receive buffer. Bind
+     that as a zero-byte BLOB, not SQL NULL, so it remains an isolated parse
+     failure instead of violating raw_vcard's NOT NULL constraint. */
+  sqlite3_bind_blob(statement, 3, storedBytes, (int)length, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(statement, 4, runIdentifier);
+  result = sqlite3_step(statement);
+  sqlite3_finalize(statement);
+  statement = NULL;
+  if (result != SQLITE_DONE) goto database_error;
+  if (!RCPrepare(store,
+      "UPDATE contacts SET raw_vcard=?,etag=?,parse_error=?,seen_run_id=?,remote_missing=0 "
+      "WHERE collection_id=? AND href=?", &statement, error)) goto failed;
+  sqlite3_bind_blob(statement, 1, storedBytes, (int)length, SQLITE_TRANSIENT);
+  RCBindText(statement, 2, etag);
+  RCBindText(statement, 3, parseError.message);
+  sqlite3_bind_int64(statement, 4, runIdentifier);
+  sqlite3_bind_int64(statement, 5, collectionIdentifier);
+  RCBindText(statement, 6, href);
+  result = sqlite3_step(statement);
+  sqlite3_finalize(statement);
+  statement = NULL;
+  if (result != SQLITE_DONE) goto database_error;
+  return RCExecute(store, "RELEASE contact_resource", error);
+database_error:
+  RCStoreError(store, error, "Could not retain invalid contact resource");
+failed:
+  sqlite3_finalize(statement);
+  RCExecute(store, "ROLLBACK TO contact_resource; RELEASE contact_resource", NULL);
   return 0;
 }
 
@@ -504,7 +682,9 @@ int RCContactStoreFinishCollection(RCContactStore *store,
 {
   sqlite3_stmt *statement = NULL;
   int result;
-  if (!RCExecute(store, "BEGIN IMMEDIATE", error)) return 0;
+  if (!RCCheckRun(store, runIdentifier, error) ||
+      !RCCheckCollection(store, collectionIdentifier, error) ||
+      !RCExecute(store, "SAVEPOINT contact_collection", error)) return 0;
   if (!RCPrepare(store,
       "UPDATE contacts SET remote_missing=CASE WHEN seen_run_id=? THEN 0 ELSE 1 END "
       "WHERE collection_id=?", &statement, error)) goto failed;
@@ -521,7 +701,7 @@ int RCContactStoreFinishCollection(RCContactStore *store,
   result = sqlite3_step(statement);
   sqlite3_finalize(statement);
   if (result != SQLITE_DONE) goto failed_no_statement;
-  return RCExecute(store, "COMMIT", error);
+  return RCExecute(store, "RELEASE contact_collection", error);
 
 failed:
   sqlite3_finalize(statement);
@@ -529,7 +709,7 @@ failed_no_statement:
   if (error != NULL && error->code == 0) {
     RCStoreError(store, error, "Could not finish collection inventory");
   }
-  RCExecute(store, "ROLLBACK", NULL);
+  RCExecute(store, "ROLLBACK TO contact_collection; RELEASE contact_collection", NULL);
   return 0;
 }
 
@@ -538,16 +718,59 @@ int RCContactStoreFinishRun(RCContactStore *store, long long runIdentifier,
 {
   sqlite3_stmt *statement = NULL;
   int result;
+  if (!RCCheckRun(store, runIdentifier, error)) return 0;
+  if (succeeded) {
+    /* Only a complete home discovery AND every complete collection inventory
+       authorize absence. A successful empty home retires all this account's
+       collections. The entire generation commits together. */
+    if (!RCPrepare(store,
+        "UPDATE collections SET remote_missing=CASE WHEN last_complete_run_id=? THEN 0 ELSE 1 END "
+        "WHERE account_id=?", &statement, error)) goto failed;
+    sqlite3_bind_int64(statement, 1, runIdentifier);
+    sqlite3_bind_int64(statement, 2, store->account);
+    result = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    statement = NULL;
+    if (result != SQLITE_DONE) goto database_error;
+    if (!RCPrepare(store,
+        "UPDATE contacts SET remote_missing=1 WHERE collection_id IN "
+        "(SELECT id FROM collections WHERE account_id=? AND remote_missing=1)",
+        &statement, error)) goto failed;
+    sqlite3_bind_int64(statement, 1, store->account);
+    result = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    statement = NULL;
+    if (result != SQLITE_DONE) goto database_error;
+    if (!RCPrepare(store, "UPDATE accounts SET generation=? WHERE id=?",
+                   &statement, error)) goto failed;
+    sqlite3_bind_int64(statement, 1, runIdentifier);
+    sqlite3_bind_int64(statement, 2, store->account);
+    result = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    statement = NULL;
+    if (result != SQLITE_DONE) goto database_error;
+  } else if (!RCExecute(store, "ROLLBACK", error)) goto failed;
   if (!RCPrepare(store,
       "UPDATE sync_runs SET finished_at=CURRENT_TIMESTAMP, succeeded=?, message=? "
-      "WHERE id=?", &statement, error)) return 0;
+      "WHERE id=? AND account_id=?", &statement, error)) goto failed;
   sqlite3_bind_int(statement, 1, succeeded ? 1 : 0);
   RCBindText(statement, 2, message);
   sqlite3_bind_int64(statement, 3, runIdentifier);
+  sqlite3_bind_int64(statement, 4, store->account);
   result = sqlite3_step(statement);
   sqlite3_finalize(statement);
-  return result == SQLITE_DONE ? 1 : RCStoreError(store, error,
-                                                   "Could not finish sync run");
+  statement = NULL;
+  if (result != SQLITE_DONE) goto database_error;
+  if (succeeded && !RCExecute(store, "COMMIT", error)) goto failed;
+  store->activeRun = 0;
+  return 1;
+database_error:
+  RCStoreError(store, error, "Could not finish contact inventory");
+failed:
+  sqlite3_finalize(statement);
+  if (!sqlite3_get_autocommit(store->database)) RCExecute(store, "ROLLBACK", NULL);
+  store->activeRun = 0;
+  return 0;
 }
 
 int RCContactStoreGetStatistics(RCContactStore *store,
@@ -558,14 +781,18 @@ int RCContactStoreGetStatistics(RCContactStore *store,
   int result;
   memset(statistics, 0, sizeof(*statistics));
   if (!RCPrepare(store,
-      "SELECT COUNT(*), SUM(CASE WHEN remote_missing=0 THEN 1 ELSE 0 END), "
-      "SUM(CASE WHEN remote_missing=1 THEN 1 ELSE 0 END) FROM contacts",
+      "SELECT COUNT(*), SUM(CASE WHEN r.remote_missing=0 THEN 1 ELSE 0 END), "
+      "SUM(CASE WHEN r.remote_missing=1 THEN 1 ELSE 0 END), "
+      "SUM(CASE WHEN r.remote_missing=0 AND r.parse_error IS NOT NULL THEN 1 ELSE 0 END) "
+      "FROM contacts r JOIN collections c ON c.id=r.collection_id WHERE c.account_id=?",
       &statement, error)) return 0;
+  sqlite3_bind_int64(statement, 1, store->account);
   result = sqlite3_step(statement);
   if (result == SQLITE_ROW) {
     statistics->resourceCount = (long)sqlite3_column_int64(statement, 0);
     statistics->availableCount = (long)sqlite3_column_int64(statement, 1);
     statistics->missingCount = (long)sqlite3_column_int64(statement, 2);
+    statistics->parseErrorCount = (long)sqlite3_column_int64(statement, 3);
   }
   sqlite3_finalize(statement);
   return result == SQLITE_ROW ? 1 : RCStoreError(store, error,
@@ -583,9 +810,16 @@ int RCContactStoreForEachAvailableContact(
     RCErrorSet(error, 1, "Contact enumeration parameters are missing");
     return 0;
   }
+  if (store->activeRun) {
+    RCErrorSet(error, 1, "Cannot publish an incomplete contact inventory");
+    return 0;
+  }
   if (!RCPrepare(store,
-      "SELECT id, sync_record_id, raw_vcard FROM contacts "
-      "WHERE remote_missing=0 ORDER BY id", &statement, error)) return 0;
+      "SELECT r.id, r.sync_record_id, r.usable_vcard FROM contacts r "
+      "JOIN collections c ON c.id=r.collection_id "
+      "WHERE c.account_id=? AND c.remote_missing=0 AND r.remote_missing=0 "
+      "AND r.usable_vcard IS NOT NULL ORDER BY r.id", &statement, error)) return 0;
+  sqlite3_bind_int64(statement, 1, store->account);
   while ((result = sqlite3_step(statement)) == SQLITE_ROW) {
     long long identifier = sqlite3_column_int64(statement, 0);
     const char *syncIdentifier =
@@ -623,10 +857,12 @@ int RCContactStoreCopyPropertySyncIdentifier(
   }
   *syncRecordIdentifier = NULL;
   if (!RCPrepare(store,
-      "SELECT sync_record_id FROM contact_properties "
-      "WHERE contact_id=? AND position=?", &statement, error)) return 0;
+      "SELECT p.sync_record_id FROM contact_properties p "
+      "JOIN contacts r ON r.id=p.contact_id JOIN collections c ON c.id=r.collection_id "
+      "WHERE p.contact_id=? AND p.position=? AND c.account_id=?", &statement, error)) return 0;
   sqlite3_bind_int64(statement, 1, contactIdentifier);
   sqlite3_bind_int(statement, 2, propertyPosition);
+  sqlite3_bind_int64(statement, 3, store->account);
   result = sqlite3_step(statement);
   if (result == SQLITE_ROW) {
     identifier = sqlite3_column_text(statement, 0);

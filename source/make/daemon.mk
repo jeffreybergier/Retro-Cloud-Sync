@@ -30,6 +30,10 @@ $(DAEMON_INTERMEDIATES)/ppc/RCCalendarSyncServicesBridge.o \
 $(DAEMON_INTERMEDIATES)/i386/RCCalendarSyncServicesBridge.o: \
 	$(DAEMON_SOURCE_ROOT)/RCCalendarSyncClient.h
 
+$(DAEMON_INTERMEDIATES)/ppc/RCSyncServicesBridge.o \
+$(DAEMON_INTERMEDIATES)/i386/RCSyncServicesBridge.o: \
+	$(DAEMON_SOURCE_ROOT)/RCContactSyncClient.h
+
 $(DAEMON_INTERMEDIATES)/ppc/RCMailProxy.o \
 $(DAEMON_INTERMEDIATES)/i386/RCMailProxy.o \
 $(DAEMON_INTERMEDIATES)/ppc/RCMailProxyLog.o \

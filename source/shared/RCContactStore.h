@@ -12,6 +12,7 @@ typedef struct {
   long resourceCount;
   long availableCount;
   long missingCount;
+  long parseErrorCount;
 } RCContactStoreStatistics;
 
 typedef int (*RCContactStoreContactCallback)(
@@ -19,9 +20,21 @@ typedef int (*RCContactStoreContactCallback)(
     const unsigned char *rawVCard, size_t rawVCardLength,
     void *context, RCError *error);
 
-RCContactStore *RCContactStoreOpen(const char *path, RCError *error);
+RCContactStore *RCContactStoreOpen(const char *path, const char *username,
+                                  RCError *error);
 void RCContactStoreClose(RCContactStore *store);
+int RCContactStoreIsAccount(RCContactStore *store, const char *username);
+const char *RCContactStoreSyncIdentifier(RCContactStore *store);
+int RCContactStoreGetPublicationState(RCContactStore *store,
+                                      long long *generation,
+                                      long long *publishedGeneration,
+                                      RCError *error);
+int RCContactStoreMarkPublished(RCContactStore *store, long long generation,
+                                RCError *error);
 
+/* One run owns a transaction covering the entire account inventory. Successful
+   FinishRun requires complete home discovery and FinishCollection for every
+   discovered collection (including empty ones). Failure rolls back the run. */
 int RCContactStoreBeginRun(RCContactStore *store, long long *runIdentifier,
                            RCError *error);
 int RCContactStoreGetCollection(RCContactStore *store, const char *url,
@@ -44,6 +57,14 @@ int RCContactStoreSaveVCard(RCContactStore *store,
                             size_t rawVCardLength,
                             const RCVCardDocument *document,
                             RCError *error);
+/* Retain downloaded bodies in the run. Invalid replacements retain the last usable
+   vCard and its child identities; invalid new resources are not exported. */
+int RCContactStoreSaveResource(RCContactStore *store,
+                               long long collectionIdentifier,
+                               long long runIdentifier,
+                               const char *href, const char *etag,
+                               const unsigned char *bytes, size_t length,
+                               int *parseFailed, RCError *error);
 int RCContactStoreFinishCollection(RCContactStore *store,
                                    long long collectionIdentifier,
                                    long long runIdentifier,

@@ -1,6 +1,7 @@
 #import <AddressBook/AddressBook.h>
 #import <Foundation/Foundation.h>
 #import <SyncServices/SyncServices.h>
+#import "../macOS-daemon/RCContactSyncClient.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -342,6 +343,27 @@ static void Diagnose(ISyncRecordSnapshot *snapshot, NSDictionary *people)
     }
   }
 }
+static BOOL VerifyAccountClient(NSString *description)
+{
+  NSString *account = @"00000000000000000000000000000001";
+  NSString *identifier = RCContactSyncClientIdentifier(account);
+  ISyncManager *manager = [ISyncManager sharedManager];
+  ISyncClient *client = nil;
+  BOOL ok = NO;
+  CHECK([identifier hasSuffix:account] && [identifier length] * 4 <= 255 &&
+      ![identifier isEqual:RCContactSyncClientIdentifier(@"00000000000000000000000000000002")],
+      "Production contact client must be account-specific and fit Tiger's filename limit");
+  CHECK([manager clientWithIdentifier:identifier] == nil,
+      "Refusing to replace an existing synthetic account client");
+  @try {
+    client = [manager registerClientWithIdentifier:identifier descriptionFilePath:description];
+    ok = client != nil && [manager clientWithIdentifier:identifier] != nil;
+  } @finally {
+    if (client != nil) [manager unregisterClient:client];
+  }
+  return ok && [manager clientWithIdentifier:identifier] == nil;
+}
+
 int main(int argc, char **argv)
 {
   NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
@@ -355,6 +377,8 @@ int main(int argc, char **argv)
       [pool release]; return 1;
     }
     if (argc == 2 && [command isEqual:@"unregistered"]) ok = [manager clientWithIdentifier:kRCTestClient] == nil;
+    else if (argc == 3 && [command isEqual:@"client-registration"])
+      ok = VerifyAccountClient([NSString stringWithUTF8String:argv[2]]);
     else if (argc == 3 && ([command isEqual:@"snapshot"] || [command isEqual:@"baseline"])) {
       NSString *path = [NSString stringWithUTF8String:argv[2]];
       NSDictionary *current = Baseline(book);

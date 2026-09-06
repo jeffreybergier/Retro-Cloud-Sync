@@ -24,6 +24,7 @@ push_contacts() {
     if [ "$attempts" -ge 3 ]; then return 1; fi
     sleep 2
   done
+  test "$(/usr/bin/sqlite3 "./Contacts-$1.sqlite" "SELECT generation>0 AND generation=published_generation FROM accounts WHERE username='syncservices-test';")" = 1
 }
 wait_for_phase() {
   attempts=0
@@ -79,6 +80,8 @@ fi
 sed 's/Retro Cloud Sync Contacts/Retro Cloud Contacts Tests/' SyncClient.plist > "$description"
 chmod +x "$daemon" "$verifier"
 "$verifier" snapshot AddressBook-baseline.plist
+"$verifier" client-registration "$description"
+echo '[PASS] Account-scoped production client identifier registers and cleans up on Tiger'
 /usr/bin/osascript <<'APPLESCRIPT' &
 repeat 1800 times
   tell application "System Events"
@@ -108,6 +111,18 @@ for phase in initial initial; do
   "$verifier" baseline AddressBook-baseline.plist
 done
 echo '[PASS] Initial and repeated exports: exact values, Unicode, birthday, labels, preferred entries, company flag, truth relationships and stable identities'
+if "$daemon" --test-syncservices ./Contacts-fresh.sqlite "$description" > fresh-export.log 2>&1; then
+  echo 'FAIL: A never-completed mirror unexpectedly exported'
+  exit 1
+fi
+grep 'no complete inventory' fresh-export.log >/dev/null
+wait_for_phase initial
+for phase in retained interrupted; do
+  push_contacts "$phase"
+  wait_for_phase initial
+  "$verifier" baseline AddressBook-baseline.plist
+  echo "[PASS] $phase: previous complete graph published from durable cache"
+done
 for phase in malformed missing-identity; do
   if "$daemon" --test-syncservices "./Contacts-$phase.sqlite" "$description" > "$phase-export.log" 2>&1; then
     echo "FAIL: Invalid fixture unexpectedly exported: $phase"
@@ -123,6 +138,7 @@ for phase in malformed missing-identity; do
     cat "$phase-export.log"
     exit 1
   fi
+  test "$(/usr/bin/sqlite3 "./Contacts-$phase.sqlite" "SELECT generation>published_generation FROM accounts WHERE username='syncservices-test';")" = 1
   wait_for_phase initial
   "$verifier" baseline AddressBook-baseline.plist
   push_contacts initial

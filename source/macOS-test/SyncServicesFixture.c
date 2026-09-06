@@ -109,6 +109,9 @@ int main(int argc, char *argv[])
   int isStripped;
   int isMalformed;
   int isMissingIdentity;
+  int isRetained;
+  int isInterrupted;
+  int isFresh;
   unsigned char reordered[sizeof(kRCInitialAlpha)];
   int success = 0;
 
@@ -123,14 +126,19 @@ int main(int argc, char *argv[])
   isStripped = strcmp(argv[1], "stripped") == 0;
   isMalformed = strcmp(argv[1], "malformed") == 0;
   isMissingIdentity = strcmp(argv[1], "missing-identity") == 0;
+  isRetained = strcmp(argv[1], "retained") == 0;
+  isInterrupted = strcmp(argv[1], "interrupted") == 0;
+  isFresh = strcmp(argv[1], "fresh") == 0;
   if (!isInitial && !isUpdated && !isEmpty && !isReordered &&
-      !isStripped && !isMalformed && !isMissingIdentity) {
+      !isStripped && !isMalformed && !isMissingIdentity &&
+      !isRetained && !isInterrupted && !isFresh) {
     fprintf(stderr, "Unknown fixture phase: %s\n", argv[1]);
     return 2;
   }
 
   RCErrorClear(&error);
-  store = RCContactStoreOpen(argv[2], &error);
+  store = RCContactStoreOpen(argv[2], "syncservices-test", &error);
+  if (isFresh) { success = store != NULL; goto finished; }
   if (store == NULL ||
       !RCContactStoreBeginRun(store, &runIdentifier, &error) ||
       !RCContactStoreGetCollection(store,
@@ -138,7 +146,7 @@ int main(int argc, char *argv[])
           &collectionIdentifier, &error)) goto finished;
 
   RCReverseProperties(reordered);
-  if (isInitial || isReordered || isMalformed || isMissingIdentity) {
+  if (isInitial || isReordered || isMalformed || isMissingIdentity || isRetained) {
     if (!RCSaveVCard(store, collectionIdentifier, runIdentifier,
             "https://syncservices-test.invalid/addressbook/alpha.vcf",
             "\"initial-alpha\"", isReordered ? reordered : kRCInitialAlpha,
@@ -147,16 +155,29 @@ int main(int argc, char *argv[])
             "https://syncservices-test.invalid/addressbook/beta.vcf",
             "\"initial-beta\"", kRCInitialBeta,
             sizeof(kRCInitialBeta) - 1, &error)) goto finished;
-  } else if (isUpdated || isStripped) {
+  } else if (isUpdated || isStripped || isInterrupted) {
     if (!RCSaveVCard(store, collectionIdentifier, runIdentifier,
             "https://syncservices-test.invalid/addressbook/alpha.vcf",
             "\"updated-alpha\"", isStripped ? kRCStrippedAlpha : kRCUpdatedAlpha,
             isStripped ? sizeof(kRCStrippedAlpha) - 1 : sizeof(kRCUpdatedAlpha) - 1, &error)) goto finished;
   }
 
+  if (isRetained) {
+    int parseFailed;
+    const unsigned char invalid[] = "invalid remote replacement";
+    if (!RCContactStoreSaveResource(store, collectionIdentifier, runIdentifier,
+          "https://syncservices-test.invalid/addressbook/alpha.vcf", "invalid",
+          invalid, sizeof(invalid) - 1, &parseFailed, &error) || !parseFailed ||
+        !RCContactStoreSaveResource(store, collectionIdentifier, runIdentifier,
+          "https://syncservices-test.invalid/addressbook/new.vcf", "invalid",
+          invalid, sizeof(invalid) - 1, &parseFailed, &error) || !parseFailed)
+      goto finished;
+  }
+
   if (!RCContactStoreFinishCollection(store, collectionIdentifier,
           runIdentifier, &error) ||
-      !RCContactStoreFinishRun(store, runIdentifier, 1, NULL, &error)) {
+      !RCContactStoreFinishRun(store, runIdentifier, !isInterrupted,
+          isInterrupted ? "Simulated failed network inventory" : NULL, &error)) {
     goto finished;
   }
   if (isMalformed || isMissingIdentity) {
@@ -166,11 +187,11 @@ int main(int argc, char *argv[])
     store = NULL;
     result = sqlite3_open(argv[2], &database);
     if (result == SQLITE_OK) result = sqlite3_exec(database,
-        "UPDATE contacts SET raw_vcard=replace(CAST(raw_vcard AS TEXT),"
+        "UPDATE contacts SET usable_vcard=replace(CAST(usable_vcard AS TEXT),"
         "'Initial','Uncommitted') WHERE given_name='RCSSTestAlpha';",
         NULL, NULL, NULL);
     if (result == SQLITE_OK) result = sqlite3_exec(database, isMalformed ?
-        "UPDATE contacts SET raw_vcard='invalid vCard' WHERE given_name='RCSSTestBeta';" :
+        "UPDATE contacts SET usable_vcard='invalid vCard' WHERE given_name='RCSSTestBeta';" :
         "UPDATE contact_properties SET sync_record_id=NULL WHERE property_name='EMAIL' "
         "AND contact_id=(SELECT id FROM contacts WHERE given_name='RCSSTestBeta');",
         NULL, NULL, NULL);

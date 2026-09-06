@@ -65,7 +65,7 @@ int main(int argc, char **argv)
     goto finished;
   }
   curlInitialized = 1;
-  store = RCContactStoreOpen(databasePath, &error);
+  store = RCContactStoreOpen(databasePath, username, &error);
   if (store == NULL) goto failed;
 
   memset(&config, 0, sizeof(config));
@@ -85,6 +85,7 @@ int main(int argc, char **argv)
   printf("Unchanged: %ld\n", result.unchangedResourceCount);
   printf("Database contacts: %ld available, %ld remotely absent\n",
          statistics.availableCount, statistics.missingCount);
+  printf("Invalid resources retained: %ld\n", statistics.parseErrorCount);
   status = 0;
   goto finished;
 
