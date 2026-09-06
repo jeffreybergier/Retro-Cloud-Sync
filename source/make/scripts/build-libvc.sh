@@ -4,13 +4,13 @@ set -euo pipefail
 mode="$1"
 deps="$2"
 toolchain="${3:-/osxcross/legacy/target}"
-checkout="$(cd "$(dirname "$0")/.." && pwd)/deps/libvc"
 support="$(cd "$(dirname "$0")" && pwd)"
 src="$deps/libvc-source"
 archive="$deps/libvc-013.tar.gz"
 mkdir -p "$deps"
 if [ "$mode" = prepare ] || [ "$mode" = prepare-archive ]; then
   if [ "$mode" = prepare ]; then
+    checkout="$(cd "$(dirname "$0")/../.." && pwd)/deps/libvc"
     test -f "$checkout/src/vc.c"
     tar -czf "$archive.tmp" --exclude=libvc/.git \
       --transform='s,^libvc,libvc-013,' -C "$(dirname "$checkout")" libvc

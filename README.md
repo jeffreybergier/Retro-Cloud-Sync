@@ -13,7 +13,8 @@ Sync iCloud Email, Contacts, Calendars with Retro Macs 10.4+
 - `source/shared`: reusable synchronization, parsing, and storage code.
 - `source/shared-test`: portable C tests that run on the Linux build host.
 - `source/make`: build rules for the application, libraries, and test tools.
-- `source/dependencies`: dependency preparation scripts.
+- `source/make/scripts`: dependency build and relinking scripts, parser patches,
+  and portability helpers.
 - `source/deps/libical`: upstream libical Git submodule, pinned to `v3.0.20`.
 - `source/deps/libvc`: upstream libvc Git submodule, pinned to `v013`.
 
@@ -210,7 +211,7 @@ and serializes access to libvc's global parser state.
 `source/make/libvc.mk` builds native, PPC and i386 static libraries. It needs
 Flex, Bison and patch on the Linux host. Following the libical pattern,
 preparation copies sources into `build/dependencies/libvc-source` and applies
-`source/dependencies/libvc-parser.patch` there. The patch fixes group token
+`source/make/scripts/libvc-parser.patch` there. The patch fixes group token
 ownership, quoted parameters, empty values, and malformed-input cleanup/reset.
 A portability shim supplies Tiger's missing `getline` and the missing
 `strings.h` include. The submodule itself stays unchanged.

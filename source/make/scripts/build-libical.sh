@@ -9,10 +9,10 @@ case "$target" in ical|icalvcal) ;; *) exit 1 ;; esac
 version=3.0.20
 archive="$deps/libical-$version.tar.gz"
 src="$deps/libical-$version"
-checkout="$(cd "$(dirname "$0")/.." && pwd)/deps/libical"
 mkdir -p "$deps"
 if [ "$mode" = prepare ] || [ "$mode" = prepare-archive ]; then
   if [ "$mode" = prepare ]; then
+    checkout="$(cd "$(dirname "$0")/../.." && pwd)/deps/libical"
     if [ ! -f "$checkout/CMakeLists.txt" ]; then
       echo 'libical is missing. Run: git submodule update --init --recursive' >&2
       exit 1

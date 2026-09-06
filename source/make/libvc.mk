@@ -2,9 +2,9 @@
 LIBVC_CHECKOUT := $(SOURCE_ROOT)/deps/libvc
 LIBVC_ROOT := $(BUILD_ROOT)/dependencies
 LIBVC_SOURCE := $(LIBVC_ROOT)/libvc-source
-LIBVC_SCRIPT := $(SOURCE_ROOT)/dependencies/build-libvc.sh
-LIBVC_SUPPORT := $(SOURCE_ROOT)/dependencies/libvc-portability.h \
-	$(SOURCE_ROOT)/dependencies/libvc-portability.c
+LIBVC_SCRIPT := $(SOURCE_ROOT)/make/scripts/build-libvc.sh
+LIBVC_SUPPORT := $(SOURCE_ROOT)/make/scripts/libvc-portability.h \
+	$(SOURCE_ROOT)/make/scripts/libvc-portability.c
 LIBVC_INPUTS := $(addprefix $(LIBVC_CHECKOUT)/src/,vc.c vc.h vc_parse.y vc_scan.l)
 LIBVC_PREPARE := $(LIBVC_ROOT)/libvc-source.stamp
 LIBVC_REVISION := $(LIBVC_ROOT)/libvc-revision
@@ -26,7 +26,7 @@ $(LIBVC_REVISION): libvc-revision-check | libvc-checkout-check
 libvc-revision-check:
 
 $(LIBVC_PREPARE): $(LIBVC_SCRIPT) $(LIBVC_INPUTS) $(LIBVC_REVISION) \
-		$(SOURCE_ROOT)/dependencies/libvc-parser.patch $(SOURCE_ROOT)/make/libvc.mk
+		$(SOURCE_ROOT)/make/scripts/libvc-parser.patch $(SOURCE_ROOT)/make/libvc.mk
 	@bash "$(LIBVC_SCRIPT)" prepare "$(LIBVC_ROOT)"
 $(LIBVC_HOST_LIBRARY): $(LIBVC_PREPARE) $(LIBVC_SUPPORT)
 	@HOST_CC="$(HOST_CC)" bash "$(LIBVC_SCRIPT)" host "$(LIBVC_ROOT)"

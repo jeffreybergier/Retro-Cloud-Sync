@@ -41,8 +41,8 @@ $(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) 
 		$(APP_SYNC_CLIENT_PLIST) $(APP_RESOURCES_ROOT)/CalendarSyncClient.plist $(ICAL_PREPARE) \
 		$(ALTIVECCORE_CA_CERTS) $(ALTIVECCOCOA_FONTS) \
 		$(ALTIVECCOCOA_FONT_LICENSE) $(LIBVC_PREPARE) $(LIBVC_SUPPORT) \
-		$(SOURCE_ROOT)/dependencies/libvc-README.txt \
-		$(SOURCE_ROOT)/dependencies/relink-libvc-daemon.sh
+		$(SOURCE_ROOT)/make/scripts/libvc-README.txt \
+		$(SOURCE_ROOT)/make/scripts/relink-libvc-daemon.sh
 	@echo " [4/5] Building app bundle and embedding daemon..."
 	@rm -rf "$(APP_BUNDLE)"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" \
@@ -67,9 +67,9 @@ $(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) 
 	@cp "$(LIBVC_CHECKOUT)/COPYING.LIB" "$(APP_BUNDLE)/Contents/Resources/LICENSE-libvc.txt"
 	@cp "$(LIBVC_CHECKOUT)/COPYING.LIB" "$(LIBVC_ROOT)/libvc-013.tar.gz" \
 		"$(LIBVC_SCRIPT)" $(LIBVC_SUPPORT) \
-		"$(SOURCE_ROOT)/dependencies/libvc-parser.patch" \
-		"$(SOURCE_ROOT)/dependencies/libvc-README.txt" \
-		"$(SOURCE_ROOT)/dependencies/relink-libvc-daemon.sh" \
+		"$(SOURCE_ROOT)/make/scripts/libvc-parser.patch" \
+		"$(SOURCE_ROOT)/make/scripts/libvc-README.txt" \
+		"$(SOURCE_ROOT)/make/scripts/relink-libvc-daemon.sh" \
 		"$(APP_BUNDLE)/Contents/Resources/libvc-source/"
 	@cp $(DAEMON_PPC_OBJECTS) "$(PPC_SHARED_LIBRARY)" "$(DAEMON_PPC_ALTIVECCORE)" \
 		"$(ICAL_PPC_LIBRARY)" "$(APP_BUNDLE)/Contents/Resources/libvc-source/relink/ppc/"
