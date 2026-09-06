@@ -7,14 +7,14 @@ run_name="RetroCloudSync-CalendarTests-$(date +%Y%m%d-%H%M%S)-$$"
 remote_relative="Desktop/$run_name"
 ssh -o LogLevel=ERROR "$test_host" "mkdir -p '$remote_relative'"
 scp -o LogLevel=ERROR "$build_root/macOS-daemon/release/RetroCloudSyncDaemon" \
-    "$build_root/calendar-test/RetroCloudCalendarVerifier" \
-    "$build_root/calendar-test/RetroCloudCalendarFixtures" \
-    "$build_root/calendar-test/RetroCloudCalendarClientTests" \
+    "$build_root/tests/macOS/calendars-syncservices/RetroCloudCalendarSyncServicesVerifier" \
+    "$build_root/tests/macOS/calendars-syncservices/RetroCloudCalendarFixtureGenerator" \
+    "$build_root/tests/macOS/calendars-syncservices/RetroCloudCalendarClientRegistrationTests" \
     "$project_root/source/macOS-app/Resources/CalendarSyncClient.plist" \
-    "$project_root/source/macOS-test/run-calendar-tests.command" \
+    "$project_root/source/tests/macOS/calendars-syncservices/run-on-mac.command" \
     "$test_host:$remote_relative/"
-ssh -o LogLevel=ERROR "$test_host" "osascript -e 'tell application \"Terminal\" to do script \"cd ~/$remote_relative && /bin/bash ./run-calendar-tests.command\"'"
-# The GUI harness confirms only alerts naming its synthetic-data test client.
+ssh -o LogLevel=ERROR "$test_host" "osascript -e 'tell application \"Terminal\" to do script \"cd ~/$remote_relative && /bin/bash ./run-on-mac.command\"'"
+# The desktop script confirms only alerts naming its synthetic-data test client.
 for ((attempt=0;attempt<180;attempt++)); do
   if ssh -o LogLevel=ERROR "$test_host" "test -f '$remote_relative/calendar-tests.status'"; then
     ssh -o LogLevel=ERROR "$test_host" "cat '$remote_relative/calendar-tests.log'; test \"\$(cat '$remote_relative/calendar-tests.status')\" = 0"

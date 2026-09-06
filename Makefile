@@ -14,11 +14,14 @@ include $(SOURCE_ROOT)/make/daemon.mk
 include $(SOURCE_ROOT)/make/carddav-probe.mk
 include $(SOURCE_ROOT)/make/caldav-probe.mk
 include $(SOURCE_ROOT)/make/app.mk
-include $(SOURCE_ROOT)/make/test.mk
-include $(SOURCE_ROOT)/make/shared-test.mk
-include $(SOURCE_ROOT)/make/vcal-compat.mk
-include $(SOURCE_ROOT)/make/calendar-test.mk
-include $(SOURCE_ROOT)/make/syncservices-test.mk
+include $(SOURCE_ROOT)/make/mac-app-tests.mk
+include $(SOURCE_ROOT)/make/mac-network-tests.mk
+include $(SOURCE_ROOT)/make/host-contacts-tests.mk
+include $(SOURCE_ROOT)/make/libicalvcal-comparison.mk
+include $(SOURCE_ROOT)/make/host-calendars-tests.mk
+include $(SOURCE_ROOT)/make/mac-calendars-syncservices-tests.mk
+include $(SOURCE_ROOT)/make/mac-contacts-syncservices-tests.mk
+include $(SOURCE_ROOT)/make/tests.mk
 
 release:
 	@echo "--- Building Retro Cloud Sync Release (-O3) ---"
@@ -50,12 +53,12 @@ daemon-debug:
 	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
 		daemon-config
 
-carddav-probe:
+build-mac-carddav-probe:
 	@echo "--- Building read-only CardDAV probe (-O3) ---"
 	@$(MAKE) --no-print-directory CONFIG=release BUILD_ROOT="$(BUILD_ROOT)" \
 		carddav-probe-config
 
-carddav-probe-debug:
+build-mac-carddav-probe-debug:
 	@echo "--- Building read-only CardDAV probe (-O0) ---"
 	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
 		carddav-probe-config
@@ -70,17 +73,17 @@ shared-debug:
 	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
 		shared-config
 
-test-build:
+build-mac-app-tests:
 	@echo "--- Building macOS GUI Test Harness Release (-O3) ---"
 	@$(MAKE) --no-print-directory CONFIG=release BUILD_ROOT="$(BUILD_ROOT)" \
 		test-config
 
-test-debug:
+build-mac-app-tests-debug:
 	@echo "--- Building macOS GUI Test Harness Debug (-O0) ---"
 	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
 		test-config
 
-test-analyze: validate-analyzer $(ICAL_I386_LIBRARY)
+analyze-mac-app-tests: validate-analyzer $(ICAL_I386_LIBRARY)
 	@echo "--- Analyzing macOS GUI Test Harness ---"
 	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(ANALYZER) \
 		--analyze -Xanalyzer -analyzer-output=text \
@@ -88,22 +91,22 @@ test-analyze: validate-analyzer $(ICAL_I386_LIBRARY)
 		-std=c99 -Wall -Wextra -fno-color-diagnostics \
 		$(TEST_SOURCE_PATHS)
 
-test-gui:
-	@$(MAKE) --no-print-directory release test-build
+test-mac-app:
+	@$(MAKE) --no-print-directory release build-mac-app-tests
 	@TEST_HOST="$(TEST_HOST)" BUILD_ROOT="$(BUILD_ROOT)" \
 		PROJECT_ROOT="$(PROJECT_ROOT)" \
-		/bin/bash "$(SOURCE_ROOT)/macOS-test/run-remote.sh"
+		/bin/bash "$(SOURCE_ROOT)/tests/macOS/app/run-remote.sh"
 
-test-shared:
+test-host-contacts:
 	@echo "--- Testing portable vCard and SQLite layers ---"
 	@$(MAKE) --no-print-directory BUILD_ROOT="$(BUILD_ROOT)" shared-test-run
 
-test-syncservices-build:
+build-mac-contacts-syncservices-tests:
 	@echo "--- Building offline Sync Services test tools ---"
 	@$(MAKE) --no-print-directory CONFIG=release BUILD_ROOT="$(BUILD_ROOT)" \
 		syncservices-test-config
 
-test-syncservices-analyze: validate-analyzer $(ICAL_I386_LIBRARY)
+analyze-mac-contacts-syncservices-tests: validate-analyzer $(ICAL_I386_LIBRARY)
 	@echo "--- Analyzing offline Sync Services verifier ---"
 	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(ANALYZER) \
 		--analyze -Xanalyzer -analyzer-output=text \
@@ -111,10 +114,10 @@ test-syncservices-analyze: validate-analyzer $(ICAL_I386_LIBRARY)
 		-std=c99 -Wall -Wextra -fno-color-diagnostics \
 		$(SYNC_TEST_VERIFIER_SOURCE)
 
-test-syncservices:
-	@$(MAKE) --no-print-directory release test-syncservices-build
+test-mac-contacts-syncservices:
+	@$(MAKE) --no-print-directory release build-mac-contacts-syncservices-tests
 	@TEST_HOST="$(TEST_HOST)" BUILD_ROOT="$(BUILD_ROOT)" PROJECT_ROOT="$(PROJECT_ROOT)" \
-		/bin/bash "$(SOURCE_ROOT)/macOS-test/run-syncservices-remote.sh"
+		/bin/bash "$(SOURCE_ROOT)/tests/macOS/contacts-syncservices/run-remote.sh"
 
 build-all: validate-build app-config
 
@@ -141,8 +144,8 @@ clean:
 	@rm -rf "$(BUILD_ROOT)"
 
 .PHONY: release debug app-release app-debug daemon-release daemon-debug \
-	carddav-probe carddav-probe-debug \
-	shared-release shared-debug test-build test-debug test-analyze test-gui \
-	test-shared \
-	test-syncservices-build test-syncservices-analyze test-syncservices \
+	build-mac-carddav-probe build-mac-carddav-probe-debug \
+	shared-release shared-debug build-mac-app-tests build-mac-app-tests-debug analyze-mac-app-tests test-mac-app \
+	test-host-contacts \
+	build-mac-contacts-syncservices-tests analyze-mac-contacts-syncservices-tests test-mac-contacts-syncservices \
 	build-all analyze clean

@@ -1,16 +1,16 @@
 # Offline Tiger Sync Services integration test tools and fixtures.
 
-SYNC_TEST_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-test
-SYNC_TEST_BUILD_ROOT := $(BUILD_ROOT)/syncservices-test
-SYNC_TEST_VERIFIER_SOURCE := $(SYNC_TEST_SOURCE_ROOT)/SyncServicesVerifier.m
-SYNC_TEST_VERIFIER := $(SYNC_TEST_BUILD_ROOT)/RetroCloudSyncSyncServicesVerifier
-SYNC_TEST_FIXTURE_SOURCE := $(SYNC_TEST_SOURCE_ROOT)/SyncServicesFixture.c
-SYNC_TEST_FIXTURE_GENERATOR := $(SYNC_TEST_BUILD_ROOT)/RetroCloudSyncFixtureGenerator
+SYNC_TEST_SOURCE_ROOT := $(SOURCE_ROOT)/tests/macOS/contacts-syncservices
+SYNC_TEST_BUILD_ROOT := $(BUILD_ROOT)/tests/macOS/contacts-syncservices
+SYNC_TEST_VERIFIER_SOURCE := $(SYNC_TEST_SOURCE_ROOT)/ContactsSyncServicesVerifier.m
+SYNC_TEST_VERIFIER := $(SYNC_TEST_BUILD_ROOT)/RetroCloudContactsSyncServicesVerifier
+SYNC_TEST_FIXTURE_SOURCE := $(SOURCE_ROOT)/tests/fixtures/contacts/ContactsFixtureGenerator.c
+SYNC_TEST_FIXTURE_GENERATOR := $(SYNC_TEST_BUILD_ROOT)/RetroCloudContactsFixtureGenerator
 SYNC_TEST_INITIAL_DATABASE := $(SYNC_TEST_BUILD_ROOT)/Contacts-initial.sqlite
 SYNC_TEST_UPDATED_DATABASE := $(SYNC_TEST_BUILD_ROOT)/Contacts-updated.sqlite
 SYNC_TEST_EMPTY_DATABASE := $(SYNC_TEST_BUILD_ROOT)/Contacts-empty.sqlite
-SYNC_TEST_PPC_OBJECT := $(SYNC_TEST_BUILD_ROOT)/Intermediates/ppc/SyncServicesVerifier.o
-SYNC_TEST_I386_OBJECT := $(SYNC_TEST_BUILD_ROOT)/Intermediates/i386/SyncServicesVerifier.o
+SYNC_TEST_PPC_OBJECT := $(SYNC_TEST_BUILD_ROOT)/Intermediates/ppc/ContactsSyncServicesVerifier.o
+SYNC_TEST_I386_OBJECT := $(SYNC_TEST_BUILD_ROOT)/Intermediates/i386/ContactsSyncServicesVerifier.o
 
 syncservices-test-config: validate-build $(SYNC_TEST_VERIFIER) \
 		$(SYNC_TEST_INITIAL_DATABASE) $(SYNC_TEST_UPDATED_DATABASE) \

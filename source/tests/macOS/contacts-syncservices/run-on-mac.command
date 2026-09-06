@@ -11,7 +11,7 @@ if ! mkdir "$lock" 2>/dev/null; then
 fi
 echo "$$ $(pwd)" > "$lock/owner"
 daemon=./RetroCloudSyncDaemon
-verifier=./RetroCloudSyncSyncServicesVerifier
+verifier=./RetroCloudContactsSyncServicesVerifier
 description=./ContactsTestSyncClient.plist
 history=./Contacts-truth-history.plist
 helper_pid=

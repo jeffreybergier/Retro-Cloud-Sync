@@ -1,0 +1,39 @@
+Retro Cloud Sync: tests and diagnostics (invoke make from the Linux build host)
+
+Run offline host tests:
+  make test-host                         All normal portable regression tests
+  make test-host-contacts                vCard parser, contact store, simulated CardDAV
+  make test-host-calendars               Calendar codec/store and simulated CalDAV
+
+Build Mac tools without running them (PPC/i386):
+  make build-mac-tests                   All normal Mac test tools and fixtures
+  make build-mac-app-tests               App GUI harness
+  make build-mac-network-tests           Standalone HTTPS test
+  make build-mac-contacts-syncservices-tests
+  make build-mac-calendars-syncservices-tests
+  make build-mac-vcard-tests             Portable parser tests compiled for Mac
+
+Build and run on the Mac (TEST_HOST defaults to x4-vm):
+  make test-mac-app TEST_HOST=x4-vm       Preferences, Start/Stop, files and listeners
+  make test-mac-network TEST_HOST=x4-vm   Standalone HTTPS check; internet, no GUI needed
+  make test-mac-contacts-syncservices TEST_HOST=x4-vm
+  make test-mac-calendars-syncservices TEST_HOST=x4-vm
+  Sync Services suites use synthetic local records, offline; stop the daemon first.
+  The app suite starts/stops the service with isolated account settings.
+  App and Sync Services suites require the desktop and Accessibility.
+
+Build manual probes (run on Mac; iCloud credentials and internet needed):
+  make build-mac-carddav-probe           Read remote contacts into local SQLite
+  make build-mac-caldav-probe            Read remote calendars into local SQLite
+
+Optional experiment (excluded from test-host and build-mac-tests):
+  make compare-host-libicalvcal          Compare parsers; known candidate failures
+  make build-libicalvcal-comparison      Build comparison for host, PPC and i386
+
+Static analysis on Linux:
+  make analyze-mac-app-tests
+  make analyze-mac-contacts-syncservices-tests
+
+Outputs: build/tests/{host,macOS,experiments}/ and build/probes/macOS/.
+Override the output root with BUILD_ROOT=/path. Remote runs stay under ~/Desktop.
+Old command names remain aliases; see source/tests/README.md for the full map.

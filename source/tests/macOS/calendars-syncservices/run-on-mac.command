@@ -37,7 +37,7 @@ push_calendar() {
 }
 wait_for_phase() {
   attempts=0
-  until ./RetroCloudCalendarVerifier "$1"; do
+  until ./RetroCloudCalendarSyncServicesVerifier "$1"; do
     attempts=$((attempts + 1))
     if [ "$attempts" -ge 15 ]; then return 1; fi
     sleep 1
@@ -47,7 +47,7 @@ finish() {
   original_status=$?
   trap - EXIT
   set +e
-  ./RetroCloudCalendarFixtures empty Calendar-active.sqlite
+  ./RetroCloudCalendarFixtureGenerator empty Calendar-active.sqlite
   push_calendar
   wait_for_phase empty
   cleanup_status=$?
@@ -69,7 +69,7 @@ if ps -axww -o command | grep '/Library/Application Support/RetroCloudSync/Retro
 fi
 open -a iCal
 export_phase() {
-  ./RetroCloudCalendarFixtures "$1" Calendar-active.sqlite
+  ./RetroCloudCalendarFixtureGenerator "$1" Calendar-active.sqlite
   push_calendar
   wait_for_phase "$2"
 }
@@ -103,8 +103,8 @@ end run
 APPLESCRIPT
 }
 export_phase empty empty
-./RetroCloudCalendarClientTests CalendarTestSyncClient.plist
-./RetroCloudCalendarVerifier snapshot Calendar-baseline.plist
+./RetroCloudCalendarClientRegistrationTests CalendarTestSyncClient.plist
+./RetroCloudCalendarSyncServicesVerifier snapshot Calendar-baseline.plist
 export_phase initial initial
 echo '[PASS] Calendar, events, recurrence, exception, attendee, and alarm imported'
 export_phase initial initial
@@ -123,7 +123,7 @@ export_phase unsupported updated
 echo '[PASS] Unsupported recurrence retained the last exported series'
 export_phase updated updated
 export_phase empty empty
-./RetroCloudCalendarVerifier baseline Calendar-baseline.plist
+./RetroCloudCalendarSyncServicesVerifier baseline Calendar-baseline.plist
 echo '[PASS] Cleanup preserved pre-existing calendar/event identifiers'
 export_status=0
 echo 'Offline calendar integration tests passed.'

@@ -1,12 +1,12 @@
 //
-//  AXTestRunner.h
-//  RetroCloudSyncTests
+//  AppGUITestRunner.h
+//  RetroCloudAppGUITests
 //
 
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 
-@interface AXTestRunner : NSObject {
+@interface AppGUITestRunner : NSObject {
  @private
   NSString *applicationPath_;
   NSString *screenshotsDirectory_;

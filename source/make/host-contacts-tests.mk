@@ -1,9 +1,9 @@
 # Native tests for the portable vCard and SQLite layers.
 
 HOST_CC ?= /usr/bin/cc
-SHARED_TEST_BUILD_ROOT := $(BUILD_ROOT)/shared-test
-SHARED_TEST_OUTPUT := $(SHARED_TEST_BUILD_ROOT)/RetroCloudSharedTests
-SHARED_TEST_SOURCES := $(SOURCE_ROOT)/shared-test/main.c \
+SHARED_TEST_BUILD_ROOT := $(BUILD_ROOT)/tests/host/contacts
+SHARED_TEST_OUTPUT := $(SHARED_TEST_BUILD_ROOT)/RetroCloudContactStoreTests
+SHARED_TEST_SOURCES := $(SOURCE_ROOT)/tests/portable/ContactStoreTests.c \
 	$(SHARED_SOURCE_ROOT)/RCError.c $(SHARED_SOURCE_ROOT)/RCVCard.c \
 	$(SHARED_SOURCE_ROOT)/RCContactStore.c
 
@@ -19,8 +19,8 @@ $(SHARED_TEST_OUTPUT): $(SHARED_TEST_SOURCES) $(LIBVC_HOST_LIBRARY)
 
 .PHONY: shared-test-run
 
-CONTACT_DAV_TEST_OUTPUT := $(SHARED_TEST_BUILD_ROOT)/RetroCloudContactDAVTests
-CONTACT_DAV_TEST_SOURCES := $(SOURCE_ROOT)/shared-test/ContactDAVTests.c \
+CONTACT_DAV_TEST_OUTPUT := $(SHARED_TEST_BUILD_ROOT)/RetroCloudCardDAVMirrorTests
+CONTACT_DAV_TEST_SOURCES := $(SOURCE_ROOT)/tests/portable/CardDAVMirrorTests.c \
 	$(SHARED_SOURCE_ROOT)/RCError.c $(SHARED_SOURCE_ROOT)/RCVCard.c \
 	$(SHARED_SOURCE_ROOT)/RCContactStore.c $(SHARED_SOURCE_ROOT)/RCCardDAVMirror.c \
 	$(SHARED_SOURCE_ROOT)/RCDAVClient.c
@@ -36,9 +36,9 @@ contact-dav-test: $(CONTACT_DAV_TEST_OUTPUT)
 	@"$(CONTACT_DAV_TEST_OUTPUT)"
 .PHONY: contact-dav-test
 
-VCARD_TEST_SOURCES := $(SOURCE_ROOT)/shared-test/VCardTests.c \
+VCARD_TEST_SOURCES := $(SOURCE_ROOT)/tests/portable/VCardParserTests.c \
 	$(SHARED_SOURCE_ROOT)/RCVCard.c $(SHARED_SOURCE_ROOT)/RCError.c
-VCARD_TEST_OUTPUT := $(SHARED_TEST_BUILD_ROOT)/RetroCloudVCardTests
+VCARD_TEST_OUTPUT := $(SHARED_TEST_BUILD_ROOT)/RetroCloudVCardParserTests
 $(VCARD_TEST_OUTPUT): $(VCARD_TEST_SOURCES) $(LIBVC_HOST_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror \
@@ -49,16 +49,16 @@ vcard-test: $(VCARD_TEST_OUTPUT)
 	@"$(VCARD_TEST_OUTPUT)"
 shared-test-run: vcard-test
 
-$(SHARED_TEST_BUILD_ROOT)/vcard-ppc: $(VCARD_TEST_SOURCES) $(LIBVC_PPC_LIBRARY)
+$(BUILD_ROOT)/tests/macOS/vcard/vcard-ppc: $(VCARD_TEST_SOURCES) $(LIBVC_PPC_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@$(PPC_CC) $(COMMON_FLAGS) $(LIBVC_FLAGS) -arch ppc \
 		-isysroot "$(SDK)" -mmacosx-version-min=10.4 $(VCARD_TEST_SOURCES) \
 		$(LIBVC_PPC_LIBRARY) -lgcc_s.10.4 -o "$@"
-$(SHARED_TEST_BUILD_ROOT)/vcard-i386: $(VCARD_TEST_SOURCES) $(LIBVC_I386_LIBRARY)
+$(BUILD_ROOT)/tests/macOS/vcard/vcard-i386: $(VCARD_TEST_SOURCES) $(LIBVC_I386_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@$(I386_CC) $(COMMON_FLAGS) $(LIBVC_FLAGS) -arch i386 \
 		-isysroot "$(SDK)" -mmacosx-version-min=10.4 $(VCARD_TEST_SOURCES) \
 		$(LIBVC_I386_LIBRARY) -lgcc_s.10.4 -o "$@"
-test-vcard-build: validate-build $(SHARED_TEST_BUILD_ROOT)/vcard-ppc \
-		$(SHARED_TEST_BUILD_ROOT)/vcard-i386
-.PHONY: vcard-test test-vcard-build
+build-mac-vcard-tests: validate-build $(BUILD_ROOT)/tests/macOS/vcard/vcard-ppc \
+		$(BUILD_ROOT)/tests/macOS/vcard/vcard-i386
+.PHONY: vcard-test build-mac-vcard-tests

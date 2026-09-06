@@ -1,8 +1,8 @@
 # Non-shipped read-only CalDAV diagnostic tool.
 
 CALDAV_PROBE_NAME := RetroCloudCalDAVProbe
-CALDAV_PROBE_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-test/caldav-probe
-CALDAV_PROBE_BUILD_ROOT := $(BUILD_ROOT)/macOS-caldav-probe/$(CONFIG)
+CALDAV_PROBE_SOURCE_ROOT := $(SOURCE_ROOT)/probes/macOS/caldav
+CALDAV_PROBE_BUILD_ROOT := $(BUILD_ROOT)/probes/macOS/caldav/$(CONFIG)
 CALDAV_PROBE_SOURCE := $(CALDAV_PROBE_SOURCE_ROOT)/main.c
 CALDAV_PROBE_INTERMEDIATES := $(CALDAV_PROBE_BUILD_ROOT)/Intermediates
 CALDAV_PROBE_OUTPUT := $(CALDAV_PROBE_BUILD_ROOT)/$(CALDAV_PROBE_NAME)
@@ -49,6 +49,6 @@ $(CALDAV_PROBE_I386_OBJECT): $(CALDAV_PROBE_SOURCE) $(ICAL_I386_LIBRARY)
 
 .PHONY: caldav-probe-config
 
-caldav-probe:
+build-mac-caldav-probe:
 	@$(MAKE) --no-print-directory CONFIG=release BUILD_ROOT="$(BUILD_ROOT)" caldav-probe-config
-.PHONY: caldav-probe
+.PHONY: build-mac-caldav-probe

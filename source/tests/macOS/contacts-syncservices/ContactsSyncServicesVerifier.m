@@ -1,7 +1,7 @@
 #import <AddressBook/AddressBook.h>
 #import <Foundation/Foundation.h>
 #import <SyncServices/SyncServices.h>
-#import "../macOS-daemon/RCContactSyncClient.h"
+#import "../../../macOS-daemon/RCContactSyncClient.h"
 #include <stdio.h>
 #include <string.h>
 

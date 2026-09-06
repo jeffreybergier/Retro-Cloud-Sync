@@ -1,9 +1,9 @@
 //
-//  AXTestRunner.m
-//  RetroCloudSyncTests
+//  AppGUITestRunner.m
+//  RetroCloudAppGUITests
 //
 
-#import "AXTestRunner.h"
+#import "AppGUITestRunner.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -13,7 +13,7 @@
 
 static NSString * const kRCTestDaemonName = @"RetroCloudSyncDaemon";
 
-@interface AXTestRunner (Private)
+@interface AppGUITestRunner (Private)
 - (BOOL)captureScreenshotNamed:(NSString *)name;
 - (void)cleanUp;
 - (void)collectElementsWithRole:(CFStringRef)role
@@ -112,7 +112,7 @@ static BOOL ConfigurationMatches(NSString *path,
       [[smtp objectForKey:@"RemotePort"] intValue] == smtpServerPort;
 }
 
-@implementation AXTestRunner
+@implementation AppGUITestRunner
 
 - (id)initWithApplicationPath:(NSString *)applicationPath
          screenshotsDirectory:(NSString *)screenshotsDirectory;
@@ -155,7 +155,6 @@ static BOOL ConfigurationMatches(NSString *path,
   NSString *certificatePath;
   NSString *syncClientPath;
   NSString *configurationPath;
-  NSString *networkTestPath;
   NSString *launchAgentPath;
   NSString *daemonLogPath;
   NSDictionary *configuration;
@@ -164,6 +163,7 @@ static BOOL ConfigurationMatches(NSString *path,
   unsigned short imapPort;
   unsigned short smtpPort;
   NSFileManager *fileManager = [NSFileManager defaultManager];
+  NSData *originalConfigurationData = nil;
   BOOL mailSettingsChanged = NO;
   BOOL succeeded = NO;
 
@@ -186,8 +186,6 @@ static BOOL ConfigurationMatches(NSString *path,
       stringByAppendingPathComponent:@"SyncClient.plist"];
   configurationPath = [supportDirectory
       stringByAppendingPathComponent:@"Configuration.plist"];
-  networkTestPath = [supportDirectory
-      stringByAppendingPathComponent:@"RetroCloudSyncNetworkTest.jpg"];
   launchAgentPath = [[NSHomeDirectory()
       stringByAppendingPathComponent:@"Library/LaunchAgents"]
       stringByAppendingPathComponent:@"com.retrocloudsync.daemon.plist"];
@@ -206,10 +204,44 @@ static BOOL ConfigurationMatches(NSString *path,
     goto cleanup;
   }
   PrintPass(@"Stopped baseline established");
-  if ([fileManager fileExistsAtPath:networkTestPath] &&
-      ![fileManager removeFileAtPath:networkTestPath handler:nil]) {
-    PrintFail(@"Could not remove the previous network test download");
-    goto cleanup;
+  /* Exercise preferences with no account synchronization. Restore the exact
+     original bytes after the app exits, including on a failed assertion. */
+  originalConfigurationData = [NSData dataWithContentsOfFile:configurationPath];
+  {
+    NSMutableDictionary *isolated = [NSMutableDictionary
+        dictionaryWithContentsOfFile:configurationPath];
+    NSMutableDictionary *contacts;
+    if (originalConfigurationData == nil || isolated == nil) {
+      PrintFail(@"Could not snapshot the original configuration");
+      goto cleanup;
+    }
+    if (screenshotsDirectory_ != nil &&
+        ![originalConfigurationData writeToFile:[screenshotsDirectory_
+            stringByAppendingPathComponent:@"Configuration-original.plist"]
+            atomically:YES]) {
+      PrintFail(@"Could not save the configuration recovery copy");
+      goto cleanup;
+    }
+    if ([isolated objectForKey:@"Contacts"] == nil) {
+      contacts = [NSMutableDictionary dictionary];
+    } else if ([[isolated objectForKey:@"Contacts"]
+                   isKindOfClass:[NSDictionary class]]) {
+      contacts = [NSMutableDictionary dictionaryWithDictionary:
+          [isolated objectForKey:@"Contacts"]];
+    } else {
+      PrintFail(@"The original account configuration is invalid");
+      goto cleanup;
+    }
+    [contacts setObject:@"" forKey:@"Username"];
+    [contacts setObject:@"Disabled" forKey:@"ContactsSyncMode"];
+    [contacts setObject:@"Disabled" forKey:@"CalendarsSyncMode"];
+    [contacts setObject:[NSNumber numberWithBool:NO] forKey:@"Enabled"];
+    [contacts setObject:[NSNumber numberWithBool:NO] forKey:@"CalendarsEnabled"];
+    [isolated setObject:contacts forKey:@"Contacts"];
+    if (![isolated writeToFile:configurationPath atomically:YES]) {
+      PrintFail(@"Could not isolate the GUI test configuration");
+      goto cleanup;
+    }
   }
 
   if (![self pressControlNamed:@"Mail" segment:0] ||
@@ -492,11 +524,6 @@ static BOOL ConfigurationMatches(NSString *path,
     PrintFail(@"Mail proxy configuration could not be read");
     goto cleanup;
   }
-  if (![self waitForFileAtPath:networkTestPath timeout:120.0]) {
-    PrintFail(@"Verified HTTPS image download did not finish");
-    goto cleanup;
-  }
-  PrintPass(@"Verified HTTPS image download finished");
   if (![self waitForListenerOnPort:imapPort timeout:15.0]) {
     PrintFail(@"IMAP listener is not accepting loopback connections");
     goto cleanup;
@@ -549,6 +576,11 @@ cleanup:
     [self pressControlNamed:@"Stop" segment:1];
   }
   [self cleanUp];
+  if (originalConfigurationData != nil &&
+      ![originalConfigurationData writeToFile:configurationPath atomically:YES]) {
+    PrintFail(@"Could not restore the original configuration; use the recovery copy");
+    succeeded = NO;
+  }
   return succeeded;
 }
 

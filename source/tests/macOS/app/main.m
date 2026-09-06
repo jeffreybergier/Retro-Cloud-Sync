@@ -1,11 +1,11 @@
 //
 //  main.m
-//  RetroCloudSyncTests
+//  RetroCloudAppGUITests
 //
 
 #import <Foundation/Foundation.h>
 
-#import "AXTestRunner.h"
+#import "AppGUITestRunner.h"
 
 static void PrintUsage(const char *programName)
 {
@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
   NSString *applicationPath = nil;
   NSString *screenshotsDirectory = nil;
   BOOL shouldDumpTree = NO;
-  AXTestRunner *runner;
+  AppGUITestRunner *runner;
   BOOL succeeded;
   int argumentIndex;
 
@@ -36,6 +36,7 @@ int main(int argc, char *argv[])
       argumentIndex++;
       screenshotsDirectory =
           [NSString stringWithUTF8String:argv[argumentIndex]];
+
     } else if ([argument isEqualToString:@"--dump-tree"]) {
       shouldDumpTree = YES;
     } else {
@@ -58,11 +59,12 @@ int main(int argc, char *argv[])
     return 2;
   }
 
-  runner = [[[AXTestRunner alloc]
+  runner = [[[AppGUITestRunner alloc]
       initWithApplicationPath:applicationPath
          screenshotsDirectory:screenshotsDirectory] autorelease];
   if (shouldDumpTree) {
     succeeded = [runner dumpAccessibilityTree];
+
   } else {
     succeeded = [runner runTests];
   }

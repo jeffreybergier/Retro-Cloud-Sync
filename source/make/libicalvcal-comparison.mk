@@ -1,6 +1,6 @@
 # Opt-in evaluation of the legacy VObject parser. It is not used by the app.
-VCAL_COMPAT_ROOT := $(BUILD_ROOT)/vcal-compat
-VCAL_COMPAT_SOURCE := $(SOURCE_ROOT)/shared-test/VCalCompatibility.c
+VCAL_COMPAT_ROOT := $(BUILD_ROOT)/tests/experiments/libicalvcal-comparison
+VCAL_COMPAT_SOURCE := $(SOURCE_ROOT)/tests/experiments/libicalvcal-comparison/LibicalVCalComparison.c
 VCAL_COMPAT_SOURCES := $(VCAL_COMPAT_SOURCE) $(SHARED_SOURCE_ROOT)/RCVCard.c \
 	$(SHARED_SOURCE_ROOT)/RCError.c
 VCAL_COMPAT_FLAGS = $(LIBVC_FLAGS) -I$(ICAL_SOURCE)/src/libicalvcal -I$(SHARED_SOURCE_ROOT)
@@ -36,10 +36,10 @@ $(VCAL_COMPAT_ROOT)/i386: $(VCAL_COMPAT_SOURCES) $(VCAL_I386_LIBRARY) $(LIBVC_I3
 		$(VCAL_I386_LIBRARY) $(ICAL_I386_LIBRARY) $(LIBVC_I386_LIBRARY) -lgcc_s.10.4 -o "$@"
 
 # A compatibility gate: exits nonzero while upstream changes valid card data.
-test-vcal-compat: $(VCAL_COMPAT_ROOT)/host
+compare-host-libicalvcal: $(VCAL_COMPAT_ROOT)/host
 	@"$(VCAL_COMPAT_ROOT)/host"
 
-test-vcal-compat-build: validate-build $(VCAL_COMPAT_ROOT)/host \
+build-libicalvcal-comparison: validate-build $(VCAL_COMPAT_ROOT)/host \
 		$(VCAL_COMPAT_ROOT)/ppc $(VCAL_COMPAT_ROOT)/i386
 
-.PHONY: test-vcal-compat test-vcal-compat-build
+.PHONY: compare-host-libicalvcal build-libicalvcal-comparison

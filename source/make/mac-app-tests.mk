@@ -1,9 +1,9 @@
 # Native Accessibility-based GUI test harness.
 
-TEST_NAME := RetroCloudSyncTests
-TEST_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-test
-TEST_BUILD_ROOT := $(BUILD_ROOT)/macOS-test/$(CONFIG)
-TEST_SOURCES := main.m AXTestRunner.m
+TEST_NAME := RetroCloudAppGUITests
+TEST_SOURCE_ROOT := $(SOURCE_ROOT)/tests/macOS/app
+TEST_BUILD_ROOT := $(BUILD_ROOT)/tests/macOS/app/$(CONFIG)
+TEST_SOURCES := main.m AppGUITestRunner.m
 TEST_SOURCE_PATHS := $(addprefix $(TEST_SOURCE_ROOT)/,$(TEST_SOURCES))
 TEST_INTERMEDIATES := $(TEST_BUILD_ROOT)/Intermediates
 TEST_OUTPUT := $(TEST_BUILD_ROOT)/$(TEST_NAME)
@@ -45,3 +45,5 @@ $(TEST_INTERMEDIATES)/i386/%.o: $(TEST_SOURCE_ROOT)/%.m
 		-c "$<" -o "$@"
 
 .PHONY: test-config
+
+$(TEST_PPC_OBJECTS) $(TEST_I386_OBJECTS): $(TEST_SOURCE_ROOT)/AppGUITestRunner.h

@@ -6,12 +6,11 @@ Sync iCloud Email, Contacts, Calendars with Retro Macs 10.4+
 - `source/macOS-app`: the graphical application and its bundle resources.
 - `source/macOS-daemon`: the production background service embedded in the app;
   runs the mail proxy and Contacts/Calendars synchronization.
-- `source/macOS-test`: non-shipped Mac GUI and Sync Services integration tests,
-  fixtures, verifiers, and remote runners. Its `carddav-probe` and `caldav-probe`
-  subfolders contain manual diagnostic tools that download server data into local
-  databases without changing the remote data; they are not automated tests.
 - `source/shared`: reusable synchronization, parsing, and storage code.
-- `source/shared-test`: portable C tests that run on the Linux build host.
+- `source/tests`: portable regressions, Mac integration suites, fixture generators
+  and optional experiments. See the [test index](source/tests/README.md).
+- `source/probes/macOS`: manual CardDAV/CalDAV diagnostics that read live servers
+  into local databases.
 - `source/make`: build rules for the application, libraries, and test tools.
 - `source/make/scripts`: dependency build and relinking scripts, parser patches,
   and portability helpers.
@@ -24,8 +23,16 @@ Initialize dependencies after cloning (or clone with `--recurse-submodules`):
 git submodule update --init --recursive
 ```
 
-The probes still use `make carddav-probe` and `make caldav-probe`, with binaries
-under `build/macOS-carddav-probe` and `build/macOS-caldav-probe` respectively.
+Build the probes with `make build-mac-carddav-probe` and
+`make build-mac-caldav-probe`, with binaries under `build/probes/macOS/carddav` and `build/probes/macOS/caldav` respectively.
+
+## Tests and diagnostics
+
+Run `make help` for the command index or read [source/tests/README.md](source/tests/README.md)
+for coverage, runtime requirements, artifacts and compatibility aliases.
+`make test-host` runs all normal Linux regressions; `make build-mac-tests` builds
+all normal Mac test tools without running them. `test-mac-app` and
+`test-mac-network` separately exercise the GUI and the HTTPS diagnostic.
 
 ## Contacts and Calendars preferences
 
@@ -138,13 +145,13 @@ session; the app's per-user LaunchAgent runs there.
 Build the non-shipped CalDAV probe and offline tests with:
 
 ```sh
-make caldav-probe
-make test-calendar
-make test-calendar-build
-make test-calendar-syncservices TEST_HOST=x4-vm
+make build-mac-caldav-probe
+make test-host-calendars
+make build-mac-calendars-syncservices-tests
+make test-mac-calendars-syncservices TEST_HOST=x4-vm
 ```
 
-The probe is `build/macOS-caldav-probe/release/RetroCloudCalDAVProbe` and accepts
+The probe is `build/probes/macOS/caldav/release/RetroCloudCalDAVProbe` and accepts
 the same arguments as the CardDAV probe below, defaulting to
 `https://caldav.icloud.com`. It prompts for the app-specific password and performs
 no remote writes or Sync Services import.
@@ -179,11 +186,11 @@ original proposal and deferred work.
 Build the non-shipped PowerPC/Intel diagnostic tool with:
 
 ```sh
-make carddav-probe
-make test-shared
+make build-mac-carddav-probe
+make test-host-contacts
 ```
 
-Copy `build/macOS-carddav-probe/release/RetroCloudCardDAVProbe` and
+Copy `build/probes/macOS/carddav/release/RetroCloudCardDAVProbe` and
 `build/macOS-app/release/RetroCloudSync.app/Contents/Resources/cacert.pem` to
 a Mac under `~/Desktop`, then run:
 
@@ -216,8 +223,8 @@ ownership, quoted parameters, empty values, and malformed-input cleanup/reset.
 A portability shim supplies Tiger's missing `getline` and the missing
 `strings.h` include. The submodule itself stays unchanged.
 
-`make test-shared` includes exact-value, group, parameter, malformed-input,
-long-value and concurrent parsing checks. `make test-vcard-build` builds the
+`make test-host-contacts` includes exact-value, group, parameter, malformed-input,
+long-value and concurrent parsing checks. `make build-mac-vcard-tests` builds the
 same checks for PPC/i386; the PPC executable has also passed on Tiger.
 The app bundles the libvc license, source archive, patches and daemon relinking
 inputs under `Contents/Resources/libvc-source`.
@@ -233,11 +240,12 @@ an empty value. The current `RCVCard` parser passes these same cases.
 Reproduce the comparison or build its non-shipped Mac executables with:
 
 ```sh
-make test-vcal-compat        # native comparison; exits nonzero on incompatibility
-make test-vcal-compat-build  # builds host, PPC and i386 executables
+make compare-host-libicalvcal      # native comparison; exits nonzero on incompatibility
+make build-libicalvcal-comparison  # builds host, PPC and i386 executables
 ```
 
-Outputs are in `build/vcal-compat/` (or `BUILD_ROOT/vcal-compat/`). The comparison
+Outputs are in `build/tests/experiments/libicalvcal-comparison/`
+(or the corresponding `BUILD_ROOT` directory). The comparison
 currently reports 7 failures in 11 cases for libicalvcal, and none for RCVCard.
 Mac executables must be copied to a Mac under `~/Desktop` to run them.
 
@@ -246,14 +254,14 @@ Mac executables must be copied to a Mac under `~/Desktop` to run them.
 Build the non-shipped test tools and synthetic contact databases with:
 
 ```sh
-make test-syncservices-build
-make test-syncservices-analyze
+make build-mac-contacts-syncservices-tests
+make analyze-mac-contacts-syncservices-tests
 ```
 
 Run the end-to-end test on a Tiger host with:
 
 ```sh
-make test-syncservices TEST_HOST=x4-vm
+make test-mac-contacts-syncservices TEST_HOST=x4-vm
 ```
 
 The test refuses to run while the production daemon is active. It uses the
@@ -278,7 +286,7 @@ cannot remove existing records. The verifier also registers and removes a
 synthetic account client using the production identifier format, checking
 Tiger's encoded filename limit without publishing any records.
 
-`make test-shared` includes deterministic CardDAV tests for account switching
+`make test-host-contacts` includes deterministic CardDAV tests for account switching
 with identical URLs and UIDs, mismatched credentials, deleted/reappearing
 collections, empty homes, invalid new/replacement cards, partial DAV failures,
 publication acknowledgements, and process termination during a transaction.
@@ -295,5 +303,5 @@ a stale `~/Desktop/.RetroCloudSync-ContactsTests.lock` directory.
 
 Remote tools, logs and failure screenshots remain under
 `~/Desktop/RetroCloudSync-ContactsTests-*`. Completed-run logs and exit status
-are also copied to `build/syncservices-test/RetroCloudSync-ContactsTests-*`
+are also copied to `build/tests/macOS/contacts-syncservices/RetroCloudSync-ContactsTests-*`
 (or the corresponding `BUILD_ROOT`).
