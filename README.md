@@ -176,7 +176,7 @@ discovery and read-only contact downloads; it never sends `PUT` or `DELETE`.
 Downloaded vCards are stored both as their original bodies and as normalized
 contact, property, parameter, and structured-value rows.
 
-## Offline Sync Services test
+## Offline contacts Sync Services test
 
 Build the non-shipped test tools and synthetic contact databases with:
 
@@ -195,8 +195,30 @@ The test refuses to run while the production daemon is active. It uses the
 separate Sync Services client identifier
 `com.retrocloudsync.contacts.test.v1` and never reads the login Keychain,
 loads the service configuration, initializes the network stack, or contacts
-iCloud. It records the existing Address Book identifiers, adds two uniquely
-named synthetic contacts, verifies an idempotent re-export, updates one,
-deletes the other, removes all test contacts, and confirms that every
-pre-existing Address Book record remains. Cleanup is attempted after failures,
-and all remote tools and artifacts remain under `~/Desktop`.
+iCloud. The runner copies the tools with SCP and starts them through Terminal
+in the logged-in desktop session. Enable Accessibility on Tiger so the harness
+can confirm Sync Services dialogs naming only its "Retro Cloud Contacts Tests"
+client, as the calendar harness does.
+
+The verifier checks both Address Book and Sync Services truth: exact contact
+and child counts, values, Unicode names/notes, birthday, company display,
+labels, preferred phone/email entries, relationship back-references, stable
+contact identities, and removal of old child records. Fixtures exercise repeat
+exports, reordered vCard properties, updates/contact deletion, and removal of
+all optional fields. Corrupt vCards and missing child identities must fail
+without publishing a partial export; a valid replay must then succeed.
+
+Before exporting, the harness snapshots existing people and groups, including
+property contents, images, multivalue labels/identities and group membership
+(excluding modification timestamps). It checks that baseline after each phase
+and cleanup. Cleanup always attempts an empty export, verifies that test
+contacts and previously observed child records are gone, and only then
+unregisters the test client. Cleanup failures fail the run and retain the client
+for recovery. A Desktop lock prevents overlapping contacts harnesses; after an
+interrupted run, inspect its `owner` file and running processes before removing
+a stale `~/Desktop/.RetroCloudSync-ContactsTests.lock` directory.
+
+Remote tools, logs and failure screenshots remain under
+`~/Desktop/RetroCloudSync-ContactsTests-*`. Completed-run logs and exit status
+are also copied to `build/syncservices-test/RetroCloudSync-ContactsTests-*`
+(or the corresponding `BUILD_ROOT`).

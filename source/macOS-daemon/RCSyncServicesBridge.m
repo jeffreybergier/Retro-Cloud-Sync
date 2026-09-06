@@ -177,8 +177,11 @@ static int RCPushChild(RCSyncExportContext *context, long long contactIdentifier
   record = [NSMutableDictionary dictionaryWithObjectsAndKeys:
       entity, ISyncRecordEntityNameKey,
       [NSArray arrayWithObject:contactSyncIdentifier], @"contact", nil];
-  [record setObject:RCPropertyType(property, entity) forKey:@"type"];
   label = RCGroupedValue(document, property, "X-ABLabel");
+  /* Address Book uses the label attribute only for type "other". Keep
+     grouped labels (including Apple's localized label tokens) visible. */
+  [record setObject:([label length] != 0 ? @"other" :
+                    RCPropertyType(property, entity)) forKey:@"type"];
   if ([label length] != 0) [record setObject:label forKey:@"label"];
   if ([entity isEqualToString:kRCAddressEntity]) {
     value = RCStreet(property);
@@ -381,12 +384,13 @@ static int RCSyncServicesPushContactsForClient(
         }
       }
     }
+    /* Push-only sessions must also enter the merge phase and check its result. */
+    if (![session prepareToPullChangesForEntityNames:pullEntities
+          beforeDate:[NSDate dateWithTimeIntervalSinceNow:60.0]]) {
+      RCErrorSet(error, 1, "Sync Services could not merge contact changes");
+      goto finished;
+    }
     if ([pullEntities count] != 0) {
-      if (![session prepareToPullChangesForEntityNames:pullEntities
-            beforeDate:[NSDate dateWithTimeIntervalSinceNow:60.0]]) {
-        RCErrorSet(error, 1, "Sync Services could not prepare contact changes");
-        goto finished;
-      }
       {
         NSEnumerator *changes =
             [session changeEnumeratorForEntityNames:pullEntities];

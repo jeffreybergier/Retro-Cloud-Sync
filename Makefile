@@ -111,7 +111,7 @@ test-syncservices-analyze: validate-analyzer $(ICAL_I386_LIBRARY)
 
 test-syncservices:
 	@$(MAKE) --no-print-directory release test-syncservices-build
-	@TEST_HOST="$(TEST_HOST)" BUILD_ROOT="$(BUILD_ROOT)" \
+	@TEST_HOST="$(TEST_HOST)" BUILD_ROOT="$(BUILD_ROOT)" PROJECT_ROOT="$(PROJECT_ROOT)" \
 		/bin/bash "$(SOURCE_ROOT)/macOS-test/run-syncservices-remote.sh"
 
 build-all: validate-build app-config

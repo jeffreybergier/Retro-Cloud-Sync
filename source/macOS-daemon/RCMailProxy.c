@@ -4,6 +4,7 @@
 //
 
 #include "RCMailProxy.h"
+#include "RCMailProxyLog.h"
 
 #include <AltivecCore/AltivecCore.h>
 #include <AltivecCore/openssl/x509v3.h>
@@ -14,6 +15,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,10 +57,37 @@ struct RCMailProxy {
   int stopping;
 };
 
+static void RCLog(const char *format, ...) __attribute__((format(printf, 1, 2)));
+
+static void RCLog(const char *format, ...)
+{
+  int savedError = errno;
+  char *message = NULL;
+  va_list arguments;
+
+  va_start(arguments, format);
+  if (vasprintf(&message, format, arguments) >= 0) {
+    RCMailProxyLogMessage(message);
+    free(message);
+  } else {
+    RCMailProxyLogMessage("Could not format mail proxy log message");
+  }
+  va_end(arguments);
+  errno = savedError;
+}
+
+static int RCLogTLSError(const char *message, size_t length, void *context)
+{
+  (void)context;
+  while (length > 0 && (message[length - 1] == '\n' || message[length - 1] == '\r'))
+    length--;
+  RCLog("%.*s", (int)length, message);
+  return 1;
+}
+
 static void RCLogSocketError(const char *operation, const char *serviceName)
 {
-  fprintf(stderr, "%s %s failed: %s\n", serviceName, operation,
-          strerror(errno));
+  RCLog("%s %s failed: %s", serviceName, operation, strerror(errno));
 }
 
 static int RCCreateListener(unsigned short port)
@@ -392,24 +421,21 @@ static void *RCConnectionMain(void *argument)
   if (connection->config.mode == kRCMailProxySMTPStartTLS &&
       !RCPrepareSMTPStartTLS(connection->remoteSocket, greeting,
                              sizeof(greeting), &greetingLength)) {
-    fprintf(stderr, "%s upstream STARTTLS negotiation failed\n",
-            connection->config.serviceName);
+    RCLog("%s upstream STARTTLS negotiation failed", connection->config.serviceName);
     goto finished;
   }
   tls = RCConnectTLS(proxy->tlsContext, connection->remoteSocket,
                      connection->config.remoteHost);
   if (tls == NULL) {
-    fprintf(stderr, "%s verified TLS connection failed\n",
-            connection->config.serviceName);
-    ERR_print_errors_fp(stderr);
+    RCLog("%s verified TLS connection failed", connection->config.serviceName);
+    ERR_print_errors_cb(RCLogTLSError, NULL);
     goto finished;
   }
   if (greetingLength > 0 &&
       !RCSendAll(connection->localSocket, greeting, greetingLength)) {
     goto finished;
   }
-  fprintf(stderr, "%s proxy connection established\n",
-          connection->config.serviceName);
+  RCLog("%s proxy connection established", connection->config.serviceName);
   RCRelayConnection(connection->localSocket, connection->remoteSocket, tls);
 
 finished:
@@ -504,8 +530,8 @@ RCMailProxy *RCMailProxyStart(const RCMailProxyConfig *configs,
       SSL_CTX_set_min_proto_version(proxy->tlsContext, TLS1_2_VERSION) != 1 ||
       SSL_CTX_load_verify_locations(proxy->tlsContext, certificatePath,
                                     NULL) != 1) {
-    fprintf(stderr, "Could not configure the mail proxy TLS context\n");
-    ERR_print_errors_fp(stderr);
+    RCLog("Could not configure the mail proxy TLS context");
+    ERR_print_errors_cb(RCLogTLSError, NULL);
     RCMailProxyStop(proxy);
     return NULL;
   }
@@ -525,16 +551,14 @@ RCMailProxy *RCMailProxyStart(const RCMailProxyConfig *configs,
     proxy->listenerCount++;
     if (pthread_create(&listener->thread, NULL, RCListenerMain, listener) !=
         0) {
-      fprintf(stderr, "%s listener thread creation failed\n",
-              configs[index].serviceName);
+      RCLog("%s listener thread creation failed", configs[index].serviceName);
       RCMailProxyStop(proxy);
       return NULL;
     }
     listener->threadStarted = 1;
-    fprintf(stderr, "%s listening on 127.0.0.1:%u -> %s:%u\n",
-            configs[index].serviceName,
-            (unsigned int)configs[index].localPort, configs[index].remoteHost,
-            (unsigned int)configs[index].remotePort);
+    RCLog("%s listening on 127.0.0.1:%u -> %s:%u", configs[index].serviceName,
+          (unsigned int)configs[index].localPort, configs[index].remoteHost,
+          (unsigned int)configs[index].remotePort);
   }
   return proxy;
 }

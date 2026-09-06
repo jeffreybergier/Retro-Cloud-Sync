@@ -630,9 +630,12 @@ int RCContactStoreCopyPropertySyncIdentifier(
   result = sqlite3_step(statement);
   if (result == SQLITE_ROW) {
     identifier = sqlite3_column_text(statement, 0);
-    if (identifier != NULL) {
-      *syncRecordIdentifier = strdup((const char *)identifier);
+    if (identifier == NULL || identifier[0] == '\0') {
+      sqlite3_finalize(statement);
+      RCErrorSet(error, 1, "Contact property sync identity is missing");
+      return 0;
     }
+    *syncRecordIdentifier = strdup((const char *)identifier);
   }
   sqlite3_finalize(statement);
   if (result != SQLITE_ROW || *syncRecordIdentifier == NULL) {

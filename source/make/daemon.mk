@@ -3,7 +3,8 @@
 DAEMON_NAME := RetroCloudSyncDaemon
 DAEMON_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-daemon
 DAEMON_BUILD_ROOT := $(BUILD_ROOT)/macOS-daemon/$(CONFIG)
-DAEMON_SOURCES := main.m RCCalendarSyncServicesBridge.m RCSyncServicesBridge.m RCMailProxy.c
+DAEMON_SOURCES := main.m RCCalendarSyncServicesBridge.m RCSyncServicesBridge.m \
+	RCMailProxy.c RCMailProxyLog.m
 DAEMON_SOURCE_PATHS := $(addprefix $(DAEMON_SOURCE_ROOT)/,$(DAEMON_SOURCES))
 DAEMON_INTERMEDIATES := $(DAEMON_BUILD_ROOT)/Intermediates
 DAEMON_OUTPUT := $(DAEMON_BUILD_ROOT)/$(DAEMON_NAME)
@@ -28,6 +29,12 @@ daemon-config: validate-build shared-config $(DAEMON_OUTPUT)
 $(DAEMON_INTERMEDIATES)/ppc/RCCalendarSyncServicesBridge.o \
 $(DAEMON_INTERMEDIATES)/i386/RCCalendarSyncServicesBridge.o: \
 	$(DAEMON_SOURCE_ROOT)/RCCalendarSyncClient.h
+
+$(DAEMON_INTERMEDIATES)/ppc/RCMailProxy.o \
+$(DAEMON_INTERMEDIATES)/i386/RCMailProxy.o \
+$(DAEMON_INTERMEDIATES)/ppc/RCMailProxyLog.o \
+$(DAEMON_INTERMEDIATES)/i386/RCMailProxyLog.o: \
+	$(DAEMON_SOURCE_ROOT)/RCMailProxyLog.h
 
 $(DAEMON_OUTPUT): $(DAEMON_INTERMEDIATES)/ppc.bin \
 		$(DAEMON_INTERMEDIATES)/i386.bin
