@@ -8,6 +8,7 @@ BUILD_ROOT ?= $(PROJECT_ROOT)/build
 
 include $(SOURCE_ROOT)/make/legacy-mac.mk
 include $(SOURCE_ROOT)/make/libical.mk
+include $(SOURCE_ROOT)/make/libvc.mk
 include $(SOURCE_ROOT)/make/shared.mk
 include $(SOURCE_ROOT)/make/daemon.mk
 include $(SOURCE_ROOT)/make/carddav-probe.mk
@@ -15,6 +16,7 @@ include $(SOURCE_ROOT)/make/caldav-probe.mk
 include $(SOURCE_ROOT)/make/app.mk
 include $(SOURCE_ROOT)/make/test.mk
 include $(SOURCE_ROOT)/make/shared-test.mk
+include $(SOURCE_ROOT)/make/vcal-compat.mk
 include $(SOURCE_ROOT)/make/calendar-test.mk
 include $(SOURCE_ROOT)/make/syncservices-test.mk
 
@@ -116,14 +118,14 @@ test-syncservices:
 
 build-all: validate-build app-config
 
-analyze: validate-analyzer $(ICAL_I386_LIBRARY)
+analyze: validate-analyzer $(ICAL_I386_LIBRARY) $(LIBVC_I386_LIBRARY)
 	@echo "--- Running Clang Static Analyzer (i386, Mac OS X 10.5 SDK) ---"
 	@echo "  > analyzing app, daemon, and shared sources; diagnostics follow"
 	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(ANALYZER) \
 		--analyze -Xanalyzer -analyzer-output=text \
 		-target i386-apple-darwin9 -arch i386 -isysroot "$(SDK)" \
 		-std=c99 -Wall -Wextra -fno-color-diagnostics \
-		$(ICAL_FLAGS) -I$(ICAL_ROOT)/libical-i386/src \
+		$(ICAL_FLAGS) $(LIBVC_FLAGS) -I$(ICAL_ROOT)/libical-i386/src \
 		-I"$(SHARED_SOURCE_ROOT)" -I"$(ALTIVECCORE_ROOT)/include" \
 		-I"$(SDK)/usr/include/libxml2" \
 		-I"$(ALTIVECCOCOA_ROOT)/include" \

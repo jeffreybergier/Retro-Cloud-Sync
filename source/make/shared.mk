@@ -4,7 +4,7 @@ SHARED_SOURCE_ROOT := $(SOURCE_ROOT)/shared
 SHARED_BUILD_ROOT := $(BUILD_ROOT)/shared/$(CONFIG)
 SHARED_SOURCE_NAMES := $(notdir $(wildcard $(SHARED_SOURCE_ROOT)/*.c))
 SHARED_SOURCE_PATHS := $(addprefix $(SHARED_SOURCE_ROOT)/,$(SHARED_SOURCE_NAMES))
-SHARED_COMPILE_FLAGS = $(ICAL_FLAGS) -I$(ALTIVECCORE_ROOT)/include \
+SHARED_COMPILE_FLAGS = $(ICAL_FLAGS) $(LIBVC_FLAGS) -I$(ALTIVECCORE_ROOT)/include \
 	-I$(SDK)/usr/include/libxml2
 
 ifneq ($(strip $(SHARED_SOURCE_NAMES)),)
@@ -25,7 +25,7 @@ $(I386_SHARED_LIBRARY): $(I386_SHARED_OBJECTS)
 	@$(LEGACY_AR) rcs "$@" $^
 	@$(LEGACY_RANLIB) "$@"
 
-$(SHARED_BUILD_ROOT)/ppc/%.o: $(SHARED_SOURCE_ROOT)/%.c $(ICAL_PPC_LIBRARY)
+$(SHARED_BUILD_ROOT)/ppc/%.o: $(SHARED_SOURCE_ROOT)/%.c $(ICAL_PPC_LIBRARY) $(LIBVC_PPC_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@echo "  > shared ppc: $(notdir $<)"
 	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(PPC_CC) \
@@ -33,7 +33,7 @@ $(SHARED_BUILD_ROOT)/ppc/%.o: $(SHARED_SOURCE_ROOT)/%.c $(ICAL_PPC_LIBRARY)
 		-I$(ICAL_ROOT)/libical-ppc/src -arch ppc -isysroot "$(SDK)" \
 		-c "$<" -o "$@"
 
-$(SHARED_BUILD_ROOT)/i386/%.o: $(SHARED_SOURCE_ROOT)/%.c $(ICAL_I386_LIBRARY)
+$(SHARED_BUILD_ROOT)/i386/%.o: $(SHARED_SOURCE_ROOT)/%.c $(ICAL_I386_LIBRARY) $(LIBVC_I386_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@echo "  > shared i386: $(notdir $<)"
 	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(I386_CC) \

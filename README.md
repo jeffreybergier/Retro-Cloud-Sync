@@ -15,6 +15,7 @@ Sync iCloud Email, Contacts, Calendars with Retro Macs 10.4+
 - `source/make`: build rules for the application, libraries, and test tools.
 - `source/dependencies`: dependency preparation scripts.
 - `source/deps/libical`: upstream libical Git submodule, pinned to `v3.0.20`.
+- `source/deps/libvc`: upstream libvc Git submodule, pinned to `v013`.
 
 Initialize dependencies after cloning (or clone with `--recurse-submodules`):
 
@@ -196,6 +197,48 @@ The password is read from an interactive prompt. The probe performs CardDAV
 discovery and read-only contact downloads; it never sends `PUT` or `DELETE`.
 Downloaded vCards are stored both as their original bodies and as normalized
 contact, property, parameter, and structured-value rows.
+
+### vCard parser
+
+Contacts use libvc 013 through `RCVCardParse()`. Libvc parses content lines,
+groups and parameters; the adapter unfolds input, decodes escaped text and
+structured values, and fills the existing contact model. Original downloaded
+bodies remain unchanged in the database. Comma-separated parameters can become
+multiple parameter rows with the same name. Parsing uses an in-memory stream
+and serializes access to libvc's global parser state.
+
+`source/make/libvc.mk` builds native, PPC and i386 static libraries. It needs
+Flex, Bison and patch on the Linux host. Following the libical pattern,
+preparation copies sources into `build/dependencies/libvc-source` and applies
+`source/dependencies/libvc-parser.patch` there. The patch fixes group token
+ownership, quoted parameters, empty values, and malformed-input cleanup/reset.
+A portability shim supplies Tiger's missing `getline` and the missing
+`strings.h` include. The submodule itself stays unchanged.
+
+`make test-shared` includes exact-value, group, parameter, malformed-input,
+long-value and concurrent parsing checks. `make test-vcard-build` builds the
+same checks for PPC/i386; the PPC executable has also passed on Tiger.
+The app bundles the libvc license, source archive, patches and daemon relinking
+inputs under `Contents/Resources/libvc-source`.
+
+### Legacy libicalvcal compatibility check
+
+The libical submodule also contains the older `libicalvcal` / `VObject` parser.
+It is not used by the application: testing version 3.0.20 found that it rejects
+quoted parameter values, splits escaped surname separators, inserts spaces at
+line folds, drops leading value spaces, and consumes the next property after
+an empty value. The current `RCVCard` parser passes these same cases.
+
+Reproduce the comparison or build its non-shipped Mac executables with:
+
+```sh
+make test-vcal-compat        # native comparison; exits nonzero on incompatibility
+make test-vcal-compat-build  # builds host, PPC and i386 executables
+```
+
+Outputs are in `build/vcal-compat/` (or `BUILD_ROOT/vcal-compat/`). The comparison
+currently reports 7 failures in 11 cases for libicalvcal, and none for RCVCard.
+Mac executables must be copied to a Mac under `~/Desktop` to run them.
 
 ## Offline contacts Sync Services test
 

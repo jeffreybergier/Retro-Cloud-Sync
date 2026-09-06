@@ -51,12 +51,12 @@ $(SYNC_TEST_I386_OBJECT): $(SYNC_TEST_VERIFIER_SOURCE)
 
 $(SYNC_TEST_FIXTURE_GENERATOR): $(SYNC_TEST_FIXTURE_SOURCE) \
 		$(SHARED_SOURCE_ROOT)/RCError.c $(SHARED_SOURCE_ROOT)/RCVCard.c \
-		$(SHARED_SOURCE_ROOT)/RCContactStore.c
+		$(SHARED_SOURCE_ROOT)/RCContactStore.c $(LIBVC_HOST_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@echo "  > building Sync Services fixture generator"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror \
-		-I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include \
-		$^ -lsqlite3 -o "$@"
+		$(LIBVC_FLAGS) -I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include \
+		$^ -lpthread -lsqlite3 -o "$@"
 
 $(SYNC_TEST_INITIAL_DATABASE): $(SYNC_TEST_FIXTURE_GENERATOR)
 	@rm -f "$@"

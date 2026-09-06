@@ -4,6 +4,8 @@ set -euo pipefail
 mode="$1"
 deps="$2"
 toolchain="${3:-/osxcross/legacy/target}"
+target="${4:-ical}"
+case "$target" in ical|icalvcal) ;; *) exit 1 ;; esac
 version=3.0.20
 archive="$deps/libical-$version.tar.gz"
 src="$deps/libical-$version"
@@ -29,7 +31,7 @@ import sys
 root = Path(sys.argv[1])
 p = root / 'CMakeLists.txt'
 p.write_text(p.read_text().replace('-Wtype-limits', '').replace('-Wno-deprecated', ''))
-for p in (root / 'src/libical').glob('*.c'):
+for p in list((root / 'src/libical').glob('*.c')) + list((root / 'src/libicalvcal').glob('*.c')):
     p.write_text(''.join(line for line in p.read_text().splitlines(True)
                        if not line.lstrip().startswith('#pragma GCC diagnostic')))
 PY
@@ -59,14 +61,18 @@ fi
 if ! cmake -S "$src" -B "$out" "${args[@]}" > "$deps/libical-$mode-configure.log" 2>&1; then
   cat "$deps/libical-$mode-configure.log"; exit 1
 fi
-if ! cmake --build "$out" --target ical --parallel 4 > "$deps/libical-$mode-build.log" 2>&1; then
+if ! cmake --build "$out" --target "$target" --parallel 4 > "$deps/libical-$mode-build.log" 2>&1; then
   cat "$deps/libical-$mode-build.log"; exit 1
 fi
 # Some CMake versions cache the host's archive rule while identifying this old
 # compiler. Repack with cctools so ld64 receives BSD, not GNU, archive members.
 if [ "$mode" != host ]; then
-  rm -f "$out/lib/libical-legacy.a"
-  "$toolchain/bin/i386-apple-darwin9-ar" rcs "$out/lib/libical-legacy.a" "$out"/src/libical/CMakeFiles/ical.dir/*.o
-  "$toolchain/bin/i386-apple-darwin9-ranlib" "$out/lib/libical-legacy.a"
-  mv "$out/lib/libical-legacy.a" "$out/lib/libical.a"
+  libraries=(ical)
+  if [ "$target" = icalvcal ]; then libraries+=(icalvcal); fi
+  for library in "${libraries[@]}"; do
+    rm -f "$out/lib/lib$library-legacy.a"
+    "$toolchain/bin/i386-apple-darwin9-ar" rcs "$out/lib/lib$library-legacy.a" "$out"/src/lib"$library"/CMakeFiles/"$library".dir/*.o
+    "$toolchain/bin/i386-apple-darwin9-ranlib" "$out/lib/lib$library-legacy.a"
+    mv "$out/lib/lib$library-legacy.a" "$out/lib/lib$library.a"
+  done
 fi

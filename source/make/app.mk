@@ -40,7 +40,9 @@ app-config: validate-build daemon-config $(APP_ZIP)
 $(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
 		$(APP_SYNC_CLIENT_PLIST) $(APP_RESOURCES_ROOT)/CalendarSyncClient.plist $(ICAL_PREPARE) \
 		$(ALTIVECCORE_CA_CERTS) $(ALTIVECCOCOA_FONTS) \
-		$(ALTIVECCOCOA_FONT_LICENSE)
+		$(ALTIVECCOCOA_FONT_LICENSE) $(LIBVC_PREPARE) $(LIBVC_SUPPORT) \
+		$(SOURCE_ROOT)/dependencies/libvc-README.txt \
+		$(SOURCE_ROOT)/dependencies/relink-libvc-daemon.sh
 	@echo " [4/5] Building app bundle and embedding daemon..."
 	@rm -rf "$(APP_BUNDLE)"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" \
@@ -60,6 +62,19 @@ $(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) 
 	@cp "$(ICAL_SOURCE)/LICENSE.MPL2.txt" "$(APP_BUNDLE)/Contents/Resources/LICENSE-libical.txt"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources/libical-source"
 	@cp "$(ICAL_ROOT)/libical-3.0.20.tar.gz" "$(ICAL_SCRIPT)" "$(APP_BUNDLE)/Contents/Resources/libical-source/"
+	@mkdir -p "$(APP_BUNDLE)/Contents/Resources/libvc-source/relink/ppc" \
+		"$(APP_BUNDLE)/Contents/Resources/libvc-source/relink/i386"
+	@cp "$(LIBVC_CHECKOUT)/COPYING.LIB" "$(APP_BUNDLE)/Contents/Resources/LICENSE-libvc.txt"
+	@cp "$(LIBVC_CHECKOUT)/COPYING.LIB" "$(LIBVC_ROOT)/libvc-013.tar.gz" \
+		"$(LIBVC_SCRIPT)" $(LIBVC_SUPPORT) \
+		"$(SOURCE_ROOT)/dependencies/libvc-parser.patch" \
+		"$(SOURCE_ROOT)/dependencies/libvc-README.txt" \
+		"$(SOURCE_ROOT)/dependencies/relink-libvc-daemon.sh" \
+		"$(APP_BUNDLE)/Contents/Resources/libvc-source/"
+	@cp $(DAEMON_PPC_OBJECTS) "$(PPC_SHARED_LIBRARY)" "$(DAEMON_PPC_ALTIVECCORE)" \
+		"$(ICAL_PPC_LIBRARY)" "$(APP_BUNDLE)/Contents/Resources/libvc-source/relink/ppc/"
+	@cp $(DAEMON_I386_OBJECTS) "$(I386_SHARED_LIBRARY)" "$(DAEMON_I386_ALTIVECCORE)" \
+		"$(ICAL_I386_LIBRARY)" "$(APP_BUNDLE)/Contents/Resources/libvc-source/relink/i386/"
 	@cp "$(ALTIVECCORE_CA_CERTS)" \
 		"$(APP_BUNDLE)/Contents/Resources/cacert.pem"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources/Fonts"
@@ -79,13 +94,13 @@ $(APP_UNIVERSAL_BINARY): $(APP_INTERMEDIATES)/ppc.bin \
 	@$(LIPO) -create $^ -output "$@"
 
 $(APP_INTERMEDIATES)/ppc.bin: $(APP_PPC_OBJECTS) $(PPC_SHARED_LIBRARY) \
-		$(APP_PPC_ALTIVECCOCOA)
+		$(APP_PPC_ALTIVECCOCOA) $(LIBVC_PPC_LIBRARY)
 	@echo "  > linking app ppc binary"
 	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(PPC_CC) \
 		-arch ppc -isysroot "$(SDK)" $^ $(APP_LINK_FLAGS) -o "$@"
 
 $(APP_INTERMEDIATES)/i386.bin: $(APP_I386_OBJECTS) $(I386_SHARED_LIBRARY) \
-		$(APP_I386_ALTIVECCOCOA)
+		$(APP_I386_ALTIVECCOCOA) $(LIBVC_I386_LIBRARY)
 	@echo "  > linking app i386 binary"
 	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(I386_CC) \
 		-arch i386 -isysroot "$(SDK)" $^ $(APP_LINK_FLAGS) -o "$@"

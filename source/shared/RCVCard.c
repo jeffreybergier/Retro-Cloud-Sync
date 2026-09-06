@@ -1,6 +1,16 @@
+/* libvc owns content-line and parameter parsing. This adapter unfolds input,
+   decodes text/structured values, and maps them to the stored contact model. */
+#ifndef __APPLE__
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#endif
 #include "RCVCard.h"
+#include "vc.h"
 
-#include <ctype.h>
+#include <errno.h>
+#include <limits.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -113,26 +123,6 @@ static int RCUnfold(const unsigned char *bytes, size_t length,
   return 1;
 }
 
-static char *RCFindUnquoted(char *text, char character)
-{
-  int quoted = 0;
-  int escaped = 0;
-
-  while (*text != '\0') {
-    if (escaped) {
-      escaped = 0;
-    } else if (*text == '\\') {
-      escaped = 1;
-    } else if (*text == '"') {
-      quoted = !quoted;
-    } else if (*text == character && !quoted) {
-      return text;
-    }
-    text++;
-  }
-  return NULL;
-}
-
 static int RCAddParameter(RCVCardProperty *property, const char *name,
                           const char *value, int position)
 {
@@ -214,88 +204,47 @@ static void RCSetProjection(char **field, const char *value)
   }
 }
 
-static int RCParseProperty(char *line, int position,
-                           RCVCardDocument *document, RCError *error)
+static int RCMapProperty(vc_component *component, int position,
+                          RCVCardDocument *document, RCError *error)
 {
-  char *colon = RCFindUnquoted(line, ':');
-  char *header;
-  char *nameEnd;
-  char *dot;
-  RCVCardProperty *properties;
-  RCVCardProperty *property;
-  char *parameterCursor;
-  int parameterPosition = 0;
-
-  if (colon == NULL) {
-    return 1;
-  }
-  *colon = '\0';
-  header = line;
-  properties = (RCVCardProperty *)realloc(
-      document->properties,
+  RCVCardProperty *properties = realloc(document->properties,
       (document->propertyCount + 1) * sizeof(*properties));
+  RCVCardProperty *property;
+  vc_component_param *parameter;
+  const char *value = vc_get_value(component);
+  int parameterPosition = 0;
   if (properties == NULL) {
-    RCErrorSet(error, 1, "Out of memory parsing vCard properties");
+    RCErrorSet(error, 1, "Out of memory mapping libvc properties");
     return 0;
   }
   document->properties = properties;
   property = &properties[document->propertyCount++];
   memset(property, 0, sizeof(*property));
   property->position = position;
-  property->originalValue = RCCopyString(colon + 1);
-  property->decodedValue = RCDecodeValue(colon + 1, strlen(colon + 1));
-
-  nameEnd = RCFindUnquoted(header, ';');
-  if (nameEnd != NULL) {
-    *nameEnd = '\0';
-    parameterCursor = nameEnd + 1;
-  } else {
-    parameterCursor = NULL;
-  }
-  dot = strchr(header, '.');
-  if (dot != NULL) {
-    *dot = '\0';
-    property->group = RCCopyString(header);
-    property->name = RCCopyString(dot + 1);
-  } else {
-    property->name = RCCopyString(header);
-  }
+  property->group = RCCopyString(vc_get_group(component));
+  property->name = RCCopyString(vc_get_name(component));
+  property->originalValue = RCCopyString(value == NULL ? "" : value);
+  property->decodedValue = RCDecodeValue(value == NULL ? "" : value,
+                                        value == NULL ? 0 : strlen(value));
   if (property->name == NULL || property->originalValue == NULL ||
-      property->decodedValue == NULL) {
-    RCErrorSet(error, 1, "Out of memory parsing vCard property");
+      property->decodedValue == NULL ||
+      (vc_get_group(component) != NULL && property->group == NULL)) {
+    RCErrorSet(error, 1, "Out of memory mapping libvc property");
     return 0;
   }
-
-  while (parameterCursor != NULL && *parameterCursor != '\0') {
-    char *next = RCFindUnquoted(parameterCursor, ';');
-    char *equals;
-    if (next != NULL) {
-      *next = '\0';
-    }
-    equals = RCFindUnquoted(parameterCursor, '=');
-    if (equals != NULL) {
-      char *value;
-      *equals = '\0';
-      value = equals + 1;
-      if (value[0] == '"' && value[strlen(value) - 1] == '"' &&
-          strlen(value) >= 2) {
-        value[strlen(value) - 1] = '\0';
-        value++;
-      }
-      if (!RCAddParameter(property, parameterCursor, value,
-                          parameterPosition++)) {
-        RCErrorSet(error, 1, "Out of memory parsing vCard parameter");
-        return 0;
-      }
-      if (strcasecmp(parameterCursor, "VALUE") == 0) {
-        property->valueType = RCCopyString(value);
-      }
-    } else if (!RCAddParameter(property, "TYPE", parameterCursor,
-                               parameterPosition++)) {
-      RCErrorSet(error, 1, "Out of memory parsing vCard parameter");
+  for (parameter = vc_get_param(component); parameter != NULL;
+       parameter = vc_param_get_next(parameter)) {
+    const char *name = vc_param_get_name(parameter);
+    const char *parameterValue = vc_param_get_value(parameter);
+    if (name == NULL || parameterValue == NULL ||
+        !RCAddParameter(property, name, parameterValue, parameterPosition++)) {
+      RCErrorSet(error, 1, "Unable to map libvc parameter");
       return 0;
     }
-    parameterCursor = next == NULL ? NULL : next + 1;
+    if (!strcasecmp(name, "VALUE") && property->valueType == NULL) {
+      property->valueType = RCCopyString(parameterValue);
+      if (property->valueType == NULL) return 0;
+    }
   }
   if (!RCParseParts(property)) {
     RCErrorSet(error, 1, "Out of memory parsing structured vCard value");
@@ -365,42 +314,103 @@ void RCVCardDocumentClear(RCVCardDocument *document)
   RCVCardDocumentInit(document);
 }
 
+/* libvc's generated parser and scanner use process-global state. */
+static pthread_mutex_t RCParserMutex = PTHREAD_MUTEX_INITIALIZER;
+
+#ifdef __APPLE__
+typedef struct {
+  const char *bytes;
+  size_t length;
+  size_t position;
+} RCVCardInput;
+
+static int RCReadInput(void *cookie, char *buffer, int count)
+{
+  RCVCardInput *input = cookie;
+  size_t amount = input->length - input->position;
+  if (count <= 0) return 0;
+  if (amount > (size_t)count) amount = (size_t)count;
+  memcpy(buffer, input->bytes + input->position, amount);
+  input->position += amount;
+  return (int)amount;
+}
+
+static fpos_t RCSeekInput(void *cookie, fpos_t offset, int whence)
+{
+  RCVCardInput *input = cookie;
+  fpos_t base;
+  switch (whence) {
+    case SEEK_SET: base = 0; break;
+    case SEEK_CUR: base = (fpos_t)input->position; break;
+    case SEEK_END: base = (fpos_t)input->length; break;
+    default: errno = EINVAL; return (fpos_t)-1;
+  }
+  if (offset < -base || offset > (fpos_t)input->length - base) {
+    errno = EINVAL;
+    return (fpos_t)-1;
+  }
+  input->position = (size_t)(base + offset);
+  return base + offset;
+}
+#endif
+
 int RCVCardParse(const unsigned char *bytes, size_t length,
                  RCVCardDocument *document, RCError *error)
 {
   char *unfolded = NULL;
-  char *line;
-  int position = 0;
-  int sawBegin = 0;
-  int sawEnd = 0;
-
+  FILE *input = NULL;
+  vc_component *card = NULL, *component;
+  int position = 0, result = 0;
+  size_t unfoldedLength;
+  int trailing;
+#ifdef __APPLE__
+  RCVCardInput memory;
+#endif
   RCErrorClear(error);
   RCVCardDocumentInit(document);
-  if (bytes == NULL || length == 0 || !RCUnfold(bytes, length, &unfolded, error)) {
-    if (error != NULL && error->code == 0) RCErrorSet(error, 1, "Empty vCard");
-    return 0;
+  /* flex and libvc's position tracking use int/long-sized buffers. */
+  if (bytes == NULL || length == 0 || length > INT_MAX - 2 ||
+      memchr(bytes, 0, length) != NULL ||
+      !RCUnfold(bytes, length, &unfolded, error)) goto done;
+  unfoldedLength = strlen(unfolded);
+#ifdef __APPLE__
+  memory.bytes = unfolded;
+  memory.length = unfoldedLength;
+  memory.position = 0;
+  input = funopen(&memory, RCReadInput, NULL, RCSeekInput, NULL);
+#else
+  input = fmemopen(unfolded, unfoldedLength, "r");
+#endif
+  if (input == NULL) {
+    RCErrorSet(error, 1, "Unable to open vCard input stream");
+    goto done;
   }
-  line = unfolded;
-  while (line != NULL && *line != '\0') {
-    char *next = strchr(line, '\n');
-    if (next != NULL) *next = '\0';
-    if (strcasecmp(line, "BEGIN:VCARD") == 0) {
-      sawBegin = 1;
-    } else if (strcasecmp(line, "END:VCARD") == 0) {
-      sawEnd = 1;
-    } else if (*line != '\0' && !RCParseProperty(line, position++, document,
-                                                  error)) {
-      free(unfolded);
-      RCVCardDocumentClear(document);
-      return 0;
-    }
-    line = next == NULL ? NULL : next + 1;
+  if (pthread_mutex_lock(&RCParserMutex) != 0) {
+    RCErrorSet(error, 1, "Unable to lock vCard parser");
+    goto done;
   }
+  card = parse_vcard_file(input);
+  pthread_mutex_unlock(&RCParserMutex);
+  if (card == NULL) goto done;
+  /* A CardDAV resource must contain exactly one card. */
+  while ((trailing = fgetc(input)) != EOF) {
+    if (trailing != '\r' && trailing != '\n' && trailing != ' ' && trailing != '\t')
+      goto done;
+  }
+  if (ferror(input)) goto done;
+  for (component = vc_get_next(card); component != NULL;
+       component = vc_get_next(component)) {
+    if (!RCMapProperty(component, position++, document, error)) goto done;
+  }
+  result = 1;
+done:
+  vc_delete_deep(card);
+  if (input != NULL) fclose(input);
   free(unfolded);
-  if (!sawBegin || !sawEnd) {
+  if (!result) {
     RCVCardDocumentClear(document);
-    RCErrorSet(error, 1, "Response is not a complete vCard");
-    return 0;
+    if (error == NULL || error->code == 0)
+      RCErrorSet(error, 1, "Response is not a complete vCard");
   }
-  return 1;
+  return result;
 }
