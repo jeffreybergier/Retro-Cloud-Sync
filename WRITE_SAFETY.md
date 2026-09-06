@@ -107,8 +107,10 @@ the corresponding Sync Services change before calling
 accepts applied operations. Applied records survive crashes so local completion
 can be replayed. Queued/conflicting operations can be explicitly cancelled;
 uncertain operations cannot be silently discarded. History is retained.
-Conflict merge policy, local acknowledgement coordination and history pruning
-remain future work.
+Conflict recovery and an initial native acknowledgement adapter are described in
+[CONFLICT_RECOVERY.md](CONFLICT_RECOVERY.md). They use the system's canonical
+decisions and journal immutable successors. General two-way collection/mapping
+and history pruning remain future work.
 
 ## Tests
 

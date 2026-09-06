@@ -3,7 +3,7 @@
 test-host: test-host-contacts test-host-calendars test-host-writes test-host-sync
 
 build-mac-tests: build-mac-network-tests build-mac-app-tests build-mac-contacts-syncservices-tests \
-	build-mac-calendars-syncservices-tests build-mac-vcard-tests
+	build-mac-calendars-syncservices-tests build-mac-vcard-tests build-mac-conflict-tests
 
 # Keep old commands working during the naming transition.
 test-build: build-mac-app-tests

@@ -13,6 +13,7 @@ Build Mac tools without running them (PPC/i386):
   make build-mac-network-tests           Standalone HTTPS test
   make build-mac-contacts-syncservices-tests
   make build-mac-calendars-syncservices-tests
+  make build-mac-conflict-tests          Native contact conflict/recovery harness
   make build-mac-vcard-tests             Portable parser tests compiled for Mac
 
 Build and run on the Mac (TEST_HOST defaults to x4-vm):
@@ -20,6 +21,7 @@ Build and run on the Mac (TEST_HOST defaults to x4-vm):
   make test-mac-network TEST_HOST=x4-vm   Standalone HTTPS check; internet, no GUI needed
   make test-mac-contacts-syncservices TEST_HOST=x4-vm
   make test-mac-calendars-syncservices TEST_HOST=x4-vm
+  make test-mac-conflicts TEST_HOST=x4-vm Contact reconciliation and exact acknowledgement
   Sync Services suites use synthetic local records, offline; stop the daemon first.
   The app suite starts/stops the service with isolated account settings.
   App and Sync Services suites require the desktop and Accessibility.

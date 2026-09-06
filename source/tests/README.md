@@ -13,6 +13,7 @@ and transfers tools to `TEST_HOST` (default `x4-vm`) and runs them on the Mac.
 | Contacts | vCard parsing, SQLite storage, identities, account isolation, mirror rollback and recovery | Linux, offline; simulated HTTP | `make test-host-contacts` |
 | Calendars | iCalendar codec, SQLite storage, discovery, inventory and failure handling | Linux, offline; simulated HTTP | `make test-host-calendars` |
 | Write safety | Durable outgoing operations, crash recovery, conflicts, base revisions, loss-preserving edits and production HTTP preconditions/TLS | Linux; synthetic fixtures and local TLS server; Python 3, OpenSSL CLI, native libcurl | `make test-host-writes` |
+| Conflict recovery | Journal-to-Sync Services contact reconciliation, exact acknowledgement, newer local edits, field preservation and cleanup | Mac desktop, offline; production daemon stopped; separate synthetic clients | `make test-mac-conflicts TEST_HOST=x4-vm` |
 | DAV sync tokens | Pagination, expired/unsupported tokens, durable rollback, account isolation and rolling calendar windows through the real mirrors | Linux, offline; scripted HTTP | `make test-host-sync` |
 | App GUI | Preferences, autosave/validation, Start/Stop, installation, logs and loopback mail listeners | Mac desktop with Accessibility; controls the service and local listeners | `make test-mac-app TEST_HOST=x4-vm` |
 | Network | A fresh HTTPS image download using the legacy TLS library | Mac command line and internet; no GUI, service or credentials | `make test-mac-network TEST_HOST=x4-vm` |
@@ -24,6 +25,13 @@ and transfers tools to `TEST_HOST` (default `x4-vm`) and runs them on the Mac.
 `make test-host` runs all four host suites. `make build-mac-tests` builds all
 normal Mac test executables and their fixture inputs, including the standalone
 network diagnostic. It excludes probes and the parser experiment.
+
+`make build-mac-conflict-tests` builds the separate conflict harness. It uses the
+production recovery/session adapters with synthetic HTTP outcomes and the real
+Contacts schema. The runner verifies the pre-test Address Book baseline after
+cleanup, shares the contacts Desktop lock and saves journals/logs under Desktop.
+Same-field choices belong to system policy/UI; the harness never selects a
+conflict value automatically. See [conflict recovery](../../CONFLICT_RECOVERY.md).
 
 The HTTPS diagnostic now lives in `macOS/network/HTTPSDownloadTest.m`; the daemon
 no longer downloads the test image automatically at startup. `test-mac-network`

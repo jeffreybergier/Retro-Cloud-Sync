@@ -473,6 +473,37 @@ int main(int argc, char *argv[])
 
   processPool = [[NSAutoreleasePool alloc] init];
   memset(&syncWorker, 0, sizeof(syncWorker));
+  if ((argc == 4 && strcmp(argv[1], "--export-recovery") == 0) ||
+      (argc == 3 && strcmp(argv[1], "--inspect-recovery") == 0)) {
+    sqlite3 *database=NULL;
+    sqlite3_stmt *statement=NULL;
+    RCError error;
+    int ok=0;
+    RCErrorClear(&error);
+    if (sqlite3_open_v2(argv[2],&database,SQLITE_OPEN_READONLY,NULL)!=SQLITE_OK) {
+      RCErrorSet(&error,1,"Could not open recovery database read-only");
+    } else if (argc==4) {
+      ok=RCWriteJournalBackup(database,argv[3],&error);
+      if (ok) printf("Recovery snapshot exported.\n");
+    } else if (sqlite3_prepare_v2(database,
+        "SELECT o.id,o.kind,o.state,COALESCE(a.reason,'') FROM write_operations o "
+        "LEFT JOIN write_attention a ON a.operation_id=o.id "
+        "WHERE o.state NOT IN ('acknowledged','cancelled') ORDER BY o.id",
+        -1,&statement,NULL)==SQLITE_OK) {
+      int step;
+      puts("Operation Kind State Attention");
+      while ((step=sqlite3_step(statement))==SQLITE_ROW)
+        printf("%lld %s %s %s\n",sqlite3_column_int64(statement,0),
+            sqlite3_column_text(statement,1),sqlite3_column_text(statement,2),
+            sqlite3_column_text(statement,3));
+      ok=step==SQLITE_DONE;
+      if (!ok) RCErrorSet(&error,1,"Could not inspect recovery operations");
+    } else RCErrorSet(&error,1,"Database has no current recovery journal");
+    sqlite3_finalize(statement);
+    if (database) sqlite3_close(database);
+    if (!ok) fprintf(stderr,"%s\n",error.message);
+    [processPool release]; return ok ? 0 : 1;
+  }
   if (argc == 4 && strcmp(argv[1], "--test-calendar-syncservices") == 0) {
     RCError error;
     RCCalendarStore *store=RCCalendarStoreOpen(argv[2],"calendar-test",&error);
@@ -536,6 +567,7 @@ int main(int argc, char *argv[])
     RCUseDefaultMailConfiguration(mailConfigs);
   } else {
     NSLog(@"Usage: RetroCloudSyncDaemon [--config path] | "
+           "--inspect-recovery database | --export-recovery database new-snapshot | "
            "--test-syncservices database client-description | "
            "--unregister-syncservices-test-client");
     [processPool release];

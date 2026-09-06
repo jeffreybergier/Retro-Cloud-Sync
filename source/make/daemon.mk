@@ -3,7 +3,8 @@
 DAEMON_NAME := RetroCloudSyncDaemon
 DAEMON_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-daemon
 DAEMON_BUILD_ROOT := $(BUILD_ROOT)/macOS-daemon/$(CONFIG)
-DAEMON_SOURCES := main.m RCCalendarSyncServicesBridge.m RCSyncServicesBridge.m \
+DAEMON_SOURCES := main.m RCCalendarSyncServicesBridge.m RCSyncServicesBridge.m RCSyncConflictSession.m \
+	RCContactConflictResolver.m \
 	RCMailProxy.c RCMailProxyLog.m
 DAEMON_SOURCE_PATHS := $(addprefix $(DAEMON_SOURCE_ROOT)/,$(DAEMON_SOURCES))
 DAEMON_INTERMEDIATES := $(DAEMON_BUILD_ROOT)/Intermediates
@@ -18,6 +19,8 @@ DAEMON_PPC_OBJECTS := $(addprefix \
 	$(DAEMON_INTERMEDIATES)/ppc/,$(DAEMON_OBJECT_NAMES))
 DAEMON_I386_OBJECTS := $(addprefix \
 	$(DAEMON_INTERMEDIATES)/i386/,$(DAEMON_OBJECT_NAMES))
+$(DAEMON_PPC_OBJECTS) $(DAEMON_I386_OBJECTS): $(wildcard $(SHARED_SOURCE_ROOT)/*.h) \
+	$(wildcard $(DAEMON_SOURCE_ROOT)/*.h)
 DAEMON_COMPILE_FLAGS = $(ICAL_FLAGS) -I$(ALTIVECCORE_ROOT)/include
 DAEMON_LINK_FLAGS := -framework Foundation -framework CoreFoundation \
 		-framework SystemConfiguration -framework Security -lxml2 \

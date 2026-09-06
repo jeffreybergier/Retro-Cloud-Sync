@@ -3,11 +3,13 @@
 #include "RCResourcePatch.h"
 #include "RCContactStore.h"
 #include "RCCalendarStore.h"
+#include "RCConflictRecovery.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 
 static RCError error;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"FAIL line %d: %s (%s)\n",__LINE__,#x,error.message); exit(1); } } while(0)
@@ -285,14 +287,182 @@ static void storeTests(const char *contactPath, const char *calendarPath)
     RCCalendarStoreClose(c);
   }
 }
+typedef struct {
+  RCWriteJournal *journal;
+  int disposition, crash, newerLocal;
+  const char *resolved;
+  char acceptancePath[200];
+} RecoveryContext;
+static int resolveConflict(void *opaque, const RCWriteOperation *o,
+    RCConflictDecision *d, RCError *e)
+{
+  RecoveryContext *c=opaque;
+  (void)e;
+  CHECK(sqlite3_get_autocommit(c->journal->db));
+  CHECK(o->baseBody && o->desiredBody && o->resultBody);
+  if (c->disposition!=RCConflictResolved) {
+    d->attentionReason="unsupported-mapping"; return c->disposition;
+  }
+  d->kind=strdup("update"); d->body=strdup(c->resolved);
+  d->length=strlen(c->resolved); d->receipt=strdup("canonical-revision-one");
+  d->receiptLength=strlen(d->receipt);
+  return RCConflictResolved;
+}
+static int saveResolution(void *opaque, const RCWriteOperation *o, RCError *e)
+{
+  RecoveryContext *c=opaque;
+  (void)e;
+  CHECK(!sqlite3_get_autocommit(c->journal->db));
+  CHECK(o->resultBody && !strcmp(o->resultETag,"\"written\""));
+  sql(c->journal->db,"INSERT INTO mirror_completions VALUES(1)");
+  if (c->crash==1) _exit(78);
+  return 1;
+}
+static int acceptResolution(void *opaque, const RCWriteOperation *o,
+    const void *receipt, size_t length, RCError *e)
+{
+  RecoveryContext *c=opaque;
+  FILE *f;
+  (void)o;
+  CHECK(sqlite3_get_autocommit(c->journal->db));
+  CHECK(length==strlen("canonical-revision-one") &&
+      !memcmp(receipt,"canonical-revision-one",length));
+  if (c->newerLocal) { RCErrorSet(e,1,"Newer local change remains pending"); return 0; }
+  /* Model an idempotent framework acknowledgement whose state survives a crash
+     independently of SQLite. A duplicate acceptance would append a second line. */
+  if (access(c->acceptancePath,F_OK)) {
+    f=fopen(c->acceptancePath,"w"); CHECK(f);
+    CHECK(fputs("accepted\n",f)>=0 && !fclose(f));
+  }
+  if (c->crash==2) _exit(79);
+  return 1;
+}
+static void crashResolution(sqlite3_context *context, int argc, sqlite3_value **argv)
+{
+  (void)context; (void)argc; (void)argv; _exit(80);
+}
+static void conflictTests(const char *path)
+{
+  RCWriteJournal j=openJournal(path);
+  RCWriteOperation original,replacement;
+  RCConflictCallbacks callbacks;
+  RecoveryContext c;
+  long long id,next,again;
+  void *receipt=NULL; size_t length; int mirrored,phase,status;
+  pid_t child;
+  memset(&c,0,sizeof(c)); c.journal=&j; c.resolved=newCard;
+  c.disposition=RCConflictResolved;
+  snprintf(c.acceptancePath,sizeof(c.acceptancePath),"%s-acceptance",path);
+  callbacks.context=&c; callbacks.resolve=resolveConflict;
+  callbacks.saveMirror=saveResolution; callbacks.acceptLocal=acceptResolution;
+  sql(j.db,"DELETE FROM write_operations;DELETE FROM write_bases;"
+      "CREATE TABLE mirror_completions(id INTEGER PRIMARY KEY)");
+  base(&j,"key"); id=enqueue(&j,"reconcile","key","update");
+  resetServer(1,baseCard,"\"remote\"");
+  CHECK(RCDAVWriterAttempt(&j,id,NULL,"text/vcard",100,&error)); state(&j,id,"conflict");
+  CHECK(RCWriteJournalNextConflict(&j,&next,&error) && next==id);
+  c.disposition=RCConflictDeferred;
+  CHECK(RCConflictRecover(&j,id,&callbacks,&next,&error) && !next); state(&j,id,"conflict");
+  c.disposition=RCConflictNeedsAttention;
+  CHECK(RCConflictRecover(&j,id,&callbacks,&next,&error) && !next);
+  CHECK(RCWriteJournalNextConflict(&j,&next,&error) && !next);
+  CHECK(!RCWriteJournalConflictAttention(&j,id,"private body!",&error));
+  CHECK(RCWriteJournalConflictAttention(&j,id,NULL,&error));
+  c.disposition=RCConflictResolved;
+  /* Terminate after successor insertion but before the resolution link/retiring
+     the old conflict. SQLite must retain the entire old state, with no orphan. */
+  CHECK(sqlite3_close(j.db)==SQLITE_OK);
+  child=fork(); CHECK(child>=0);
+  if (!child) {
+    j=openJournal(path);
+    CHECK(sqlite3_create_function(j.db,"crash_resolution",0,SQLITE_UTF8,NULL,
+        crashResolution,NULL,NULL)==SQLITE_OK);
+    sql(j.db,"CREATE TEMP TRIGGER interrupt_resolution BEFORE INSERT ON write_resolutions "
+        "BEGIN SELECT crash_resolution(); END");
+    RCConflictRecover(&j,id,&callbacks,&next,&error); _exit(99);
+  }
+  CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==80);
+  j=openJournal(path);
+  state(&j,id,"conflict"); CHECK(scalar(j.db,"SELECT count(*) FROM write_operations")==1);
+  j.account=2; CHECK(!RCConflictRecover(&j,id,&callbacks,&next,&error)); j.account=1;
+  CHECK(RCConflictRecover(&j,id,&callbacks,&next,&error) && next);
+  state(&j,id,"cancelled"); state(&j,next,"queued");
+  CHECK(RCWriteJournalGet(&j,id,&original,&error));
+  CHECK(RCWriteJournalGet(&j,next,&replacement,&error));
+  CHECK(!strcmp(original.baseETag,"\"base\"") && !strcmp(replacement.baseETag,"\"remote\""));
+  CHECK(!strcmp((char *)original.desiredBody,newCard));
+  RCWriteOperationClear(&original); RCWriteOperationClear(&replacement);
+  CHECK(RCWriteJournalResolveConflict(&j,id,"update",newCard,strlen(newCard),
+      "canonical-revision-one",strlen("canonical-revision-one"),&again,&error) && again==next);
+  CHECK(!RCWriteJournalResolveConflict(&j,id,"update",baseCard,strlen(baseCard),
+      "canonical-revision-one",strlen("canonical-revision-one"),&again,&error));
+  CHECK(!RCConflictComplete(&j,next,&callbacks,&error));
+  /* A second device edit races the resolution. The successor conflicts again,
+     and both rounds retain their own immutable bases and local decisions. */
+  resetServer(1,baseCard,"\"second-remote\"");
+  CHECK(RCDAVWriterAttempt(&j,next,NULL,"text/vcard",200,&error)); state(&j,next,"conflict");
+  CHECK(RCConflictRecover(&j,next,&callbacks,&again,&error) && again);
+  CHECK(RCDAVWriterAttempt(&j,again,NULL,"text/vcard",300,&error)); state(&j,again,"applied");
+  CHECK(RCWriteJournalRecoveryNext(&j,0,&next,&error) && next==again);
+  CHECK(RCWriteJournalRecoveryNext(&j,again,&next,&error) && !next);
+  CHECK(!RCWriteJournalAcknowledge(&j,again,&error));
+  CHECK(!RCWriteJournalResolutionMirrored(&j,again,&error));
+  CHECK(sqlite3_close(j.db)==SQLITE_OK);
+  for (phase=1;phase<=2;phase++) {
+    child=fork(); CHECK(child>=0);
+    if (!child) {
+      j=openJournal(path); c.crash=phase;
+      RCConflictComplete(&j,again,&callbacks,&error); _exit(99);
+    }
+    CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==77+phase);
+    j=openJournal(path);
+    CHECK(RCWriteJournalResolutionReceipt(&j,again,&receipt,&length,&mirrored,&error)); free(receipt);
+    CHECK(mirrored==(phase==2));
+    CHECK(scalar(j.db,"SELECT count(*) FROM mirror_completions")==phase-1);
+    state(&j,again,"applied");
+    CHECK(sqlite3_close(j.db)==SQLITE_OK);
+  }
+  j=openJournal(path); c.crash=0; c.newerLocal=1;
+  CHECK(!RCConflictComplete(&j,again,&callbacks,&error)); state(&j,again,"applied");
+  CHECK(scalar(j.db,"SELECT count(*) FROM mirror_completions")==1);
+  c.newerLocal=0;
+  CHECK(RCConflictComplete(&j,again,&callbacks,&error)); state(&j,again,"acknowledged");
+  CHECK(RCConflictComplete(&j,again,&callbacks,&error));
+  CHECK(scalar(j.db,"SELECT count(*) FROM mirror_completions")==1);
+  /* Explicit deletion/collision attention does not prevent another resource's
+     ordinary queued operation from being selected by the writer. */
+  sql(j.db,"DELETE FROM write_attention;DELETE FROM write_resolutions;DELETE FROM write_operations;DELETE FROM write_bases");
+  base(&j,"key"); id=enqueue(&j,"deleted","key","update"); resetServer(0,"","");
+  CHECK(RCDAVWriterAttempt(&j,id,NULL,"text/vcard",400,&error));
+  CHECK(RCConflictRecover(&j,id,&callbacks,&next,&error) && !next);
+  CHECK(RCWriteJournalNextConflict(&j,&next,&error) && !next);
+  CHECK(RCWriteJournalEnqueue(&j,"unrelated","other","https://example.test/book/other.vcf",
+      "create",0,newCard,strlen(newCard),&next,&error));
+  CHECK(RCWriteJournalNext(&j,500,&again,&error) && again==next);
+  {
+    char snapshot[200]; sqlite3 *copy=NULL; struct stat info;
+    snprintf(snapshot,sizeof(snapshot),"%s-recovery",path);
+    sql(j.db,"BEGIN IMMEDIATE");
+    CHECK(!RCWriteJournalBackup(j.db,snapshot,&error) && access(snapshot,F_OK));
+    sql(j.db,"ROLLBACK");
+    CHECK(RCWriteJournalBackup(j.db,snapshot,&error));
+    CHECK(!stat(snapshot,&info) && (info.st_mode & 0777)==0600);
+    CHECK(!RCWriteJournalBackup(j.db,snapshot,&error));
+    CHECK(sqlite3_open(snapshot,&copy)==SQLITE_OK);
+    CHECK(scalar(copy,"SELECT count(*) FROM write_operations")==2);
+    CHECK(scalar(copy,"SELECT count(*) FROM write_attention")==1);
+    CHECK(sqlite3_close(copy)==SQLITE_OK); unlink(snapshot);
+  }
+  CHECK(sqlite3_close(j.db)==SQLITE_OK); unlink(c.acceptancePath);
+}
 int main(void)
 {
   char dir[]="/tmp/retro-write-tests-XXXXXX",db[100],contacts[100],calendars[100];
   CHECK(mkdtemp(dir)); snprintf(db,sizeof(db),"%s/journal.sqlite",dir);
   snprintf(serverFile,sizeof(serverFile),"%s/server",dir);
   snprintf(contacts,sizeof(contacts),"%s/contacts.sqlite",dir); snprintf(calendars,sizeof(calendars),"%s/calendars.sqlite",dir);
-  crashTests(db); recoveryTests(db); patchTests(db); storeTests(contacts,calendars);
+  crashTests(db); recoveryTests(db); patchTests(db); storeTests(contacts,calendars); conflictTests(db);
   unlink(db); unlink(serverFile); unlink(contacts); unlink(calendars); rmdir(dir);
-  puts("Write journal crash recovery, conflicts, account isolation, publication bases and loss-preserving edits passed.");
+  puts("Write journal, conflict reconciliation/repeated races, completion crash recovery, account isolation and loss-preserving edits passed.");
   return 0;
 }

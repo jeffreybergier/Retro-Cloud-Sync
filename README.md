@@ -55,6 +55,11 @@ published base revisions, conditional DAV writes with interruption recovery,
 and edits that preserve unrecognized resource fields. These APIs are not yet
 connected to local change collection or automatic uploads. See
 [WRITE_SAFETY.md](WRITE_SAFETY.md) for the state machine, APIs and tests.
+Conflict recovery now has durable successor operations, exact acknowledgement
+receipts, a Sync Services adapter and a tested initial contact text-field mapper.
+The daemon also provides read-only recovery inspection and consistent database
+exports. See [CONFLICT_RECOVERY.md](CONFLICT_RECOVERY.md) for supported cases,
+remaining two-way integration work and the native Tiger test command.
 Contacts requires schema 4. Calendars uses schema 3 and automatically upgrades
 schema 2 while retaining cached data and Sync Services identities. Earlier test
 database schemas still require fresh databases.
