@@ -11,7 +11,7 @@ static const char kCollectionsRequest[] =
     "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
     "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\" "
     "xmlns:a=\"http://apple.com/ns/ical/\"><d:prop>"
-    "<d:resourcetype/><d:displayname/><c:calendar-description/>"
+    "<d:resourcetype/><d:displayname/><d:sync-token/><d:supported-report-set/><c:calendar-description/>"
     "<a:calendar-color/><c:supported-calendar-component-set/>"
     "</d:prop></d:propfind>";
 
@@ -266,6 +266,17 @@ int RCDAVListCollections(RCHTTPClient *client, const char *homeURL, const char *
         node, "calendar-description", "urn:ietf:params:xml:ns:caldav"));
     (*collections)[*count - 1].color = RCNodeText(
         RCSuccessfulProperty(node, "calendar-color", "http://apple.com/ns/ical/"));
+    (*collections)[*count - 1].syncToken = RCNodeText(
+        RCSuccessfulProperty(node, "sync-token", kDAVNamespace));
+    if ((*collections)[*count - 1].syncToken &&
+        !*(*collections)[*count - 1].syncToken) {
+      free((*collections)[*count - 1].syncToken);
+      (*collections)[*count - 1].syncToken = NULL;
+    }
+    (*collections)[*count - 1].supportsSync =
+        (*collections)[*count - 1].syncToken != NULL ||
+        RCFindDescendant(RCSuccessfulProperty(node, "supported-report-set", kDAVNamespace),
+                         "sync-collection", kDAVNamespace) != NULL;
   }
   success = 1;
 
@@ -277,6 +288,7 @@ finished:
       free((*collections)[index].displayName);
       free((*collections)[index].description);
       free((*collections)[index].color);
+      free((*collections)[index].syncToken);
     }
     free(*collections);
     *collections = NULL;
@@ -416,6 +428,7 @@ void RCDAVFreeCollections(RCDAVCollection *collections, size_t count)
     free(collections[index].displayName);
     free(collections[index].description);
     free(collections[index].color);
+    free(collections[index].syncToken);
   }
   free(collections);
 }
@@ -428,4 +441,141 @@ void RCDAVFreeResources(RCDAVResource *resources, size_t count)
     free(resources[index].etag);
   }
   free(resources);
+}
+
+/* Sync responses have different semantics from a full inventory: member 404s
+   are deletions, and a collection 507 is a continuation, never an empty scan. */
+/* Some servers include collection properties in sync reports, and iCloud
+   spells that href without the collection URL's trailing slash. Compare only
+   that optional slash; member URLs must keep their exact identity. */
+static int RCIsSyncCollectionURL(const char *href, const char *collectionURL)
+{
+  size_t hrefLength = strlen(href), collectionLength = strlen(collectionURL);
+  if (!strcmp(href, collectionURL)) return 1;
+  if (strchr(href, '?') || strchr(href, '#') ||
+      strchr(collectionURL, '?') || strchr(collectionURL, '#')) return 0;
+  if (hrefLength && href[hrefLength - 1] == '/') hrefLength--;
+  if (collectionLength && collectionURL[collectionLength - 1] == '/') collectionLength--;
+  return hrefLength == collectionLength && !strncmp(href, collectionURL, hrefLength);
+}
+
+int RCDAVSyncCollection(RCHTTPClient *client, const char *url, const char *token,
+                        RCDAVSyncCallback callback, void *context,
+                        char **nextToken, RCError *error)
+{
+  char *tokens[1025];
+  size_t page, tokenCount = 0, i;
+  int result = RCDAVSyncFailed;
+  *nextToken = NULL;
+  memset(tokens, 0, sizeof(tokens));
+  tokens[tokenCount++] = RCCopyString(token ? token : "");
+  if (!tokens[0]) goto exhausted;
+  for (page = 0; page < 1024; page++) {
+    RCHTTPResponse response;
+    xmlDocPtr doc = NULL;
+    xmlChar *escaped = NULL;
+    xmlNodePtr root, node;
+    RCDAVResource *changes = NULL;
+    size_t count = 0;
+    char *request = NULL, *returned = NULL;
+    int more = 0, tokenNodes = 0, pageOK = 0;
+    RCHTTPResponseInit(&response);
+    if (strlen(tokens[tokenCount - 1]) > 16384) goto page_failed;
+    escaped = xmlEncodeSpecialChars(NULL, (const xmlChar *)tokens[tokenCount - 1]);
+    if (!escaped) goto page_failed;
+    request = malloc(strlen((const char *)escaped) + 384);
+    if (!request) goto page_failed;
+    sprintf(request, "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+        "<d:sync-collection xmlns:d=\"DAV:\"><d:sync-token>%s</d:sync-token>"
+        "<d:sync-level>1</d:sync-level><d:limit><d:nresults>200</d:nresults></d:limit>"
+        "<d:prop><d:getetag/></d:prop></d:sync-collection>", (const char *)escaped);
+    if (!RCHTTPClientRequest(client, "REPORT", url, "0", "application/xml; charset=utf-8",
+                             request, strlen(request), &response, error)) goto page_failed;
+    if (response.statusCode == 405 || response.statusCode == 501) {
+      result = RCDAVSyncFallback; goto page_failed;
+    }
+    if (response.bodyLength > (size_t)0x7fffffff) goto page_failed;
+    doc = xmlReadMemory((const char *)response.body, (int)response.bodyLength,
+                        response.effectiveURL, NULL,
+                        XML_PARSE_NONET | XML_PARSE_NOERROR | XML_PARSE_NOWARNING);
+    if (!doc || doc->intSubset || doc->extSubset) goto page_failed;
+    root = xmlDocGetRootElement(doc);
+    if (RCNodeIs(root, "error", kDAVNamespace)) {
+      if (((response.statusCode == 403 || response.statusCode == 409) &&
+           (RCFindChild(root, "valid-sync-token", kDAVNamespace) ||
+            RCFindChild(root, "supported-report", kDAVNamespace))) ||
+          (response.statusCode == 507 &&
+           RCFindChild(root, "number-of-matches-within-limits", kDAVNamespace)))
+        result = RCDAVSyncFallback;
+      goto page_failed;
+    }
+    if (response.statusCode != 207 || !RCNodeIs(root, "multistatus", kDAVNamespace))
+      goto page_failed;
+    for (node = root->children; node; node = node->next) {
+      char *href, *resolved = NULL, *status, *etag;
+      int code = 0, isCollection;
+      if (RCNodeIs(node, "sync-token", kDAVNamespace)) {
+        if (++tokenNodes != 1) goto page_failed;
+        returned = RCNodeText(node);
+        continue;
+      }
+      if (RCNodeIs(node, "error", kDAVNamespace)) goto page_failed;
+      if (!RCNodeIs(node, "response", kDAVNamespace)) continue;
+      href = RCNodeText(RCFindChild(node, "href", kDAVNamespace));
+      if (!href || !*href || !RCURLResolve(response.effectiveURL, href, &resolved, error)) {
+        free(href); free(resolved); goto page_failed;
+      }
+      free(href);
+      status = RCNodeText(RCFindChild(node, "status", kDAVNamespace));
+      if (status) sscanf(status, "HTTP/%*s %d", &code);
+      isCollection = RCIsSyncCollectionURL(resolved, response.effectiveURL);
+      if (code == 507 && isCollection && !more &&
+          !RCFindChild(node, "propstat", kDAVNamespace)) {
+        more = 1; free(status); free(resolved); continue;
+      }
+      if (isCollection && !status &&
+          !RCFindDescendant(node, "error", kDAVNamespace) &&
+          RCSuccessfulProperty(node, "getetag", kDAVNamespace)) {
+        free(resolved); continue;
+      }
+      if ((status && (code != 404 || RCFindChild(node, "propstat", kDAVNamespace))) ||
+          isCollection ||
+          RCFindDescendant(node, "error", kDAVNamespace)) {
+        free(status); free(resolved); goto page_failed;
+      }
+      etag = code == 404 ? NULL : RCNodeText(RCSuccessfulProperty(node, "getetag", kDAVNamespace));
+      free(status);
+      if (code != 404 && (!etag || !*etag)) {
+        free(etag); free(resolved); goto page_failed;
+      }
+      for (i = 0; i < count; i++) if (!strcmp(changes[i].url, resolved)) break;
+      if (i != count || !RCAppendResource(&changes, &count, resolved, etag, error)) {
+        free(etag); free(resolved); goto page_failed;
+      }
+    }
+    if (tokenNodes != 1 || !returned || !*returned || strlen(returned) > 16384 ||
+        (more && !count)) goto page_failed;
+    /* A final empty response may return the same token; a continuation must
+       advance and must not cycle, including after several successful pages. */
+    if (more || count) {
+      for (i = 0; i < tokenCount; i++)
+        if (!strcmp(returned, tokens[i])) goto page_failed;
+    }
+    if (callback && !callback(changes, count, context, error)) goto page_failed;
+    tokens[tokenCount++] = returned; returned = NULL;
+    pageOK = 1;
+    if (!more) {
+      *nextToken = tokens[--tokenCount]; tokens[tokenCount] = NULL;
+      result = RCDAVSyncComplete;
+    }
+page_failed:
+    free(returned); free(request); xmlFree(escaped); xmlFreeDoc(doc);
+    RCDAVFreeResources(changes, count); RCHTTPResponseClear(&response);
+    if (!pageOK || result == RCDAVSyncComplete) break;
+  }
+exhausted:
+  for (i = 0; i < tokenCount; i++) free(tokens[i]);
+  if (result == RCDAVSyncFailed && (!error || !error->code))
+    RCErrorSet(error, 1, "Incomplete, invalid, or excessive DAV sync response");
+  return result;
 }

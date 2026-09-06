@@ -18,7 +18,7 @@ test-host-calendars: $(CALENDAR_TEST_OUTPUT)
 .PHONY: test-host-calendars
 CALENDAR_DAV_TEST := $(BUILD_ROOT)/tests/host/calendars/RetroCloudCalDAVMirrorTests
 CALENDAR_DAV_SOURCES := $(SOURCE_ROOT)/tests/portable/CalDAVMirrorTests.c \
-	$(SHARED_SOURCE_ROOT)/RCCalDAVMirror.c $(SHARED_SOURCE_ROOT)/RCDAVClient.c \
+	$(SHARED_SOURCE_ROOT)/RCCalDAVMirror.c $(SHARED_SOURCE_ROOT)/RCDAVClient.c $(SHARED_SOURCE_ROOT)/RCDAVSyncState.c \
 	$(SHARED_SOURCE_ROOT)/RCError.c $(SHARED_SOURCE_ROOT)/RCICalendar.c \
 	$(SHARED_SOURCE_ROOT)/RCCalendarStore.c $(SHARED_SOURCE_ROOT)/RCWriteJournal.c
 $(CALENDAR_DAV_TEST): $(CALENDAR_DAV_SOURCES) $(ICAL_HOST_LIBRARY)

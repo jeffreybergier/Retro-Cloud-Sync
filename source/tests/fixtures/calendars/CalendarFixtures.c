@@ -50,7 +50,7 @@ static int save(RCCalendarStore *s, long long c, const char *href, const char *e
 int RCCalendarFixturePopulate(RCCalendarStore *s, const char *phase, RCError *e)
 {
   RCDAVCollection c = {"https://example.test/cal/", "RCS Calendar Test", NULL,
-                       "#112233FF"};
+                       "#112233FF", NULL, 0};
   long long id;
   int ok;
   char *changed = NULL;

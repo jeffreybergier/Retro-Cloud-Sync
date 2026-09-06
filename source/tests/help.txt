@@ -5,6 +5,7 @@ Run offline host tests:
   make test-host-contacts                vCard parser, contact store, simulated CardDAV
   make test-host-calendars               Calendar codec/store and simulated CalDAV
   make test-host-writes                  Write recovery, field preservation and local TLS tests
+  make test-host-sync                    DAV tokens, pagination, recovery and calendar windows
 
 Build Mac tools without running them (PPC/i386):
   make build-mac-tests                   All normal Mac test tools and fixtures

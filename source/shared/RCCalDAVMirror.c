@@ -1,4 +1,5 @@
 #include "RCCalDAVMirror.h"
+#include "RCDAVSyncState.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -34,6 +35,13 @@ static void progress(const RCCardDAVMirrorConfig *c, const char *message)
   if (c->progress)
     c->progress(message, c->progressContext);
 }
+static int calendarChanges(const RCDAVResource *changes, size_t count,
+                            void *context, RCError *error)
+{
+  (void)changes; (void)error;
+  if (count) *(int *)context = 1;
+  return 1;
+}
 int RCCalDAVMirrorFetch(const RCCardDAVMirrorConfig *config, RCCalendarStore *store,
                         RCCardDAVMirrorResult *result, RCError *error)
 {
@@ -50,6 +58,8 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
   size_t count = 0, resourceCount = 0, i, j;
   char *principal = NULL, *home = NULL;
   int success = 0, started = 0;
+  RCDAVSyncState state;
+  char *token = NULL, *scope = NULL, *next = NULL;
   RCError local, finishError;
   if (!error)
     error = &local;
@@ -69,6 +79,7 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
   if (!client || !RCCalendarStoreBeginScopedRun(store, start != NULL, error))
     goto done;
   started = 1;
+  state.db = store->db; state.account = store->account;
   progress(config, "Discovering calendar principal and home");
   if (!RCDAVDiscoverHref(client, config->serviceURL, principalRequest,
                          "current-user-principal", "DAV:", &principal, error) ||
@@ -82,6 +93,29 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
     long long calendar;
     if (!RCCalendarStoreCollection(store, &collections[i], &calendar, error))
       goto done;
+    if (!RCDAVSyncStateLoad(&state, collections[i].url, &token, &scope, error)) goto done;
+    if (collections[i].supportsSync && token && scope && !strcmp(scope, start ? start : "")) {
+      int changed = 0;
+      int status;
+      progress(config, "Checking calendar sync token");
+      status = RCDAVSyncCollection(client, collections[i].url, token,
+                                   calendarChanges, &changed, &next, error);
+      if (status == RCDAVSyncFailed) goto done;
+      if (status == RCDAVSyncComplete && !changed) {
+        /* Preserve the previously complete window. A rolling cutoff or changed
+           preference takes the inventory path even if the server is unchanged. */
+        if (!RCCalendarStoreSQL(store, error,
+            "UPDATE calendar_resources SET seen_run=%lld WHERE calendar_id=%lld "
+            "AND remote_missing=0 AND scope_excluded=0", store->run, calendar)) goto done;
+        result->unchangedResourceCount += sqlite3_changes(store->db);
+        progress(config, "Calendar unchanged; retaining history window");
+        goto collection_complete;
+      }
+      if (status == RCDAVSyncFallback) {
+        RCErrorClear(error);
+        progress(config, "Sync token unavailable; refreshing calendar history window");
+      }
+    }
     if (!(start ? RCDAVListCalendarResourcesSince(client, collections[i].url, start,
                                                   &resources, &resourceCount, error)
                 : RCDAVListResources(client, collections[i].url, &resources,
@@ -123,7 +157,14 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
     RCDAVFreeResources(resources, resourceCount);
     resources = NULL;
     resourceCount = 0;
+collection_complete:
+    /* Snapshot token precedes the inventory. Changes during its GETs will be
+       reported again next time, rather than skipped by a later token read. */
+    if (!RCDAVSyncStateSave(&state, collections[i].url,
+        next ? next : collections[i].syncToken, start, store->run, error)) goto done;
+    free(token); free(scope); free(next); token = NULL; scope = NULL; next = NULL;
   }
+  if (!RCDAVSyncStateFinish(&state, store->run, error)) goto done;
   success = 1;
 done:
   if (started) {
@@ -139,6 +180,7 @@ done:
   RCDAVFreeCollections(collections, count);
   free(principal);
   free(home);
+  free(token); free(scope); free(next);
   RCHTTPClientDestroy(client);
   return success;
 }

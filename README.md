@@ -59,6 +59,37 @@ Contacts requires schema 4. Calendars uses schema 3 and automatically upgrades
 schema 2 while retaining cached data and Sync Services identities. Earlier test
 database schemas still require fresh databases.
 
+Sync tokens are used automatically when a collection advertises DAV sync
+support. Each database gains a small `dav_sync_state` table without replacing
+existing resources or identities. Tokens are scoped to the account and collection
+URL and commit in the same transaction as the downloaded data. Failed downloads,
+incomplete pages and interrupted processes leave the previous token and mirror
+intact. A completed download may advance the token before Sync Services publication;
+the existing publication generation handles retrying that local export.
+
+Contacts initially obtain a complete `sync-collection REPORT` inventory, then
+request only additions, modifications and explicit deletions since the saved
+token. Unmentioned contacts remain present. Reports request pages of 200 changes;
+server continuation tokens are followed before committing the account. Expired
+tokens trigger an initial resync; unsupported reports fall back to the existing
+full ETag inventory. Authentication failures, transport errors and malformed
+reports abort the run rather than authorizing deletions. Collection removal also
+retires its saved token, so recreation starts with a complete inventory.
+
+Calendars use a sync report to check whether the saved collection changed. An
+empty change report preserves the cached window and skips its resource inventory.
+Changes, a new UTC history cutoff, or a changed history preference refresh the
+server-filtered inventory. This keeps recurrence/window membership on the server
+and avoids downloading changed resources outside the selected window. The saved
+token is obtained **before** that inventory, so edits during the fetch are checked
+again next time. Initial sync and expired-token recovery retain the selected
+window. Servers without sync support continue using the existing inventory path.
+
+The implementation follows [WebDAV collection synchronization (RFC 6578)](https://datatracker.ietf.org/doc/html/rfc6578).
+Collection discovery still runs each poll. Changed bodies are still fetched
+individually; Sync Services still publishes the complete retained graph. Sync
+tokens optimize remote discovery of changes, not local publication or two-way sync.
+
 When enabled, the daemon downloads contacts immediately after it starts and
 then at the configured interval. Its read-only mirror is stored at:
 

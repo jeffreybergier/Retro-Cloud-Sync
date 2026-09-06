@@ -34,33 +34,38 @@ static void RCProgress(const RCCardDAVMirrorConfig *config,
   }
 }
 
-static int RCFetchCollection(const RCCardDAVMirrorConfig *config,
-                             RCHTTPClient *client, RCContactStore *store,
-                             const RCDAVCollection *collection,
-                             long long runIdentifier,
-                             RCCardDAVMirrorResult *result, RCError *error)
-{
-  RCDAVResource *resources = NULL;
-  size_t resourceCount = 0;
-  size_t index;
-  long long collectionIdentifier;
-  int success = 0;
+typedef struct {
+  const RCCardDAVMirrorConfig *config;
+  RCHTTPClient *client;
+  RCContactStore *store;
+  long long collection, run;
+  RCCardDAVMirrorResult *result;
+} RCContactFetch;
 
-  RCProgress(config, "Listing contacts");
-  if (!RCContactStoreGetCollection(store, collection->url,
-                                   collection->displayName,
-                                   &collectionIdentifier, error) ||
-      !RCDAVListResources(client, collection->url, &resources, &resourceCount,
-                       error)) goto finished;
+static int RCApplyContactChanges(const RCDAVResource *resources, size_t resourceCount,
+                                  void *context, RCError *error)
+{
+  RCContactFetch *fetch = context;
+  const RCCardDAVMirrorConfig *config = fetch->config;
+  RCHTTPClient *client = fetch->client;
+  RCContactStore *store = fetch->store;
+  long long collectionIdentifier = fetch->collection, runIdentifier = fetch->run;
+  RCCardDAVMirrorResult *result = fetch->result;
+  size_t index;
   result->listedResourceCount += (long)resourceCount;
   for (index = 0; index < resourceCount; index++) {
     int current;
+    if (resources[index].etag == NULL) {
+      if (!RCContactStoreSyncDelete(store, collectionIdentifier, resources[index].url,
+                                    runIdentifier, error)) return 0;
+      continue;
+    }
     if (!RCContactStoreResourceIsCurrent(store, collectionIdentifier,
         resources[index].url, resources[index].etag, &current, error))
-      goto finished;
+      return 0;
     if (current) {
       if (!RCContactStoreMarkSeen(store, collectionIdentifier,
-          resources[index].url, runIdentifier, error)) goto finished;
+          resources[index].url, runIdentifier, error)) return 0;
       result->unchangedResourceCount++;
     } else {
       RCHTTPResponse response;
@@ -71,20 +76,20 @@ static int RCFetchCollection(const RCCardDAVMirrorConfig *config,
       if (!RCHTTPClientRequest(client, "GET", resources[index].url, NULL,
           NULL, NULL, 0, &response, error)) {
         RCHTTPResponseClear(&response);
-        goto finished;
+        return 0;
       }
       if (response.statusCode != 200) {
         RCErrorSet(error, (int)response.statusCode,
                    "Contact GET returned HTTP %ld", response.statusCode);
         RCHTTPResponseClear(&response);
-        goto finished;
+        return 0;
       }
       etag = response.etag != NULL ? response.etag : resources[index].etag;
       if (!RCContactStoreSaveResource(store, collectionIdentifier, runIdentifier,
           resources[index].url, etag, response.body, response.bodyLength,
           &parseFailed, error)) {
         RCHTTPResponseClear(&response);
-        goto finished;
+        return 0;
       }
       result->downloadedResourceCount++;
       if (parseFailed)
@@ -92,11 +97,67 @@ static int RCFetchCollection(const RCCardDAVMirrorConfig *config,
       RCHTTPResponseClear(&response);
     }
   }
-  if (!RCContactStoreFinishCollection(store, collectionIdentifier,
-                                      runIdentifier, error)) goto finished;
-  success = 1;
+  return 1;
+}
 
+static int RCCollectionSQL(RCDAVSyncState *state, const char *sql, RCError *error)
+{
+  if (sqlite3_exec(state->db, sql, NULL, NULL, NULL) == SQLITE_OK) return 1;
+  RCErrorSet(error, 1, "Could not checkpoint contact sync collection");
+  return 0;
+}
+
+static int RCFetchCollection(const RCCardDAVMirrorConfig *config,
+                             RCHTTPClient *client, RCContactStore *store,
+                             const RCDAVCollection *collection,
+                             long long runIdentifier,
+                             RCCardDAVMirrorResult *result, RCError *error)
+{
+  RCDAVResource *resources = NULL;
+  size_t resourceCount = 0;
+  RCDAVSyncState state = RCContactStoreDAVSyncState(store);
+  RCContactFetch fetch;
+  char *token = NULL, *scope = NULL, *next = NULL;
+  int success = 0, attempt;
+  fetch.config = config; fetch.client = client; fetch.store = store;
+  fetch.run = runIdentifier; fetch.result = result;
+  if (!RCContactStoreGetCollection(store, collection->url, collection->displayName,
+                                    &fetch.collection, error) ||
+      !RCDAVSyncStateLoad(&state, collection->url, &token, &scope, error)) goto finished;
+  if (collection->supportsSync) {
+    /* A rejected/expired delta retries an initial sync. Savepoints also undo
+       successful early pages when a later page rejects its continuation token. */
+    for (attempt = 0; attempt < (token ? 2 : 1); attempt++) {
+      const char *base = attempt == 0 ? token : NULL;
+      RCCardDAVMirrorResult before = *result;
+      int status;
+      if (!RCCollectionSQL(&state, "SAVEPOINT dav_collection", error)) goto finished;
+      if (base && !RCContactStoreKeepCollection(store, fetch.collection, runIdentifier, error))
+        goto finished;
+      RCProgress(config, base ? "Fetching contact changes" : "Fetching initial contact sync inventory");
+      status = RCDAVSyncCollection(client, collection->url, base,
+                                   RCApplyContactChanges, &fetch, &next, error);
+      if (status == RCDAVSyncFailed) goto finished;
+      if (status == RCDAVSyncComplete) {
+        if (!RCCollectionSQL(&state, "RELEASE dav_collection", error)) goto finished;
+        goto complete;
+      }
+      if (!RCCollectionSQL(&state, "ROLLBACK TO dav_collection;RELEASE dav_collection", error))
+        goto finished;
+      *result = before;
+      RCErrorClear(error);
+      RCProgress(config, "Sync token unavailable; rebuilding contact inventory");
+    }
+  }
+  RCProgress(config, "Listing contacts");
+  if (!RCDAVListResources(client, collection->url, &resources, &resourceCount, error) ||
+      !RCApplyContactChanges(resources, resourceCount, &fetch, error)) goto finished;
+complete:
+  if (!RCDAVSyncStateSave(&state, collection->url, next, "", runIdentifier, error) ||
+      !RCContactStoreFinishCollection(store, fetch.collection, runIdentifier, error)) goto finished;
+  success = 1;
 finished:
+  free(token); free(scope); free(next);
   RCDAVFreeResources(resources, resourceCount);
   return success;
 }
@@ -160,6 +221,10 @@ int RCCardDAVMirrorFetch(const RCCardDAVMirrorConfig *config,
   for (index = 0; index < collectionCount; index++) {
     if (!RCFetchCollection(config, client, store, &collections[index],
                            runIdentifier, result, error)) goto finished;
+  }
+  {
+    RCDAVSyncState state = RCContactStoreDAVSyncState(store);
+    if (!RCDAVSyncStateFinish(&state, runIdentifier, error)) goto finished;
   }
   success = 1;
 

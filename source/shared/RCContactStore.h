@@ -4,6 +4,7 @@
 #include "RCError.h"
 #include "RCVCard.h"
 #include "RCWriteJournal.h"
+#include "RCDAVSyncState.h"
 
 #include <stddef.h>
 
@@ -27,6 +28,11 @@ void RCContactStoreClose(RCContactStore *store);
 int RCContactStoreIsAccount(RCContactStore *store, const char *username);
 const char *RCContactStoreSyncIdentifier(RCContactStore *store);
 RCWriteJournal RCContactStoreWriteJournal(RCContactStore *store);
+RCDAVSyncState RCContactStoreDAVSyncState(RCContactStore *store);
+int RCContactStoreKeepCollection(RCContactStore *, long long collection,
+                                 long long run, RCError *);
+int RCContactStoreSyncDelete(RCContactStore *, long long collection,
+                             const char *href, long long run, RCError *);
 int RCContactStoreGetPublicationState(RCContactStore *store,
                                       long long *generation,
                                       long long *publishedGeneration,

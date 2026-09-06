@@ -306,6 +306,39 @@ static int RCCheckRun(RCContactStore *store, long long run, RCError *error)
   return 0;
 }
 
+RCDAVSyncState RCContactStoreDAVSyncState(RCContactStore *store)
+{
+  RCDAVSyncState state;
+  state.db = store->database; state.account = store->account;
+  return state;
+}
+
+int RCContactStoreKeepCollection(RCContactStore *store, long long collection,
+                                 long long run, RCError *error)
+{
+  sqlite3_stmt *q = NULL;
+  int step;
+  if (!RCCheckRun(store, run, error) || !RCCheckCollection(store, collection, error) ||
+      !RCPrepare(store, "UPDATE contacts SET seen_run_id=? WHERE collection_id=? "
+                        "AND remote_missing=0", &q, error)) return 0;
+  sqlite3_bind_int64(q, 1, run); sqlite3_bind_int64(q, 2, collection);
+  step = sqlite3_step(q); sqlite3_finalize(q);
+  return step == SQLITE_DONE ? 1 : RCStoreError(store, error, "Could not retain unchanged contacts");
+}
+
+int RCContactStoreSyncDelete(RCContactStore *store, long long collection,
+                             const char *href, long long run, RCError *error)
+{
+  sqlite3_stmt *q = NULL;
+  int step;
+  if (!RCCheckRun(store, run, error) || !RCCheckCollection(store, collection, error) ||
+      !RCPrepare(store, "UPDATE contacts SET seen_run_id=0,remote_missing=1 "
+                        "WHERE collection_id=? AND href=?", &q, error)) return 0;
+  sqlite3_bind_int64(q, 1, collection); RCBindText(q, 2, href);
+  step = sqlite3_step(q); sqlite3_finalize(q);
+  return step == SQLITE_DONE ? 1 : RCStoreError(store, error, "Could not record contact deletion");
+}
+
 int RCContactStoreBeginRun(RCContactStore *store, long long *runIdentifier,
                            RCError *error)
 {

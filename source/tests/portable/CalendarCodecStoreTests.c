@@ -37,7 +37,7 @@ int main(void)
   int fd, ok = 0, current;
   char *first = NULL, *again = NULL;
   RCDAVCollection collection = {"https://example.test/cal/", "RCS Calendar Test", NULL,
-                                NULL};
+                                NULL, NULL, 0};
   fd = mkstemp(path);
   if (fd < 0)
     return 1;
