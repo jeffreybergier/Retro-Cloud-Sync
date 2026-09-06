@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pinned source; the two patches only remove diagnostics unsupported by GCC 4.2.
+# Submodule source; the two patches only remove diagnostics unsupported by GCC 4.2.
 set -euo pipefail
 mode="$1"
 deps="$2"
@@ -7,13 +7,21 @@ toolchain="${3:-/osxcross/legacy/target}"
 version=3.0.20
 archive="$deps/libical-$version.tar.gz"
 src="$deps/libical-$version"
+checkout="$(cd "$(dirname "$0")/.." && pwd)/deps/libical"
 mkdir -p "$deps"
-if [ "$mode" = prepare ]; then
-  if [ ! -f "$archive" ]; then
-    curl --fail --location --retry 2 "https://github.com/libical/libical/releases/download/v$version/libical-$version.tar.gz" -o "$archive.download"
-    mv "$archive.download" "$archive"
+if [ "$mode" = prepare ] || [ "$mode" = prepare-archive ]; then
+  if [ "$mode" = prepare ]; then
+    if [ ! -f "$checkout/CMakeLists.txt" ]; then
+      echo 'libical is missing. Run: git submodule update --init --recursive' >&2
+      exit 1
+    fi
+    tar -czf "$archive.tmp" --exclude=libical/.git \
+      --transform="s,^libical,libical-$version," \
+      -C "$(dirname "$checkout")" libical
+    mv "$archive.tmp" "$archive"
   fi
-  printf '%s  %s\n' e73de92f5a6ce84c1b00306446b290a2b08cdf0a80988eca0a2c9d5c3510b4c2 "$archive" | sha256sum --check
+  # Recreate the build copy so removed upstream files cannot survive a checkout.
+  rm -rf "$src"
   tar -xzf "$archive" -C "$deps"
   python3 - "$src" <<'PY'
 from pathlib import Path

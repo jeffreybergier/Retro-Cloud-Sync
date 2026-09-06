@@ -1,0 +1,3 @@
+[submodule "source/deps/libical"]
+	path = source/deps/libical
+	url = https://github.com/libical/libical.git

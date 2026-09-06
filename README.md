@@ -14,6 +14,13 @@ Sync iCloud Email, Contacts, Calendars with Retro Macs 10.4+
 - `source/shared-test`: portable C tests that run on the Linux build host.
 - `source/make`: build rules for the application, libraries, and test tools.
 - `source/dependencies`: dependency preparation scripts.
+- `source/deps/libical`: upstream libical Git submodule, pinned to `v3.0.20`.
+
+Initialize dependencies after cloning (or clone with `--recurse-submodules`):
+
+```sh
+git submodule update --init --recursive
+```
 
 The probes still use `make carddav-probe` and `make caldav-probe`, with binaries
 under `build/macOS-carddav-probe` and `build/macOS-caldav-probe` respectively.
@@ -133,11 +140,15 @@ Accessibility enabled, the harness confirms only dialogs naming its separate
 "Retro Cloud Calendar Tests" client. All remote
 artifacts remain under `~/Desktop`. Stop the production daemon before testing.
 
-The build fetches checksum-pinned libical 3.0.20 and needs CMake, Perl, Python 3,
-and curl on the Linux host. It builds only the C library for PPC/i386 and native
-tests. The source archive and the reproducible GCC 4.2 diagnostic-only patches
+The build uses libical 3.0.20 from the HTTPS Git submodule at
+`source/deps/libical` and needs CMake, Perl, Python 3, and Git on the Linux host.
+It builds only the C library for PPC/i386 and native tests. Preparation copies
+the checkout into `build/dependencies` (or `BUILD_ROOT/dependencies`) and applies
+the GCC 4.2 diagnostic-only patches there, leaving the submodule unchanged.
+The source archive generated from that checkout and the reproducible patches
 are included with the application under `Contents/Resources/libical-source`,
-alongside the MPL 2.0 license. See [CALENDAR_DESIGN.md](CALENDAR_DESIGN.md) for the
+alongside the MPL 2.0 license. The bundled script's `prepare-archive` mode can
+prepare that archive without a Git checkout. See [CALENDAR_DESIGN.md](CALENDAR_DESIGN.md) for the
 original proposal and deferred work.
 
 ## Read-only CardDAV probe
