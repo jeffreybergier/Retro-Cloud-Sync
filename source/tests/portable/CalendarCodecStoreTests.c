@@ -38,6 +38,23 @@ int main(void)
   char *first = NULL, *again = NULL;
   RCDAVCollection collection = {"https://example.test/cal/", "RCS Calendar Test", NULL,
                                 NULL, NULL, 0};
+  /* Only empty URLs with valid supported parameters are tolerated; unrelated parser errors still fail. */
+  {
+    const char *valid = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:empty-url\r\nDTSTART:20300620T090000Z\r\nurl:\r\nuRl;vAlUe=uRi:\r\nURL:https://example.test/keep\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    const char *invalid = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:bad-date\r\nURL:\r\nDTSTART:not-a-date\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    const char *folded = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:folded\nDTSTART:20300620T090000Z\nURL:\n https://example.test/folded\nEND:VEVENT\nEND:VCALENDAR\n";
+    const char *invalidURL = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:bad-url\r\nDTSTART:20300620T090000Z\r\nURL;VALUE=DATE:\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    icalcomponent *root = RCICalendarParse((const unsigned char *)valid, strlen(valid), &error);
+    CHECK(root);
+    CHECK(!strcmp(RCICalendarValue(icalcomponent_get_first_component(root, ICAL_VEVENT_COMPONENT), ICAL_URL_PROPERTY), "https://example.test/keep"));
+    icalcomponent_free(root);
+    CHECK(!RCICalendarParse((const unsigned char *)invalid, strlen(invalid), &error));
+    CHECK(!RCICalendarParse((const unsigned char *)invalidURL, strlen(invalidURL), &error));
+    root = RCICalendarParse((const unsigned char *)folded, strlen(folded), &error);
+    CHECK(root);
+    CHECK(!strcmp(RCICalendarValue(icalcomponent_get_first_component(root, ICAL_VEVENT_COMPONENT), ICAL_URL_PROPERTY), "https://example.test/folded"));
+    icalcomponent_free(root);
+  }
   fd = mkstemp(path);
   if (fd < 0)
     return 1;
@@ -114,11 +131,31 @@ int main(void)
       scalar(s,
              "SELECT count(*) FROM calendar_resources WHERE parse_error IS NOT NULL") ==
       1);
+  RCCalendarStoreClose(s);
+  s = RCCalendarStoreOpen(path, "calendar-test", &error);
+  CHECK(s);
+  CHECK(scalar(s, "SELECT count(*) FROM available_events") == 4);
+  CHECK(scalar(s, "SELECT count(*) FROM calendar_resources WHERE parse_error IS NOT NULL") == 1);
   CHECK(RCCalendarFixturePopulate(s, "empty", &error));
   CHECK(scalar(s, "SELECT count(*) FROM available_events") == 0);
   CHECK(scalar(s, "SELECT count(*) FROM calendars WHERE remote_missing=1") == 1);
   CHECK(RCCalendarFixturePopulate(s, "initial", &error));
   CHECK(scalar(s, "SELECT count(*) FROM available_events") == 5);
+  /* Simulate the old codec's rejection; reopening repairs only normalization.
+     Raw bytes, ETags, generation, presence, and stable resource IDs survive. */
+  CHECK(RCCalendarStoreSQL(s, &error,
+      "UPDATE calendar_resources SET parse_error='iCalendar contains invalid properties or values',"
+      "export_status='unsupported',export_error='old parser' WHERE href='https://example.test/cal/day.ics';"
+      "DELETE FROM ical_components WHERE resource_id IN (SELECT id FROM calendar_resources WHERE href='https://example.test/cal/day.ics');"
+      "CREATE TABLE reparse_baseline AS SELECT r.id,r.raw_ical,r.etag,r.seen_run,a.generation "
+      "FROM calendar_resources r JOIN calendars c ON c.id=r.calendar_id JOIN accounts a ON a.id=c.account_id"));
+  RCCalendarStoreClose(s);
+  s = RCCalendarStoreOpen(path, "calendar-test", &error);
+  CHECK(s);
+  CHECK(scalar(s, "SELECT count(*) FROM available_events") == 5);
+  CHECK(scalar(s, "SELECT count(*) FROM calendar_resources WHERE parse_error IS NOT NULL") == 0);
+  CHECK(scalar(s, "SELECT count(*) FROM calendar_resources r JOIN reparse_baseline b ON b.id=r.id JOIN calendars c ON c.id=r.calendar_id JOIN accounts a ON a.id=c.account_id WHERE r.raw_ical=b.raw_ical AND r.etag=b.etag AND r.seen_run IS b.seen_run AND a.generation=b.generation") == 4);
+  CHECK(scalar(s, "SELECT count(*) FROM calendar_resources WHERE instr(CAST(raw_ical AS TEXT),'URL;VALUE=URI:')>0") == 1);
   RCCalendarStoreClose(s);
   s = RCCalendarStoreOpen(path, "second-account", &error);
   CHECK(s);

@@ -123,6 +123,55 @@ static const char schema[] =
     "CREATE VIEW IF NOT EXISTS timezone_observances AS SELECT * FROM ical_components "
     "WHERE kind IN ('STANDARD','DAYLIGHT');";
 
+/* Retry cached parse failures after codec improvements, without fetching data
+   or changing inventory/generation/remote write state. Failed retries leave the
+   entire resource and its last good projection untouched. */
+static int RCReparseCachedResources(RCCalendarStore *s, RCError *error)
+{
+  sqlite3_stmt *q = NULL;
+  long long last = 0;
+  int step;
+  for (;;) {
+    int ok, seenNull;
+    icalcomponent *parsed;
+    RCError parseError;
+    long long resource, seen;
+    if (sqlite3_prepare_v2(s->db,
+        "SELECT r.id,r.calendar_id,r.href,r.etag,r.raw_ical,r.seen_run "
+        "FROM calendar_resources r JOIN calendars c ON c.id=r.calendar_id "
+        "WHERE c.account_id=? AND r.id>? AND r.parse_error IS NOT NULL "
+        "AND c.remote_missing=0 AND r.remote_missing=0 AND r.scope_excluded=0 "
+        "ORDER BY r.id LIMIT 1", -1, &q, NULL) != SQLITE_OK) goto failed;
+    sqlite3_bind_int64(q, 1, s->account);
+    sqlite3_bind_int64(q, 2, last);
+    step = sqlite3_step(q);
+    if (step == SQLITE_DONE) { sqlite3_finalize(q); return 1; }
+    if (step != SQLITE_ROW) goto failed;
+    resource = last = sqlite3_column_int64(q, 0);
+    seen = sqlite3_column_int64(q, 5);
+    seenNull = sqlite3_column_type(q, 5) == SQLITE_NULL;
+    parsed = RCICalendarParse(sqlite3_column_blob(q, 4), (size_t)sqlite3_column_bytes(q, 4), &parseError);
+    if (!parsed) { sqlite3_finalize(q); q = NULL; continue; }
+    icalcomponent_free(parsed);
+    if (!RCCalendarStoreSQL(s, error, "SAVEPOINT reparse_calendar")) goto failed;
+    ok = RCCalendarStoreSave(s, sqlite3_column_int64(q, 1),
+        (const char *)sqlite3_column_text(q, 2), (const char *)sqlite3_column_text(q, 3),
+        sqlite3_column_blob(q, 4), (size_t)sqlite3_column_bytes(q, 4), error);
+    sqlite3_finalize(q); q = NULL;
+    if (!ok || RCFind(s, "SELECT id FROM calendar_resources WHERE id=%lld AND parse_error IS NULL", resource) < 0) {
+      if (!RCCalendarStoreSQL(s, error, "ROLLBACK TO reparse_calendar;RELEASE reparse_calendar")) goto failed;
+      if (!ok) goto failed;
+    } else if (!RCCalendarStoreSQL(s, error,
+        "UPDATE calendar_resources SET seen_run=CASE WHEN %d THEN NULL ELSE %lld END,export_error=NULL WHERE id=%lld;"
+        "RELEASE reparse_calendar", seenNull, seen, resource)) goto failed;
+  }
+failed:
+  sqlite3_finalize(q);
+  RCCalendarStoreSQL(s, NULL, "ROLLBACK TO reparse_calendar;RELEASE reparse_calendar");
+  if (!error || !error->code) RCErrorSet(error, 1, "Could not reparse cached calendar resources");
+  return 0;
+}
+
 RCCalendarStore *RCCalendarStoreOpen(const char *path, const char *username,
                                      RCError *error)
 {
@@ -185,6 +234,7 @@ RCCalendarStore *RCCalendarStoreOpen(const char *path, const char *username,
     RCErrorSet(error, 1, "Could not find calendar account");
     goto fail;
   }
+  if (!RCReparseCachedResources(s, error)) goto fail;
   return s;
 fail:
   RCCalendarStoreClose(s);

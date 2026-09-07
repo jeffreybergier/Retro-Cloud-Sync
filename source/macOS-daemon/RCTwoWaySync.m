@@ -644,7 +644,9 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
       NSMutableDictionary *desired=deleting ? Deletion(resource,truth) :
           c->encode(c->context,creating ? nil : resource,truth,root,&mappingError);
       if (!desired) {
-        if (mappingError.code) NSLog(@"Two-way mapping deferred: %s",mappingError.message);
+        NSLog(@"Two-way mapping deferred (resource %@, root %@, operation %s): %s",
+            [resource objectForKey:@"key"] ?: @"new",root,creating ? "create" : deleting ? "delete" : "update",
+            mappingError.code ? mappingError.message : deleting ? "Deletion would discard related native records" : "Mapper returned no representable resource");
         if (!Attention(j,root,"unsupported-local-mapping",error)) goto done;
         continue;
       }

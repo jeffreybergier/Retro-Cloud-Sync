@@ -8,6 +8,26 @@
 static NSString *S(const char *s) { return s ? [NSString stringWithUTF8String:s] : @""; }
 static NSString *eventEntity=@"com.apple.calendars.Event";
 static NSString *childLinks[]={@"recurrences",@"display alarms",@"audio alarms",@"attendees",@"organizer"};
+/* Report field names only; never log event text, participant addresses or URLs.
+   Use the same semantic comparison as upload validation so iCal bookkeeping
+   and omitted default values are not reported as meaningful differences. */
+static NSString *DifferentField(NSDictionary *a, NSDictionary *b)
+{
+  if (!a || !b) return @"record presence";
+  NSMutableSet *keys=[NSMutableSet setWithArray:[a allKeys]];
+  [keys addObjectsFromArray:[b allKeys]];
+  NSEnumerator *it=[[[keys allObjects] sortedArrayUsingSelector:@selector(compare:)] objectEnumerator];
+  NSString *key;
+  while ((key=[it nextObject])) {
+    NSMutableDictionary *left=[NSMutableDictionary dictionary], *right=[NSMutableDictionary dictionary];
+    if ([a objectForKey:ISyncRecordEntityNameKey]) [left setObject:[a objectForKey:ISyncRecordEntityNameKey] forKey:ISyncRecordEntityNameKey];
+    if ([b objectForKey:ISyncRecordEntityNameKey]) [right setObject:[b objectForKey:ISyncRecordEntityNameKey] forKey:ISyncRecordEntityNameKey];
+    if ([a objectForKey:key]) [left setObject:[a objectForKey:key] forKey:key];
+    if ([b objectForKey:key]) [right setObject:[b objectForKey:key] forKey:key];
+    if (!RCTwoWayRecordsEqual(left,right)) return key;
+  }
+  return @"record structure";
+}
 static NSString *DateValue(NSDate *date, BOOL allDay, NSTimeZone *zone)
 {
   if (![date isKindOfClass:[NSDate class]]) return nil;
@@ -99,9 +119,20 @@ static BOOL Validate(RCCalendarStore *store, NSData *body, NSDictionary *paths,
   NSEnumerator *it=[generated keyEnumerator]; NSString *path;
   while ((path=[it nextObject])) if ([paths objectForKey:path])
     [aliases setObject:[paths objectForKey:path] forKey:[generated objectForKey:path]];
-  BOOL ok=mapped && RCTwoWayGraphsEqual(RCTwoWayRemap(mapped,aliases),RCTwoWaySubgraph(truth,[paths allValues]));
+  NSDictionary *projected=mapped ? RCTwoWayRemap(mapped,aliases) : nil;
+  NSDictionary *wanted=RCTwoWaySubgraph(truth,[paths allValues]);
+  BOOL ok=projected && RCTwoWayGraphsEqual(projected,wanted);
   if (!RCTwoWaySQL(&j,error,"ROLLBACK TO validate_calendar;RELEASE validate_calendar")) return NO;
-  if (!ok) RCErrorSet(error,1,"Calendar edit cannot round-trip through the native schema without loss");
+  if (!ok && projected) {
+    NSMutableSet *ids=[NSMutableSet setWithArray:[projected allKeys]];
+    [ids addObjectsFromArray:[wanted allKeys]];
+    NSEnumerator *records=[[[ids allObjects] sortedArrayUsingSelector:@selector(compare:)] objectEnumerator];
+    NSString *identifier;
+    while ((identifier=[records nextObject])) if (!RCTwoWayRecordsEqual([projected objectForKey:identifier],[wanted objectForKey:identifier])) {
+      RCErrorSet(error,1,"Calendar round-trip differs at record %s field '%s'",[identifier UTF8String],
+          [DifferentField([projected objectForKey:identifier],[wanted objectForKey:identifier]) UTF8String]); break;
+    }
+  } else if (!ok && (!error || !error->code)) RCErrorSet(error,1,"Calendar edit could not be projected into the native schema");
   return ok;
 }
 static NSMutableDictionary *Create(RCCalendarStore *store,NSDictionary *truth,NSString *root,RCError *error)
@@ -114,7 +145,7 @@ static NSMutableDictionary *Create(RCCalendarStore *store,NSDictionary *truth,NS
      Never silently create a simplified event from a richer native graph. */
   NSString *unsupported[]={@"main event",@"detached events",@"exception dates",@"recurrences",@"attendees",@"organizer",@"mail alarms"};
   int k; for(k=0;k<7;k++) if ([[record objectForKey:unsupported[k]] count]) {
-    RCErrorSet(error,1,"New recurring or scheduled event requires a richer mapper"); return nil;
+    RCErrorSet(error,1,"New event field '%s' requires a richer mapper",[unsupported[k] UTF8String]); return nil;
   }
   BOOL allDay=[[record objectForKey:@"all day"] boolValue];
   NSString *start=DateValue([record objectForKey:@"start date"],allDay,nil), *end=DateValue([record objectForKey:@"end date"],allDay,nil);
@@ -163,7 +194,7 @@ static BOOL AddEdit(icalcomponent *event,int component,NSString *property,NSStri
 {
   icalproperty_kind kind=icalproperty_string_to_kind([property UTF8String]);
   int count=icalcomponent_count_properties(event,kind);
-  if (count>1) { RCErrorSet(error,1,"Ambiguous repeated calendar property"); return NO; }
+  if (count>1) { RCErrorSet(error,1,"Event component %d property %s occurs %d times",component,[property UTF8String],count); return NO; }
   if (!count && !value) return YES;
   [edits addObject:[NSDictionary dictionaryWithObjectsAndKeys:property,@"name",[NSNumber numberWithInt:component],@"component",
       [NSNumber numberWithInt:count ? 0 : -1],@"occurrence",value ?: (id)[NSNull null],@"value",nil]];
@@ -186,7 +217,7 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
     NSString *identifier=[[resource objectForKey:@"paths"] objectForKey:path];
     if (!identifier) continue;
     NSDictionary *base=[baseGraph objectForKey:identifier], *record=[truth objectForKey:identifier];
-    if (!record) goto unsupported;
+    if (!record) { RCErrorSet(error,1,"Event component %d is missing from native truth",component); goto failed; }
     NSMutableDictionary *expected=[NSMutableDictionary dictionaryWithDictionary:base];
     NSString *keys[]={@"summary",@"description",@"location",@"url",@"status",@"classification",@"start date",@"end date"};
     NSString *names[]={@"SUMMARY",@"DESCRIPTION",@"LOCATION",@"URL",@"STATUS",@"CLASS",@"DTSTART",@"DTEND"};
@@ -201,17 +232,26 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
         BOOL allDay=[[base objectForKey:@"all day"] boolValue];
         icalproperty *p=icalcomponent_get_first_property(event,k==6 ? ICAL_DTSTART_PROPERTY : ICAL_DTEND_PROPERTY);
         const char *tz=RCICalendarTZID(p); NSTimeZone *zone=tz ? [NSTimeZone timeZoneWithName:S(tz)] : nil;
-        if ((tz && !zone) || (!p && allDay) || icalcomponent_count_properties(event,ICAL_DURATION_PROPERTY)) goto unsupported;
+        if ((tz && !zone) || (!p && allDay) || icalcomponent_count_properties(event,ICAL_DURATION_PROPERTY)) {
+          RCErrorSet(error,1,"Event component %d field '%s': %s",component,[keys[k] UTF8String],
+              tz && !zone ? "timezone is unavailable" : !p && allDay ? "missing all-day date property" : "DURATION-based date edits are not supported");
+          goto failed;
+        }
         encoded=DateValue(value,allDay,zone);
-        if (!encoded) goto unsupported;
+        if (!encoded) { RCErrorSet(error,1,"Event component %d field '%s' has an invalid date",component,[keys[k] UTF8String]); goto failed; }
       }
       if (!AddEdit(event,component,names[k],encoded,edits,error)) goto failed;
       if (value) [expected setObject:value forKey:keys[k]]; else [expected removeObjectForKey:keys[k]];
     }
-    if (!RCTwoWayRecordsEqual(expected,record)) goto unsupported;
+    if (!RCTwoWayRecordsEqual(expected,record)) {
+      RCErrorSet(error,1,"Event component %d field '%s' changed beyond the reverse mapper",component,[DifferentField(expected,record) UTF8String]); goto failed;
+    }
     for(k=0;k<5;k++) {
       NSEnumerator *it=[[base objectForKey:childLinks[k]] objectEnumerator]; NSString *id;
-      while ((id=[it nextObject])) if (!RCTwoWayRecordsEqual([baseGraph objectForKey:id],[truth objectForKey:id])) goto unsupported;
+      while ((id=[it nextObject])) if (!RCTwoWayRecordsEqual([baseGraph objectForKey:id],[truth objectForKey:id])) {
+        RCErrorSet(error,1,"Event component %d child '%s' field '%s' changed beyond the reverse mapper",component,
+            [childLinks[k] UTF8String],[DifferentField([baseGraph objectForKey:id],[truth objectForKey:id]) UTF8String]); goto failed;
+      }
     }
   }
   {
@@ -237,8 +277,6 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
     free(bytes);
   }
   goto failed;
-unsupported:
-  RCErrorSet(error,1,"Event recurrence, participants, alarms, calendar or date type changed beyond the reverse mapper");
 failed:
   icalcomponent_free(calendar); return nil;
 }
@@ -279,7 +317,7 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
       mapped=RCCalendarNativeGraph(store,id,calendar,body,&mappingError);
       if (!mapped) { RCErrorSet(error,1,"Could not reconstruct retained calendar graph"); goto failed; }
     }
-    if (!mapped) { NSLog(@"Two-way calendar resource %lld is unsupported",id); continue; }
+    if (!mapped) { NSLog(@"Two-way calendar resource %lld is unsupported: %s",id,sqlite3_column_type(q,7)!=SQLITE_NULL ? (const char *)sqlite3_column_text(q,7) : mappingError.message); continue; }
     NSString *root=nil; NSDictionary *paths=Paths(store,id,body,mapped,&root,error);
     if (!paths || !root) goto failed;
     [resources addObject:[NSDictionary dictionaryWithObjectsAndKeys:[NSString stringWithFormat:@"resource-%lld",id],@"key",root,@"root",

@@ -21,7 +21,7 @@ static const char allDay[] =
     "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Retro Cloud Tests//EN\r\n"
     "BEGIN:VEVENT\r\nUID:rcs-test-allday\r\nDTSTAMP:20260905T000000Z\r\n"
     "DTSTART;VALUE=DATE:20300620\r\nDTEND;VALUE=DATE:20300622\r\nSUMMARY:RCS Calendar "
-    "Test All Day\r\n"
+    "Test All Day\r\nURL;VALUE=URI:\r\n"
     "END:VEVENT\r\nEND:VCALENDAR\r\n";
 static const char single[] =
     "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Retro Cloud Tests//EN\r\n"

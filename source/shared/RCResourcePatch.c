@@ -92,6 +92,8 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
   size_t stack[64], depth=0, components=0, pos=0, i, cursor=0;
   char kinds[64][32];
   int ok=0, closed=0;
+  const char *reason;
+  size_t editIndex=(size_t)-1;
   *output=NULL; *outputLength=0;
   if ((format!=RCResourceVCard && format!=RCResourceCalendar) || !base || !length ||
       length>INT_MAX || memchr(base,0,length) || (count && !edits) || count>10000) {
@@ -101,10 +103,12 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
   patches=calloc(count ? count : 1,sizeof(*patches));
   if (!patches) goto memory;
   for (i=0;i<count;i++) {
+    editIndex=i; reason="invalid property, occurrence, or unescaped newline";
     if (!token(edits[i].property) || (edits[i].group && !token(edits[i].group)) ||
         edits[i].occurrence < -1 || (edits[i].occurrence == -1 && !edits[i].value) ||
         (edits[i].value && (strchr(edits[i].value,'\r') || strchr(edits[i].value,'\n')))) goto invalid;
     if (edits[i].parameters) {
+      reason="invalid insertion parameters";
       const char *p=edits[i].parameters;
       if (edits[i].occurrence!=-1 || !*p || !strchr(p,'=')) goto invalid;
       for (;*p;p++) if (!((*p>='a' && *p<='z') || (*p>='A' && *p<='Z') ||
@@ -113,6 +117,7 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
   }
   while (pos<length) {
     size_t start=pos, n;
+    editIndex=(size_t)-1; reason="invalid component structure";
     char *sep, *nameEnd, *dot, *name;
     free(line.data); memset(&line,0,sizeof(line));
     do {
@@ -140,6 +145,7 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
       if (strcasecmp(sep+1,kinds[depth-1])) goto invalid;
       for (i=0;i<count;i++) if (edits[i].component==stack[depth-1] && edits[i].occurrence==-1) {
         Buffer prefix={NULL,0};
+        editIndex=i; reason="property is not writable in this component";
         if (!allowed(kinds[depth-1],edits[i].property)) goto invalid;
         if ((edits[i].group && (!add(&prefix,edits[i].group,strlen(edits[i].group)) || !add(&prefix,".",1))) ||
             !add(&prefix,edits[i].property,strlen(edits[i].property)) ||
@@ -165,14 +171,18 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
           (edit->group ? strlen(edit->group) : 0)!=gLen ||
           (gLen && strncasecmp(edit->group,(char *)line.data,gLen))) continue;
       if (patches[i].seen++ != edit->occurrence) continue;
+      editIndex=i; reason="property is not writable in this component";
       if (!allowed(kinds[depth-1],edit->property)) goto invalid;
       patches[i].start=start; patches[i].end=pos; patches[i].found=1;
       if (edit->value && !folded(&patches[i].replacement,(char *)line.data,
           (size_t)(sep-(char *)line.data)+1,edit->value)) goto memory;
     }
   }
+  editIndex=(size_t)-1; reason="unclosed component";
   if (depth || !closed) goto invalid;
-  for(i=0;i<count;i++) if (!patches[i].found) goto invalid;
+  for(i=0;i<count;i++) if (!patches[i].found) {
+    editIndex=i; reason="target component/property occurrence was not found"; goto invalid;
+  }
   /* Stable insertion sort preserves caller order for appends at the same END. */
   for(i=1;i<count;i++) {
     Patch p=patches[i]; size_t j=i;
@@ -180,7 +190,9 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
     patches[j]=p;
   }
   for(i=0;i<count;i++) {
-    if (patches[i].start<cursor) goto invalid;
+    if (patches[i].start<cursor) {
+      editIndex=(size_t)-1; reason="overlapping edits target the same property"; goto invalid;
+    }
     if (!add(&result,base+cursor,patches[i].start-cursor) ||
         !add(&result,patches[i].replacement.data,patches[i].replacement.length)) goto memory;
     cursor=patches[i].end;
@@ -189,7 +201,13 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
   if (!valid(format,result.data,result.length,e)) goto done;
   *output=result.data; *outputLength=result.length; result.data=NULL; ok=1; goto done;
 invalid:
-  RCErrorSet(e,1,"Resource edit is ambiguous, unsupported, or structurally invalid"); goto done;
+  if (editIndex<count)
+    RCErrorSet(e,1,"Resource patch edit %lu (component %lu, property %.64s, occurrence %d): %s",
+        (unsigned long)editIndex,(unsigned long)edits[editIndex].component,
+        edits[editIndex].property && token(edits[editIndex].property) ? edits[editIndex].property : "<invalid>",
+        edits[editIndex].occurrence,reason);
+  else RCErrorSet(e,1,"Resource patch: %s",reason);
+  goto done;
 memory:
   RCErrorSet(e,1,"Out of memory applying resource edits");
 done:

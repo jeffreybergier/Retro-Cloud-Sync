@@ -368,7 +368,7 @@ static void MapperTests(void)
   RCCalendarStore *cal=RCCalendarStoreOpen("MapperCalendar.sqlite","synthetic",&error); CHECK(cal);
   RCWriteJournal j=RCCalendarStoreWriteJournal(cal);
   CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO calendars(account_id,url,sync_id,display_name) VALUES(%lld,'https://fixture.invalid/calendar/','fixture','Fixture')",j.account));
-  NSData *ics=[@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:fixture\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:Original\r\nX-APPLE-PRIVATE:preserve\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+  NSData *ics=[@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:fixture\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:Original\r\nURL;VALUE=URI:\r\nX-APPLE-PRIVATE:preserve\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" dataUsingEncoding:NSUTF8StringEncoding];
   NSDictionary *mapped=RCCalendarNativeGraph(cal,1,@"calendar-fixture",ics,&error); CHECK(mapped);
   NSString *id=[[mapped allKeys] objectAtIndex:0];
   NSDictionary *paths=[NSDictionary dictionaryWithObject:id forKey:@"event:"];
@@ -380,7 +380,10 @@ static void MapperTests(void)
   truth=[NSMutableDictionary dictionaryWithDictionary:mapped];
   NSMutableDictionary *event=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:id]];
   [event setObject:@"Edited" forKey:@"summary"]; [truth setObject:event forKey:id];
-  CHECK(RCCalendarEncodeLocal(cal,r,truth,id,&error));
+  desired=RCCalendarEncodeLocal(cal,r,truth,id,&error); CHECK(desired);
+  result=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([result rangeOfString:@"URL;VALUE=URI:\r\n"].location!=NSNotFound);
+  CHECK([result rangeOfString:@"SUMMARY:Edited\r\n"].location!=NSNotFound);
   CHECK(RCCalendarEncodeLocal(cal,nil,truth,id,&error));
   [event removeObjectForKey:@"all day"]; [event removeObjectForKey:@"status"]; [event removeObjectForKey:@"classification"];
   [event setObject:@"synthetic-ical-uid" forKey:@"com.apple.ical.uid"];
@@ -392,7 +395,10 @@ static void MapperTests(void)
   CHECK(!RCCalendarEncodeLocal(cal,nil,truth,id,&error));
   [event removeObjectForKey:@"unknown-editable-property"];
   [event setObject:[NSNumber numberWithBool:YES] forKey:@"all day"];
-  CHECK(!RCCalendarEncodeLocal(cal,r,truth,id,&error));
+  CHECK(!RCCalendarEncodeLocal(cal,r,truth,id,&error) && strstr(error.message,"field 'all day'"));
+  [event removeObjectForKey:@"all day"];
+  [event setObject:[NSArray arrayWithObject:@"private-organizer-id"] forKey:@"organizer"];
+  CHECK(!RCCalendarEncodeLocal(cal,nil,truth,id,&error) && strstr(error.message,"field 'organizer'") && !strstr(error.message,"private-organizer-id"));
   RCCalendarStoreClose(cal);
   puts("PASS: Production contact/calendar reverse mappers preserve private fields and reject unsupported changes");
 }

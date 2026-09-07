@@ -228,6 +228,11 @@ static void patchTests(const char *path)
     append.parameters="TYPE=WORK"; append.property="TEL"; append.group="item1"; append.occurrence=0;
     CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&append,1,&out,&n,&error));
   }
+  bad.component=99; bad.property="SUMMARY"; bad.occurrence=0; bad.value="private event title";
+  CHECK(!RCResourcePatch(RCResourceCalendar,(const unsigned char *)calendar,strlen(calendar),&bad,1,&out,&n,&error));
+  CHECK(strstr(error.message,"component 99, property SUMMARY, occurrence 0") && strstr(error.message,"not found"));
+  CHECK(!strstr(error.message,"private event title"));
+  bad.component=0;
   ce[1]=ce[0]; CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),ce,2,&out,&n,&error));
   ce[0].value="bad\r\nUID:injected"; CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),ce,1,&out,&n,&error));
   CHECK(RCResourcePatch(RCResourceCalendar,(const unsigned char *)calendar,strlen(calendar),ie,2,&out,&n,&error));
