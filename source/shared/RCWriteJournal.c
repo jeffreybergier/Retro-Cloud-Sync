@@ -292,7 +292,7 @@ int RCWriteJournalResolveConflict(RCWriteJournal *j, long long id,
       (!strcmp(kind,"delete") ? (body != NULL || length != 0) : (!body || !length))) {
     RCErrorSet(e,1,"Invalid conflict resolution"); return 0;
   }
-  if (!outsideTransaction(j,e) || !exec(j->db,"BEGIN IMMEDIATE",e)) return 0;
+  if (!exec(j->db,"SAVEPOINT resolve_write",e)) return 0;
   if (!RCWriteJournalGet(j,id,&old,e)) goto done;
   if (!prepare(j->db,"SELECT successor_id,receipt FROM write_resolutions WHERE operation_id=?",&q,e)) goto done;
   sqlite3_bind_int64(q,1,id); step = sqlite3_step(q);
@@ -310,7 +310,9 @@ int RCWriteJournalResolveConflict(RCWriteJournal *j, long long id,
   sqlite3_finalize(q); q = NULL;
   deleting = !strcmp(kind,"delete");
   if (strcmp(old.state,"conflict") ||
-      (old.httpStatus == 404 ? strcmp(kind,"create") != 0 :
+      (deleting && old.httpStatus==404 &&
+       (!RCWriteETagIsStrong(old.baseETag) || old.localRevision<=0)) ||
+      (old.httpStatus == 404 ? (strcmp(kind,"create") && !deleting) :
        (old.httpStatus != 200 || !RCWriteETagIsStrong(old.resultETag) ||
         !old.resultBody || !old.resultLength || !strcmp(kind,"create")))) {
     RCErrorSet(e,1,"Conflict has no usable remote revision for this decision"); goto done;
@@ -322,10 +324,10 @@ int RCWriteJournalResolveConflict(RCWriteJournal *j, long long id,
       "local_revision,base_etag,base_body,desired_body) VALUES(?,?,?,?,?,'queued',?,?,?,?)",&q,e)) goto done;
   sqlite3_bind_int64(q,1,j->account); text(q,2,change); text(q,3,old.resourceKey);
   text(q,4,old.href); text(q,5,kind);
-  sqlite3_bind_int64(q,6,old.httpStatus == 404 ? 0 : old.localRevision);
-  text(q,7,old.httpStatus == 404 ? NULL : old.resultETag);
-  blob(q,8,old.httpStatus == 404 ? NULL : old.resultBody,
-      old.httpStatus == 404 ? 0 : old.resultLength);
+  sqlite3_bind_int64(q,6,old.httpStatus == 404 && !deleting ? 0 : old.localRevision);
+  text(q,7,old.httpStatus == 404 ? (deleting ? old.baseETag : NULL) : old.resultETag);
+  blob(q,8,old.httpStatus == 404 ? (deleting ? old.baseBody : NULL) : old.resultBody,
+      old.httpStatus == 404 ? (deleting ? old.baseLength : 0) : old.resultLength);
   blob(q,9,deleting ? NULL : body,length);
   if (sqlite3_step(q) != SQLITE_DONE) goto sqlError;
   *successor = sqlite3_last_insert_rowid(j->db);
@@ -343,8 +345,8 @@ sqlError:
   fail(j->db,e);
 done:
   sqlite3_finalize(q); RCWriteOperationClear(&old); RCWriteOperationClear(&next);
-  if (ok) ok = exec(j->db,"COMMIT",e);
-  if (!ok) { exec(j->db,"ROLLBACK",NULL); *successor = 0; }
+  if (ok) ok = exec(j->db,"RELEASE resolve_write",e);
+  if (!ok) { exec(j->db,"ROLLBACK TO resolve_write; RELEASE resolve_write",NULL); *successor = 0; }
   return ok;
 }
 

@@ -50,8 +50,8 @@ The configuration stores `ContactsSyncMode` and `CalendarsSyncMode` as
 booleans remain in the plist for compatibility. **2-way** enables conditional
 uploads of supported local creations and edits, including contacts already on
 the Mac when two-way sync is enabled. Previously excluded local contacts become
-eligible automatically. Remote resource deletion remains
-disabled. See [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md) for the supported fields,
+eligible automatically. Local contact/event deletions propagate with conditional
+DELETE, and supported conflicts reconcile through Sync Services. See [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md) for the supported fields,
 first-sync behavior, failure handling, and testing boundaries.
 
 The shared write-safety foundations now include durable outgoing operations,

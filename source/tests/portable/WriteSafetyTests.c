@@ -445,6 +445,21 @@ static void conflictTests(const char *path)
   CHECK(RCDAVWriterAttempt(&j,id,NULL,"text/vcard",400,&error));
   CHECK(RCConflictRecover(&j,id,&callbacks,&next,&error) && !next);
   CHECK(RCWriteJournalNextConflict(&j,&next,&error) && !next);
+  /* The production coordinator can join resolution and native receipt storage
+     in one transaction. An outer rollback must restore the entire conflict. */
+  sql(j.db,"BEGIN IMMEDIATE");
+  CHECK(RCWriteJournalResolveConflict(&j,id,"delete",NULL,0,"deleted",7,&next,&error));
+  state(&j,id,"cancelled"); state(&j,next,"queued");
+  sql(j.db,"ROLLBACK"); state(&j,id,"conflict");
+  CHECK(scalar(j.db,"SELECT count(*) FROM write_resolutions")==0);
+  CHECK(RCWriteJournalResolveConflict(&j,id,"delete",NULL,0,"deleted",7,&next,&error));
+  CHECK(RCWriteJournalGet(&j,next,&replacement,&error));
+  CHECK(!strcmp(replacement.baseETag,"\"base\"") && replacement.localRevision>0);
+  RCWriteOperationClear(&replacement);
+  CHECK(RCDAVWriterAttempt(&j,next,NULL,"text/vcard",450,&error)); state(&j,next,"applied");
+  CHECK(!RCWriteJournalAcknowledge(&j,next,&error));
+  sql(j.db,"BEGIN IMMEDIATE"); CHECK(RCWriteJournalResolutionMirrored(&j,next,&error)); sql(j.db,"COMMIT");
+  CHECK(RCWriteJournalAcknowledge(&j,next,&error));
   CHECK(RCWriteJournalEnqueue(&j,"unrelated","other","https://example.test/book/other.vcf",
       "create",0,newCard,strlen(newCard),&next,&error));
   CHECK(RCWriteJournalNext(&j,500,&again,&error) && again==next);
@@ -458,8 +473,8 @@ static void conflictTests(const char *path)
     CHECK(!stat(snapshot,&info) && (info.st_mode & 0777)==0600);
     CHECK(!RCWriteJournalBackup(j.db,snapshot,&error));
     CHECK(sqlite3_open(snapshot,&copy)==SQLITE_OK);
-    CHECK(scalar(copy,"SELECT count(*) FROM write_operations")==2);
-    CHECK(scalar(copy,"SELECT count(*) FROM write_attention")==1);
+    CHECK(scalar(copy,"SELECT count(*) FROM write_operations")==3);
+    CHECK(scalar(copy,"SELECT count(*) FROM write_attention")==0);
     CHECK(sqlite3_close(copy)==SQLITE_OK); unlink(snapshot);
   }
   CHECK(sqlite3_close(j.db)==SQLITE_OK); unlink(c.acceptancePath);

@@ -48,7 +48,9 @@ int RCWriteJournalCancel(RCWriteJournal *, long long, RCError *);
 /* A resolver must retain its canonical result/record identities in receipt.
    Atomically retire a conflict and create a successor pinned to the observed
    remote revision, WITHOUT changing the published base or original operation.
-   kind is update/delete for an existing remote resource, or create for a 404.
+   kind is update/delete for an existing remote resource; a 404 permits create
+   or a verification-only delete. May join a caller transaction to save native
+   receipts and resource identities atomically.
    Even choosing the remote version creates a verification-only successor.
    Replaying the exact decision returns the same successor; a different decision
    is rejected. This API does not authorize automatic edit/delete resolution. */

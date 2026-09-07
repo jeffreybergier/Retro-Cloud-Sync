@@ -184,3 +184,43 @@ done:
     RCErrorSet(error,1,"Could not close resolution acceptance session"); }
   return success;
 }
+
+NSDictionary *RCSyncResolveResourceConflict(ISyncClient *client, NSDictionary *remote,
+    NSArray *targets, RCError *error)
+{
+  ISyncSession *session=nil; NSDictionary *result=nil;
+  NSArray *entities=RCSyncPullableEntities(client);
+  if (!remote || ![targets count] || !UsableClient(client,entities,error)) return nil;
+  @try {
+    session=[ISyncSession beginSessionWithClient:client entityNames:entities
+        beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
+    if (!session) { RCErrorSet(error,1,"Conflict session unavailable"); goto done; }
+    NSEnumerator *it=[entities objectEnumerator]; NSString *key;
+    while ((key=[it nextObject])) if ([session shouldPushAllRecordsForEntityName:key] ||
+        [session shouldReplaceAllRecordsOnClientForEntityName:key] || ![session shouldPushChangesForEntityName:key]) {
+      RCErrorSet(error,1,"Resource conflict requires a fast session; reset needs recovery"); goto done;
+    }
+    /* Publish only this operation's verified remote revision. Other pending
+       resources and calendar containers retain their server snapshots. */
+    it=[targets objectEnumerator];
+    while ((key=[it nextObject])) {
+      NSDictionary *record=[remote objectForKey:key];
+      if (record) [session pushChangesFromRecord:record withIdentifier:key];
+      else [session deleteRecordWithIdentifier:key];
+    }
+    if (![session prepareToPullChangesForEntityNames:entities beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]) {
+      RCErrorSet(error,1,"System conflict resolution is pending"); goto done;
+    }
+    NSMutableDictionary *truth=[NSMutableDictionary dictionary];
+    it=[entities objectEnumerator];
+    while ((key=[it nextObject])) [truth addEntriesFromDictionary:[[session snapshotOfRecordsInTruth]
+        recordsWithMatchingAttributes:[NSDictionary dictionaryWithObject:key forKey:ISyncRecordEntityNameKey]]];
+    result=[[truth copy] autorelease];
+  } @catch(NSException *exception) { (void)exception;
+    RCErrorSet(error,1,"System resource conflict resolution failed"); result=nil; }
+done:
+  @try { if (session && ![session isCancelled]) [session cancelSyncing]; }
+  @catch(NSException *exception) { (void)exception; result=nil;
+    RCErrorSet(error,1,"Could not close resource conflict session"); }
+  return result;
+}

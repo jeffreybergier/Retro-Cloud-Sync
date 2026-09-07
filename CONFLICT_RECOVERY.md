@@ -4,11 +4,13 @@ The recovery implementation uses the existing Sync Services server client for
 canonical field decisions. It preserves remote-write conflicts in SQLite and
 never changes an old operation's ETag to retry its old body.
 
-The production app now supports opt-in two-way creation and updates through
-[RCTwoWaySync](source/macOS-daemon/RCTwoWaySync.m). Its coordinator retains
-conflicts for attention; it does not automatically invoke the narrow contact
-conflict resolver described below. That adapter remains separately tested and
-available for future integration. See [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md) for the
+The production app supports opt-in two-way creation, updates and deletions through
+[RCTwoWaySync](source/macOS-daemon/RCTwoWaySync.m). Its coordinator now reconciles
+supported contact and calendar conflicts with a resource-scoped fast Sync Services
+session and the production reverse mappers, including canonical edit/delete
+decisions. It retains unsupported mappings and identity ambiguity for attention.
+The narrow contact adapter described below remains separately tested; production
+uses the broader resource coordinator rather than invoking that adapter. See [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md) for the
 production feature's supported mapping and recovery boundaries.
 
 ## Durable operation lifecycle
@@ -84,11 +86,12 @@ properties, photos, parameters and untouched physical lines are preserved.
 The completion adapter checks the confirmed server body for mapped changes
 before accepting the exact serialized receipt.
 
-Full reverse contact mapping, calendar recurrence/child mapping, explicit
-edit/delete resolution, and collecting a new local revision while an older
-applied operation awaits completion remain part of the two-way coordinator work.
-The generic journal and session helpers are reusable for calendars; automatic
-calendar conflict resolution is not enabled.
+The production coordinator now handles supported contact/calendar fields,
+edit/delete reconciliation, and supported newer local revisions during upload
+completion. Recurrence/child restructuring and ambiguous contact child identities
+remain outside its mapping boundary. The generic RCConflictRecover adapter above
+retains its narrower update/update policy; production uses the journal's resolution
+API directly to save its native intent and resource graph in the same transaction.
 
 ## Inspection and recovery snapshots
 
@@ -105,7 +108,7 @@ attention reason codes. It does not print hrefs, account names or record bodies.
 Export uses SQLite's backup API to obtain a consistent whole-database snapshot,
 including raw data and all three conflict versions. It creates a new file with
 mode 0600 and refuses to overwrite an existing destination. Calendar databases
-support the same commands. Export is available before bidirectional deletion.
+support the same commands. Export is available independently of sync mode.
 
 ## Verification
 

@@ -1,9 +1,9 @@
-# Two-way creation and updates
+# Two-way sync
 
 Select **2-way** for Contacts or Calendars to enable local-to-iCloud uploads.
 The default remains unchanged; existing OneWay/Disabled configurations do not
-begin uploading after an upgrade. The daemon uses conditional **PUT**, not POST:
-`If-None-Match: *` for a new resource, `If-Match` with the retained ETag for edits.
+begin uploading after an upgrade. The daemon uses conditional **PUT** for creation/edits and **DELETE** for removal:
+`If-None-Match: *` for a new resource, `If-Match` with the retained ETag for edits and deletions.
 Mail continues independently. Network activity occurs outside Sync Services
 sessions and SQLite transactions. Credentials remain in Keychain.
 
@@ -32,8 +32,19 @@ compared to the intended native graph before it can enter the outgoing queue.
 A proposal that would silently lose mapped data is rejected, leaving the local
 change pending. Raw remote bodies are patched rather than regenerated for edits.
 
-**Deleting a contact or event locally never sends remote DELETE.** Removing a
-phone/email/address/URL entry is an edit to its parent vCard and uses PUT.
+**Deleting a contact or event locally propagates to iCloud in 2-way mode.**
+The coordinator requires an explicit Sync Services deletion change for a known
+resource, a strong ETag, and disappearance of its whole native graph. Removing
+just a recurrence instance or leaving live child records does not authorize a
+whole-resource deletion. Missing records, failed downloads, history-window
+exclusion and forced resets do not authorize DELETE. Removing a
+phone/email/address/URL entry remains an edit to its parent vCard and uses PUT.
+
+A deletion is journaled with its exact native tombstones and resource identities.
+The writer verifies absence with GET, including after a lost DELETE response.
+Completion waits for the successful mirror to omit the resource and accepts only
+those tombstones. A newer native restoration remains pending for attention;
+stale mirror bytes cannot be published over it while deletion completion is open.
 
 ## First enable and account isolation
 
@@ -92,7 +103,7 @@ containers remain untouched while unrelated resources can sync. A durable
 publication checkpoint tracks explicit remote deletions during these partial
 sessions. Partial sessions do not mark the full mirror as published or authorize
 calendar history pruning. A forced Sync Services reset still requires recovery.
-General conflict resolution and unsupported mappings remain attention conditions.
+Unsupported mappings remain attention conditions.
 
 An uploaded resource deleted remotely or omitted by the calendar history window
 before acknowledgement can complete from its saved verified bytes and receipt.
@@ -110,13 +121,44 @@ operation states and deferred-reason counts without exposing record bodies, and
 These commands do not execute writes or resolve conflicts. There is no automatic
 fallback to one-way and no blind overwrite/retry with a replacement ETag.
 
+## Conflict resolution
+
+Production contacts and calendars now reconcile write conflicts through their
+existing Sync Services client. A fast session publishes only the conflicted
+resource's GET-observed remote revision, keeping unrelated pending resources
+and calendar containers isolated. Sync Services chooses canonical field values;
+system policy may merge different fields or decide a same-field conflict
+without displaying a Conflict Resolver window. The coordinator does not choose
+an unconditional local-wins or remote-wins policy.
+
+The existing reverse mapper validates the canonical result, so conflict recovery
+supports the same editable fields as ordinary updates. The chosen body, exact
+native receipt and resource identity are saved atomically with a new conditional
+operation; the original operation and its ETag are immutable. Choosing existing
+remote bytes still queues verification, which can finish without PUT. A second
+remote race produces another conflict. Newer local changes are captured in the
+canonical receipt and are never acknowledged as an older upload.
+
+Edit/delete conflicts also pass through Sync Services. A writer GET 404 is the
+only evidence that permits presenting a whole-resource remote deletion. A
+canonical local survivor can be recreated at the same href with
+`If-None-Match: *`; a canonical deletion is verified before acknowledgement.
+A canonical local deletion against a changed remote resource uses that
+conflict revision's ETag, never an unconditional DELETE.
+
+Changed UIDs, ambiguous contact child identities (including remote child edits
+or reordering), unsupported canonical structures and forced full resets remain
+attention conditions. Recovery does not guess identities or drop unsupported
+data. Older operations without a saved resource graph are recovered only when
+the existing projector can reconstruct their identity safely.
+
 ## Validation and live use
 
 `make test-host`, `make release`, and `make analyze` validate the portable code,
 legacy builds, and static diagnostics. `make test-mac-two-way TEST_HOST=x4-vm`
 uses real Tiger Sync Services with synthetic data and a transport that cannot
 reach iCloud. It tests reverse mapping, native creation/updates, identity replay,
-conditional writes, interruption recovery and remote-deletion protection.
+conditional writes, interruption recovery, local deletion propagation and conflict isolation.
 
 A logged-in iCloud account can stay logged in while building and running these
 offline tests. Stop the production daemon before running native suites. Building
@@ -151,3 +193,11 @@ runs, and an unrelated contact uploading while another contact has a conflict.
 Mapper regressions cover empty raw TEL/EMAIL/URL fields followed by visible
 entries: note edits, field updates, removals and additions preserve the raw
 occurrence identities and untouched empty fields.
+
+The native recovery tests cover contact deletion with a lost response and a
+reopened journal, contact different-field and same-field conflicts, a local
+contact edit racing remote deletion, calendar field conflicts, event deletion,
+and a remote event edit racing local deletion. They compare canonical native
+values and require all successors to complete without duplicate mutations.
+`TWO_WAY_TEST_MODE=recovery` runs these with the existing upload-recovery cases;
+`TWO_WAY_TEST_MODE=edit-delete` isolates the contact edit/delete case.

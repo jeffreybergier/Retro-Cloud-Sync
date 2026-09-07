@@ -13,7 +13,7 @@ and transfers tools to `TEST_HOST` (default `x4-vm`) and runs them on the Mac.
 | Contacts | vCard parsing, SQLite storage, identities, account isolation, mirror rollback and recovery | Linux, offline; simulated HTTP | `make test-host-contacts` |
 | Calendars | iCalendar codec, SQLite storage, discovery, inventory and failure handling | Linux, offline; simulated HTTP | `make test-host-calendars` |
 | Write safety | Durable outgoing operations, crash recovery, conflicts, base revisions, loss-preserving edits and production HTTP preconditions/TLS | Linux; synthetic fixtures and local TLS server; Python 3, OpenSSL CLI, native libcurl | `make test-host-writes` |
-| Two-way sync | Production reverse mappers and real Sync Services collection, conditional PUTs through a synthetic transport, verified acceptance, creation identity, replay and deletion guard | Mac desktop, offline; daemon stopped; separate synthetic clients | `make test-mac-two-way TEST_HOST=x4-vm` |
+| Two-way sync | Production reverse mappers and real Sync Services collection, conditional PUT/DELETE through a synthetic transport, verified acceptance, creation identity, replay, conditional deletion and conflict resolution | Mac desktop, offline; daemon stopped; separate synthetic clients | `make test-mac-two-way TEST_HOST=x4-vm` |
 | Conflict recovery | Journal-to-Sync Services contact reconciliation, exact acknowledgement, newer local edits, field preservation and cleanup | Mac desktop, offline; production daemon stopped; separate synthetic clients | `make test-mac-conflicts TEST_HOST=x4-vm` |
 | DAV sync tokens | Pagination, expired/unsupported tokens, durable rollback, account isolation and rolling calendar windows through the real mirrors | Linux, offline; scripted HTTP | `make test-host-sync` |
 | App GUI | Preferences, autosave/validation, Start/Stop, installation, logs and loopback mail listeners | Mac desktop with Accessibility; controls the service and local listeners | `make test-mac-app TEST_HOST=x4-vm` |
@@ -207,3 +207,12 @@ downloads and remote deletions while a record is conflicted. Empty raw contact
 fields retain their positions through note edits, value changes, removals and
 additions. Its replacement HTTP transport accepts only `fixture.invalid`;
 it neither obtains Keychain credentials nor contacts iCloud.
+
+`make test-mac-two-way TEST_HOST=x4-vm TWO_WAY_TEST_MODE=recovery` skips the
+first-enable policy scenarios and runs contact/calendar write recovery, conflict
+resolution and deletion regressions with the same offline transport and baseline
+checks. The full suite includes these cases too.
+
+`TWO_WAY_TEST_MODE=edit-delete` isolates a contact edit racing a verified remote
+deletion. It exercises the system's canonical decision, conditional recreation
+or deletion verification, exact acceptance and replay.

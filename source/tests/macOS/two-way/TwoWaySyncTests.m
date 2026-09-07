@@ -11,7 +11,7 @@ static NSMutableDictionary *remoteBodies, *remoteETags;
 static int mutations=0;
 static BOOL loseResponse=NO;
 static NSString *marker;
-#define CHECK(x) do { RCErrorClear(&error); if (!(x)) [NSException raise:@"TestFailure" format:@"%s: %s",#x,error.message]; } while(0)
+#define CHECK(x) do { RCErrorClear(&error); if (!(x)) [NSException raise:@"TestFailure" format:@"line %d: %s: %s",__LINE__,#x,error.message]; } while(0)
 
 /* Deliberately replaces the HTTP transport at link time. This executable has
    no live server path and never obtains credentials. */
@@ -43,18 +43,28 @@ int RCHTTPClientConditionalRequest(RCHTTPClient *c,const char *method,const char
     const void *body,size_t length,const char *etag,int create,RCHTTPResponse *r,RCError *e)
 {
   (void)c;(void)type;
-  if (strcmp(method,"PUT") || !Response(url,r)) { RCErrorSet(e,1,"Non-fixture mutation rejected"); return 0; }
+  if ((strcmp(method,"PUT") && strcmp(method,"DELETE")) || !Response(url,r)) { RCErrorSet(e,1,"Non-fixture mutation rejected"); return 0; }
   NSString *href=[NSString stringWithUTF8String:url];
   BOOL exists=[remoteBodies objectForKey:href]!=nil;
   if ((create && exists) || (!create && (!etag || !exists || ![[remoteETags objectForKey:href] isEqual:[NSString stringWithUTF8String:etag]]))) {
     r->statusCode=412; return 1;
   }
   mutations++;
-  [remoteBodies setObject:[NSData dataWithBytes:body length:length] forKey:href];
-  [remoteETags setObject:[NSString stringWithFormat:@"\"write-%d\"",mutations] forKey:href];
+  if (!strcmp(method,"DELETE")) {
+    [remoteBodies removeObjectForKey:href]; [remoteETags removeObjectForKey:href];
+  } else {
+    [remoteBodies setObject:[NSData dataWithBytes:body length:length] forKey:href];
+    [remoteETags setObject:[NSString stringWithFormat:@"\"write-%d\"",mutations] forKey:href];
+  }
   Response(url,r); r->statusCode=create ? 201 : 204;
   if (loseResponse) { loseResponse=NO; RCErrorSet(e,1,"Synthetic response lost after PUT"); return 0; }
   return 1;
+}
+static NSString *Replace(NSString *text, NSString *old, NSString *replacement)
+{
+  NSMutableString *result=[NSMutableString stringWithString:text];
+  [result replaceOccurrencesOfString:old withString:replacement options:0 range:NSMakeRange(0,[result length])];
+  return result;
 }
 static NSDictionary *ContactPaths(NSData *body,NSString *root)
 {
@@ -80,11 +90,12 @@ static NSDictionary *ContactResource(NSData *body,NSString *root,NSString *href,
   return [NSDictionary dictionaryWithObjectsAndKeys:root,@"key",root,@"root",href,@"href",etag,@"etag",body,@"body",
       ContactGraph(body,root),@"graph",RCContactNativePaths(body,ContactGraph(body,root),root,&error),@"paths",[NSNumber numberWithInt:1],@"revision",nil];
 }
-static void LocalSession(ISyncClient *client,NSDictionary *push,BOOL remove)
+static void LocalSessionAs(ISyncClient *client,NSDictionary *push,BOOL remove,NSString *eventName)
 {
   ISyncSession *s=[ISyncSession beginSessionWithClient:client entityNames:[client enabledEntityNames]
       beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
   CHECK(s);
+  @try {
   NSEnumerator *it=[push keyEnumerator]; NSString *id;
   while ((id=[it nextObject])) {
     if (remove) [s deleteRecordWithIdentifier:id];
@@ -97,11 +108,16 @@ static void LocalSession(ISyncClient *client,NSDictionary *push,BOOL remove)
     NSString *summary=[[change record] objectForKey:@"summary"], *title=[[change record] objectForKey:@"title"];
     if ([first hasPrefix:marker] || [summary hasPrefix:marker] || [title hasPrefix:marker]) {
       NSString *native=[first hasPrefix:marker] ? ([first isEqual:marker] ? @"fixture" : @"new-fixture") :
-          [title hasPrefix:marker] ? @"calendar" : [summary hasPrefix:[marker stringByAppendingString:@"-new"]] ? @"new-event" : @"event";
+          [title hasPrefix:marker] ? @"calendar" : [summary hasPrefix:[marker stringByAppendingString:@"-new"]] ? @"new-event" : eventName;
       [s clientAcceptedChangesForRecordWithIdentifier:[change recordIdentifier] formattedRecord:nil newRecordIdentifier:native];
     }
   }
   [s clientCommittedAcceptedChanges]; [s cancelSyncing];
+  } @finally { if (![s isCancelled]) [s cancelSyncing]; }
+}
+static void LocalSession(ISyncClient *client,NSDictionary *push,BOOL remove)
+{
+  LocalSessionAs(client,push,remove,@"event");
 }
 static ISyncClient *LegacyClient(NSString *identifier, NSString *description, NSDictionary *graph)
 {
@@ -496,6 +512,75 @@ static void CalendarTests(void)
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==0);
     puts("PASS: Push-only calendar registration migrated in place; pre-initialization creation and existing identities preserved");
     puts("PASS: Native calendar edits and creations use conditional PUT, stable identities and exact acknowledgement");
+    /* Resolve an event conflict using imported aliases for a native creation. */
+    ISyncRecordSnapshot *conflictSnapshot=[manager snapshotOfRecordsInTruthWithEntityNames:entities usingIdentifiersForClient:local];
+    NSMutableDictionary *conflictEvent=[NSMutableDictionary dictionaryWithDictionary:
+        [[conflictSnapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"new-event"]] objectForKey:@"new-event"]];
+    [conflictEvent setObject:@"local conflict location" forKey:@"location"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:conflictEvent forKey:@"new-event"],NO);
+    CHECK(RCTwoWayExchange(&c,&error));
+    NSString *calendarRemote=[[[NSString alloc] initWithData:[remoteBodies objectForKey:newHref] encoding:NSUTF8StringEncoding] autorelease];
+    calendarRemote=Replace(calendarRemote,@"END:VEVENT",@"DESCRIPTION:remote conflict description\r\nEND:VEVENT");
+    [remoteBodies setObject:[calendarRemote dataUsingEncoding:NSUTF8StringEncoding] forKey:newHref];
+    [remoteETags setObject:@"\"calendar-conflict\"" forKey:newHref];
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==1);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='conflict'")==1);
+    created=CalendarResource(store,2,[remoteBodies objectForKey:newHref],newHref,[remoteETags objectForKey:newHref]);
+    c.resources=[NSArray arrayWithObject:created]; c.graph=CalendarGraph(c.resources);
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='conflict'")==0);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==1);
+    calendarRemote=[[[NSString alloc] initWithData:[remoteBodies objectForKey:newHref] encoding:NSUTF8StringEncoding] autorelease];
+    CHECK([calendarRemote rangeOfString:@"LOCATION:local conflict location"].location!=NSNotFound);
+    CHECK([calendarRemote rangeOfString:@"DESCRIPTION:remote conflict description"].location!=NSNotFound);
+    created=CalendarResource(store,2,[remoteBodies objectForKey:newHref],newHref,[remoteETags objectForKey:newHref]);
+    c.resources=[NSArray arrayWithObject:created]; c.graph=CalendarGraph(c.resources);
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state IN ('queued','conflict','applied')")==0);
+    puts("PASS: Calendar conflict resolution merges supported fields on the original native identity");
+    LocalSession(local,nil,NO);
+    LocalSession(local,[NSDictionary dictionaryWithObject:conflictEvent forKey:@"new-event"],YES);
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='delete'")==1);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(!c.didPublishAll);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='delete'")==1);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==1);
+    CHECK(![remoteBodies objectForKey:newHref]); CHECK([remoteBodies objectForKey:href]);
+    c.resources=[NSArray array]; c.graph=CalendarGraph(c.resources);
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='delete' AND state='acknowledged'")==1);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==0);
+    puts("PASS: Native event deletion uses conditional DELETE and leaves out-of-window events untouched");
+    /* Restore the history-filtered fixture, then race its native deletion with
+       a remote edit. The changed ETag must stop the original DELETE. */
+    resource=CalendarResource(store,1,[remoteBodies objectForKey:href],href,[remoteETags objectForKey:href]);
+    c.resources=[NSArray arrayWithObject:resource]; c.graph=CalendarGraph(c.resources);
+    CHECK(RCTwoWayExchange(&c,&error)); LocalSessionAs(local,nil,NO,@"restored-event");
+    LocalSession(local,[NSDictionary dictionaryWithObject:event forKey:@"restored-event"],YES);
+    CHECK(RCTwoWayExchange(&c,&error));
+    int beforeRace=mutations;
+    NSString *raced=[[[NSString alloc] initWithData:[remoteBodies objectForKey:href] encoding:NSUTF8StringEncoding] autorelease];
+    raced=Replace(raced,@"END:VEVENT",@"DESCRIPTION:edited while deleting\r\nEND:VEVENT");
+    [remoteBodies setObject:[raced dataUsingEncoding:NSUTF8StringEncoding] forKey:href];
+    [remoteETags setObject:@"\"delete-edit-race\"" forKey:href];
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==1);
+    CHECK(mutations==beforeRace); CHECK([remoteBodies objectForKey:href]);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='conflict'")==1);
+    resource=CalendarResource(store,1,[remoteBodies objectForKey:href],href,[remoteETags objectForKey:href]);
+    c.resources=[NSArray arrayWithObject:resource]; c.graph=CalendarGraph(c.resources);
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='conflict'")==0);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==1);
+    if ([remoteBodies objectForKey:href]) {
+      resource=CalendarResource(store,1,[remoteBodies objectForKey:href],href,[remoteETags objectForKey:href]);
+      c.resources=[NSArray arrayWithObject:resource];
+    } else c.resources=[NSArray array];
+    c.graph=CalendarGraph(c.resources);
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state IN ('queued','conflict','applied')")==0);
+    puts("PASS: Concurrent remote edit prevents stale DELETE; the system's delete/edit decision completes conditionally");
+
+
   } @finally {
     Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
     RCCalendarStoreClose(store);
@@ -504,6 +589,35 @@ static void CalendarTests(void)
   NSDictionary *after=[snapshot recordsWithIdentifiers:[baseline allKeys]];
   CHECK(RCTwoWayGraphsEqual(baseline,after));
   puts("PASS: Pre-existing calendar/event records unchanged");
+}
+static void ContactRemoteDeleteConflict(RCTwoWayContext *c, ISyncClient *local, NSString *href)
+{
+    /* A verified remote deletion races a local edit. Canonical survival requires
+       conditional recreation; canonical deletion requires verification only. */
+    LocalSession(local,nil,NO);
+    ISyncRecordSnapshot *snapshot=[[ISyncManager sharedManager] snapshotOfRecordsInTruthWithEntityNames:
+        [local enabledEntityNames] usingIdentifiersForClient:local];
+    NSMutableDictionary *sameCard=[NSMutableDictionary dictionaryWithDictionary:
+        [[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"]];
+    [sameCard setObject:@"edit racing remote delete" forKey:@"notes"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:sameCard forKey:@"fixture"],NO);
+    CHECK(RCTwoWayExchange(c,&error));
+    CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state='queued'")==1);
+    [remoteBodies removeObjectForKey:href]; [remoteETags removeObjectForKey:href];
+    CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/vcard",&error)==1);
+    CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state='conflict'")==1);
+    c->resources=[NSArray array]; c->graph=[NSDictionary dictionary];
+    CHECK(RCTwoWayExchange(c,&error));
+    CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state='conflict'")==0);
+    CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/vcard",&error)==1);
+    if ([remoteBodies objectForKey:href]) {
+      NSDictionary *resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+      c->resources=[NSArray arrayWithObject:resource]; c->graph=[resource objectForKey:@"graph"];
+    }
+    CHECK(RCTwoWayExchange(c,&error));
+    CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state IN ('queued','conflict','applied')")==0);
+    CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/vcard",&error)==0);
+    puts("PASS: Local edit versus remote DELETE resolves through Sync Services without blind resurrection");
 }
 int main(int argc,char **argv)
 {
@@ -530,13 +644,24 @@ int main(int argc,char **argv)
       server=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.server"];
       Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
       local=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.local"]; server=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.server"];
-      Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server]; status=0; goto done;
+      Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
+      if ([[NSFileManager defaultManager] fileExistsAtPath:@"Calendar-baseline.archive"]) {
+        NSDictionary *baseline=[NSKeyedUnarchiver unarchiveObjectWithFile:@"Calendar-baseline.archive"]; CHECK(baseline);
+        ISyncRecordSnapshot *snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:
+            [NSArray arrayWithObjects:@"com.apple.calendars.Calendar",@"com.apple.calendars.Event",nil] usingIdentifiersForClient:nil];
+        CHECK(RCTwoWayGraphsEqual(baseline,[snapshot recordsWithIdentifiers:[baseline allKeys]]));
+        puts("PASS: Pre-existing calendar/event records unchanged after recovery cleanup");
+      }
+      local=nil; server=nil; status=0; goto done;
     }
-    CHECK(argc==1);
+    BOOL recoveryOnly=argc==2 && !strcmp(argv[1],"--recovery");
+    BOOL editDeleteOnly=argc==2 && !strcmp(argv[1],"--edit-delete");
+    CHECK(argc==1 || recoveryOnly || editDeleteOnly);
     CHECK(![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.local"] && ![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.server"]);
     marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
     CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
-    ContactCreationPolicyTests(0); ContactCreationPolicyTests(1); ContactCreationPolicyTests(2); ContactCreationPolicyTests(3); mutations=0;
+    if (!recoveryOnly && !editDeleteOnly) { ContactCreationPolicyTests(0); ContactCreationPolicyTests(1); ContactCreationPolicyTests(2); ContactCreationPolicyTests(3); }
+    mutations=0;
     NSString *description=[[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:@"SyncClient.plist"];
     NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description]; CHECK(desc);
     [desc setObject:@"Retro Cloud Two Way Tests" forKey:@"DisplayName"]; [desc removeObjectForKey:@"PushOnlyEntities"];
@@ -561,6 +686,11 @@ int main(int argc,char **argv)
     CHECK(RCTwoWayExchange(&c,&error));
     server=[manager clientWithIdentifier:c.clientIdentifier]; CHECK(server);
     LocalSession(local,nil,NO);
+    if (editDeleteOnly) {
+      ContactRemoteDeleteConflict(&c,local,href);
+      Cleanup(local); Cleanup(server); [manager unregisterClient:local]; [manager unregisterClient:server];
+      local=nil; server=nil; status=0; goto done;
+    }
     NSMutableDictionary *card=[NSMutableDictionary dictionaryWithDictionary:[[resource objectForKey:@"graph"] objectForKey:@"contact-fixture"]];
     [card setObject:@"local edit" forKey:@"notes"];
     LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
@@ -597,9 +727,6 @@ int main(int argc,char **argv)
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==2);
     fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(mutations==2);
-    LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"new-fixture"],YES);
-    fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
-    CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='delete'")==0);
     [card setObject:marker forKey:@"first name"]; [card setObject:@"local edit" forKey:@"notes"];
     [card setObject:[NSArray arrayWithObject:@"phone"] forKey:@"phone numbers"];
     NSDictionary *phone=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Phone Number",ISyncRecordEntityNameKey,
@@ -620,6 +747,10 @@ int main(int argc,char **argv)
     [card setObject:marker forKey:@"first name"]; [card setObject:@"new local edit" forKey:@"notes"];
     LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
     CHECK(RCTwoWayExchange(&c,&error));
+    NSData *conflictBase=[remoteBodies objectForKey:href];
+    NSString *collision=[[[NSString alloc] initWithData:conflictBase encoding:NSUTF8StringEncoding] autorelease];
+    collision=Replace(collision,@"UID:",@"UID:different-");
+    [remoteBodies setObject:[collision dataUsingEncoding:NSUTF8StringEncoding] forKey:href];
     [remoteETags setObject:@"\"concurrent\"" forKey:href];
     CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
     CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='conflict'")==1); CHECK(mutations==4);
@@ -657,7 +788,85 @@ int main(int argc,char **argv)
     CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0); CHECK(mutations==5);
     puts("PASS: A conflicted contact stays protected while unrelated uploads, downloads and remote deletions continue");
     puts("PASS: Lost PUT response, reopened journal and concurrent remote edit retain exact intent without duplicate or blind writes");
-    puts("PASS: Native collection -> conditional PUT -> verified mirror -> exact acceptance; create identities, replay and deletion guard");
+    puts("PASS: Native collection -> conditional PUT -> verified mirror -> exact acceptance; create identities and replay");
+    /* Retire the deliberate identity-collision fixture, then cause a fresh
+       supported conflict through the writer's normal GET path. */
+    CHECK(RCWriteJournalCancel(&j,Scalar(&j,"SELECT id FROM write_operations WHERE state='conflict'"),&error));
+    [remoteBodies setObject:conflictBase forKey:href];
+    resource=ContactResource(conflictBase,@"contact-fixture",href,[remoteETags objectForKey:href]);
+    c.resources=[NSArray arrayWithObjects:resource,created,nil];
+    full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]];
+    [full addEntriesFromDictionary:[created objectForKey:@"graph"]]; c.graph=full;
+    CHECK(RCTwoWayExchange(&c,&error));
+
+    NSString *conflictText=[[[NSString alloc] initWithData:conflictBase encoding:NSUTF8StringEncoding] autorelease];
+    conflictText=Replace(conflictText,@"END:VCARD",@"TITLE:remote job\r\nEND:VCARD");
+    NSData *conflictBody=[conflictText dataUsingEncoding:NSUTF8StringEncoding];
+    [remoteBodies setObject:conflictBody forKey:href];
+    [remoteETags setObject:@"\"supported-conflict\"" forKey:href];
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
+    resource=ContactResource(conflictBody,@"contact-fixture",href,[remoteETags objectForKey:href]);
+    c.resources=[NSArray arrayWithObjects:resource,created,nil];
+    full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]];
+    [full addEntriesFromDictionary:[created objectForKey:@"graph"]]; c.graph=full;
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='conflict'")==0);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_resolutions")==1);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
+    NSString *resolvedText=[[[NSString alloc] initWithData:[remoteBodies objectForKey:href] encoding:NSUTF8StringEncoding] autorelease];
+    CHECK([resolvedText rangeOfString:@"TITLE:remote job"].location!=NSNotFound);
+    CHECK([resolvedText rangeOfString:@"NOTE:new local edit"].location!=NSNotFound);
+    resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+    c.resources=[NSArray arrayWithObjects:resource,created,nil];
+    full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]];
+    [full addEntriesFromDictionary:[created objectForKey:@"graph"]]; c.graph=full;
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state IN ('queued','applied','conflict')")==0);
+    puts("PASS: Production contact conflict resolution preserves different-field edits and acknowledges its successor");
+    LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"new-fixture"],YES);
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='delete'")==1);
+    int beforeDelete=mutations; loseResponse=YES;
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==-1);
+    CHECK(![remoteBodies objectForKey:newHref]); CHECK(mutations==beforeDelete+1);
+    RCContactStoreClose(store); store=RCContactStoreOpen("TwoWay.sqlite","synthetic",&error); CHECK(store);
+    j=RCContactStoreWriteJournal(store); c.journal=j; c.context=store;
+    CHECK(RCTwoWaySQL(&j,&error,"UPDATE write_operations SET retry_at=0 WHERE state='uncertain'"));
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
+    CHECK(mutations==beforeDelete+1);
+    c.resources=[NSArray arrayWithObject:resource]; c.graph=[resource objectForKey:@"graph"];
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='delete' AND state='acknowledged'")==1);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
+    puts("PASS: Native contact DELETE survives a lost response and reopened journal without duplicate mutation");
+    /* A same-field conflict follows the system's canonical decision, without
+       assuming that Tiger displays a chooser or always prefers one side. */
+    ISyncRecordSnapshot *sameSnapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
+    NSMutableDictionary *sameCard=[NSMutableDictionary dictionaryWithDictionary:
+        [[sameSnapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"]];
+    [sameCard setObject:@"same-field local" forKey:@"notes"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:sameCard forKey:@"fixture"],NO);
+    CHECK(RCTwoWayExchange(&c,&error));
+    NSString *sameText=[[[NSString alloc] initWithData:[remoteBodies objectForKey:href] encoding:NSUTF8StringEncoding] autorelease];
+    sameText=Replace(sameText,@"NOTE:new local edit",@"NOTE:same-field remote");
+    [remoteBodies setObject:[sameText dataUsingEncoding:NSUTF8StringEncoding] forKey:href];
+    [remoteETags setObject:@"\"same-field\"" forKey:href];
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
+    resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+    c.resources=[NSArray arrayWithObject:resource]; c.graph=[resource objectForKey:@"graph"];
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='conflict'")==0);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
+    resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+    c.resources=[NSArray arrayWithObject:resource]; c.graph=[resource objectForKey:@"graph"];
+    CHECK(RCTwoWayExchange(&c,&error));
+    sameSnapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
+    NSDictionary *canonical=[[sameSnapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"];
+    CHECK([[[[resource objectForKey:@"graph"] objectForKey:@"contact-fixture"] objectForKey:@"notes"] isEqual:[canonical objectForKey:@"notes"]]);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state IN ('queued','conflict','applied')")==0);
+    puts("PASS: Same-field conflict uses and acknowledges the system's canonical value");
+    ContactRemoteDeleteConflict(&c,local,href);
+
     Cleanup(local); Cleanup(server); [manager unregisterClient:local]; [manager unregisterClient:server]; local=nil;server=nil;
     CalendarTests();
     status=0;

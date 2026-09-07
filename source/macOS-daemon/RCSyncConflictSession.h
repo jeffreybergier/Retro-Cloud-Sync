@@ -34,8 +34,9 @@ NSDictionary *RCSyncResolveConflictWithIntent(ISyncClient *client,
     NSDictionary *expectedLocal, RCError *error);
 
 /* Call only after remote verification and durable mirror completion. The exact
-   canonical decision is the receipt stored in the journal. NSNull may represent
-   a child deletion already applied as part of a verified parent-resource PUT. Returns NO without
+   canonical decision is the receipt stored in the journal. NSNull represents
+   a verified resource DELETE or a child removal in a verified parent PUT.
+   Returns NO without
    accepting anything if a target has since changed or disappeared, or the engine
    requires a full resync. Repeating after a successful acceptance is safe. */
 BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
@@ -43,4 +44,8 @@ BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
 /* On a changed receipt, return the post-mingling truth without accepting it.
    The two-way coordinator can durably queue a successor against the verified base. */
 BOOL RCSyncAcceptUpload(ISyncClient *, NSDictionary *, NSDictionary **, RCError *);
+/* Production fast-session reconciliation of one resource. Missing remote
+   records must be backed by an explicit writer GET 404 or mapped child removal.
+   Returns canonical truth without accepting any native changes. */
+NSDictionary *RCSyncResolveResourceConflict(ISyncClient *, NSDictionary *, NSArray *, RCError *);
 #endif

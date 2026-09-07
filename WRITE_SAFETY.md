@@ -3,7 +3,7 @@
 Contacts and Calendars now have an opt-in two-way coordinator that collects
 supported local creations/edits, journals exact native receipts, runs conditional
 PUTs outside framework sessions, and acknowledges verified writes. One-way and
-Disabled modes never run the writer. Remote resource deletion remains disabled.
+Disabled modes never run the writer. Whole-resource local deletions use conditional DELETE and verified tombstone acceptance.
 See [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md) for scope and deferred cases.
 The shared APIs provide durable state, conditional transport, recovery and value
 editing for the coordinator. Contacts requires schema 4;
@@ -117,8 +117,8 @@ can be replayed. Queued/conflicting operations can be explicitly cancelled;
 uncertain operations cannot be silently discarded. History is retained.
 Conflict recovery and an initial native acknowledgement adapter are described in
 [CONFLICT_RECOVERY.md](CONFLICT_RECOVERY.md). They use the system's canonical
-decisions and journal immutable successors. General two-way collection/mapping
-and history pruning remain future work.
+decisions and journal immutable successors. Production collection, supported reverse mapping, history pruning, and conflict
+resolution are described in TWO_WAY_SYNC.md.
 
 ## Tests
 
