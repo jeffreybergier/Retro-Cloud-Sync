@@ -102,7 +102,9 @@ int RCWriteJournalEnqueue(RCWriteJournal *j, const char *change, const char *key
       (create ? revision != 0 : revision <= 0)) {
     RCErrorSet(e, 1, "Outgoing operation has no valid body or base revision"); return 0;
   }
-  if (!outsideTransaction(j, e) || !exec(j->db, "BEGIN IMMEDIATE", e)) return 0;
+  /* A savepoint also permits the coordinator to atomically persist its exact
+     Sync Services receipt with the outgoing operation. */
+  if (!exec(j->db, "SAVEPOINT enqueue_write", e)) return 0;
   if (!prepare(j->db, "SELECT id,resource_key,href,kind,local_revision,desired_body "
       "FROM write_operations WHERE account_id=? AND change_id=?", &q, e)) goto done;
   sqlite3_bind_int64(q, 1, j->account); text(q, 2, change);
@@ -152,8 +154,11 @@ sqlError:
   fail(j->db, e);
 done:
   sqlite3_finalize(q);
-  if (ok) ok = exec(j->db, "COMMIT", e);
-  if (!ok) { exec(j->db, "ROLLBACK", NULL); *id = 0; }
+  if (ok) ok = exec(j->db, "RELEASE enqueue_write", e);
+  if (!ok) {
+    exec(j->db, "ROLLBACK TO enqueue_write; RELEASE enqueue_write", NULL);
+    *id = 0;
+  }
   return ok;
 }
 

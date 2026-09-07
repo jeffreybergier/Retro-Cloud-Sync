@@ -1,4 +1,5 @@
 #import "RCSyncConflictSession.h"
+#import "RCSyncRecordEquality.h"
 
 static BOOL UsableClient(ISyncClient *client, NSArray *entities, RCError *error)
 {
@@ -29,7 +30,7 @@ NSDictionary *RCSyncResolveConflictWithIntent(ISyncClient *client,
 {
   ISyncSession *session = nil;
   NSDictionary *result = nil;
-  NSArray *entities = [client enabledEntityNames];
+  NSArray *entities = RCSyncPullableEntities(client);
   NSEnumerator *it;
   NSString *key;
   RCErrorClear(error);
@@ -111,7 +112,7 @@ BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
     NSDictionary *receipt, RCError *error)
 {
   ISyncSession *session = nil;
-  NSArray *entities = [client enabledEntityNames];
+  NSArray *entities = RCSyncPullableEntities(client);
   NSEnumerator *it;
   NSString *entity;
   ISyncChange *change;
@@ -135,15 +136,24 @@ BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
     }
     NSDictionary *current = [[session snapshotOfRecordsInTruth]
         recordsWithIdentifiers:[receipt allKeys]];
-    if (![current isEqual:receipt]) {
+    NSMutableDictionary *live=[NSMutableDictionary dictionaryWithDictionary:receipt];
+    NSEnumerator *receiptIDs=[receipt keyEnumerator]; NSString *receiptID;
+    while ((receiptID=[receiptIDs nextObject])) if ([receipt objectForKey:receiptID]==[NSNull null]) {
+      if ([current objectForKey:receiptID]) {
+        RCErrorSet(error,1,"A deleted child has reappeared; its change was not acknowledged"); goto done;
+      }
+      [live removeObjectForKey:receiptID];
+    }
+    if (!RCNativeGraphsEqual(current,live)) {
       RCErrorSet(error,1,"A newer local change is pending; resolution was not acknowledged");
       goto done;
     }
     it = [session changeEnumeratorForEntityNames:entities];
     while ((change = [it nextObject])) {
-      NSDictionary *expected = [receipt objectForKey:[change recordIdentifier]];
+      id expected = [receipt objectForKey:[change recordIdentifier]];
       if (expected) {
-        if ([change type] == ISyncChangeTypeDelete || ![[change record] isEqual:expected]) {
+        if ((expected==[NSNull null] && [change type]!=ISyncChangeTypeDelete) ||
+            (expected!=[NSNull null] && ([change type]==ISyncChangeTypeDelete || !RCNativeRecordsEqual([change record],expected)))) {
           RCErrorSet(error,1,"Resolution changed during acceptance"); goto done;
         }
         [session clientAcceptedChangesForRecordWithIdentifier:[change recordIdentifier]

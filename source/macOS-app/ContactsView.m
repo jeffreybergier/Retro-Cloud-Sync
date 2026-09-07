@@ -161,7 +161,8 @@
         setTitle:@"1-way Sync: iCloud → Address Book"];
     [[contactsSyncMatrix_ cellAtRow:2 column:0]
         setTitle:@"2-way Sync: iCloud ↔ Address Book"];
-    [[contactsSyncMatrix_ cellAtRow:2 column:0] setEnabled:NO];
+    [[contactsSyncMatrix_ cellAtRow:2 column:0] setEnabled:YES];
+    [contactsSyncMatrix_ setToolTip:@"Two-way uploads supported edits and new contacts created after the first sync. Remote deletion is disabled. Unsupported changes remain pending; see Log."];
     [contactsSyncMatrix_ setTarget:self];
     [contactsSyncMatrix_ setAction:@selector(syncSettingsChanged:)];
     [self addSubview:contactsSyncMatrix_];
@@ -188,7 +189,8 @@
         setTitle:@"1-way Sync: iCloud → iCal"];
     [[calendarsSyncMatrix_ cellAtRow:2 column:0]
         setTitle:@"2-way Sync: iCloud ↔ iCal"];
-    [[calendarsSyncMatrix_ cellAtRow:2 column:0] setEnabled:NO];
+    [[calendarsSyncMatrix_ cellAtRow:2 column:0] setEnabled:YES];
+    [calendarsSyncMatrix_ setToolTip:@"Two-way uploads supported edits and new events in imported iCloud calendars. Remote deletion and recurrence structure edits are disabled. See Log for deferred changes."];
     [calendarsSyncMatrix_ setTarget:self];
     [calendarsSyncMatrix_ setAction:@selector(syncSettingsChanged:)];
     [self addSubview:calendarsSyncMatrix_];

@@ -1,16 +1,19 @@
 # Remote write foundations
 
-Contacts and Calendars still run one-way. The daemon records publication bases,
-but does not collect local edits, enqueue writes, or run the outgoing writer.
+Contacts and Calendars now have an opt-in two-way coordinator that collects
+supported local creations/edits, journals exact native receipts, runs conditional
+PUTs outside framework sessions, and acknowledges verified writes. One-way and
+Disabled modes never run the writer. Remote resource deletion remains disabled.
+See [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md) for scope and deferred cases.
 The shared APIs provide durable state, conditional transport, recovery and value
-editing for the future two-way coordinator. Contacts requires schema 4;
+editing for the coordinator. Contacts requires schema 4;
 Calendars schema 3 upgrades schema 2 in place. Earlier test schemas have no migration.
 
 Calendar history windows use `scope_excluded` separately from `remote_missing`:
 absence from a time-range query does not establish remote deletion. Publication
 bases exclude those resources. After successful publication, history cleanup
 can release their cached bodies while preserving identities and all unresolved
-outgoing operations. A future two-way coordinator must also keep scope changes
+outgoing operations. The two-way coordinator must also keep scope changes
 separate from user-requested deletions.
 
 ## Publication bases
@@ -32,7 +35,9 @@ resource, including its recurrence exceptions.
 `RCContactStoreWriteJournal()` and `RCCalendarStoreWriteJournal()` return borrowed
 account/connection handles. Use them from the owning account worker. The caller
 must serialize writers for an account and supply matching DAV credentials.
-Network work runs outside SQLite and Sync Services transactions.
+Network work runs outside SQLite and Sync Services transactions. Enqueue may
+join a caller transaction, using a savepoint so the operation and its native
+receipt can commit or roll back together.
 
 `RCWriteJournalEnqueue()` commits an immutable operation with a stable local
 change ID, resource key, href, create/update/delete kind, local revision, base
@@ -72,6 +77,9 @@ edited properties are retained; untouched physical lines are copied verbatim,
 including unknown extensions, photos, VTIMEZONE, other alarms and detached
 instances. Both input and output must parse. Missing/overlapping selectors fail.
 
+New properties can also specify validated parameters at append time; existing
+parameters are never replaced through this API.
+
 This is a value-editing primitive, not a complete reverse Sync Services mapper.
 Parameter/value-type changes (such as date-only to timed events), mapping native
 creations and identifying which fields changed still require that mapper.
@@ -101,7 +109,7 @@ response was lost and remote bytes differ, the writer conservatively records a
 conflict: normalization cannot be distinguished from a concurrent edit.
 
 `applied` means verified remote success was recorded, not local acknowledgement.
-The future coordinator must commit the confirmed result to its mirror and accept
+The coordinator must commit the confirmed result to its mirror and accept
 the corresponding Sync Services change before calling
 `RCWriteJournalAcknowledge()`. This call can join the mirror transaction and only
 accepts applied operations. Applied records survive crashes so local completion

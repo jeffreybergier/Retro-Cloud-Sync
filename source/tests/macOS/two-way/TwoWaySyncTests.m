@@ -1,0 +1,551 @@
+#import <Foundation/Foundation.h>
+#import <SyncServices/SyncServices.h>
+#import "../../../macOS-daemon/RCTwoWayNative.h"
+#import "../../../macOS-daemon/RCSyncConflictSession.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static RCError error;
+static NSMutableDictionary *remoteBodies, *remoteETags;
+static int mutations=0;
+static BOOL loseResponse=NO;
+static NSString *marker;
+#define CHECK(x) do { RCErrorClear(&error); if (!(x)) [NSException raise:@"TestFailure" format:@"%s: %s",#x,error.message]; } while(0)
+
+/* Deliberately replaces the HTTP transport at link time. This executable has
+   no live server path and never obtains credentials. */
+void RCHTTPResponseInit(RCHTTPResponse *r) { memset(r,0,sizeof(*r)); }
+void RCHTTPResponseClear(RCHTTPResponse *r)
+{
+  free(r->effectiveURL); free(r->location); free(r->etag); free(r->contentType); free(r->body); memset(r,0,sizeof(*r));
+}
+static int Response(const char *url,RCHTTPResponse *r)
+{
+  if (strncmp(url,"https://fixture.invalid/",24)) return 0;
+  RCHTTPResponseClear(r); r->effectiveURL=strdup(url);
+  NSString *href=[NSString stringWithUTF8String:url]; NSData *body=[remoteBodies objectForKey:href];
+  r->statusCode=body ? 200 : 404;
+  if (body) {
+    r->etag=strdup([[remoteETags objectForKey:href] UTF8String]); r->bodyLength=[body length];
+    r->body=malloc(r->bodyLength+1); memcpy(r->body,[body bytes],r->bodyLength); r->body[r->bodyLength]=0;
+  }
+  return 1;
+}
+int RCHTTPClientRequest(RCHTTPClient *c,const char *method,const char *url,const char *depth,
+    const char *type,const void *body,size_t length,RCHTTPResponse *r,RCError *e)
+{
+  (void)c;(void)depth;(void)type;(void)body;(void)length;
+  if (strcmp(method,"GET") || !Response(url,r)) { RCErrorSet(e,1,"Non-fixture request rejected"); return 0; }
+  return 1;
+}
+int RCHTTPClientConditionalRequest(RCHTTPClient *c,const char *method,const char *url,const char *type,
+    const void *body,size_t length,const char *etag,int create,RCHTTPResponse *r,RCError *e)
+{
+  (void)c;(void)type;
+  if (strcmp(method,"PUT") || !Response(url,r)) { RCErrorSet(e,1,"Non-fixture mutation rejected"); return 0; }
+  NSString *href=[NSString stringWithUTF8String:url];
+  BOOL exists=[remoteBodies objectForKey:href]!=nil;
+  if ((create && exists) || (!create && (!etag || !exists || ![[remoteETags objectForKey:href] isEqual:[NSString stringWithUTF8String:etag]]))) {
+    r->statusCode=412; return 1;
+  }
+  mutations++;
+  [remoteBodies setObject:[NSData dataWithBytes:body length:length] forKey:href];
+  [remoteETags setObject:[NSString stringWithFormat:@"\"write-%d\"",mutations] forKey:href];
+  Response(url,r); r->statusCode=create ? 201 : 204;
+  if (loseResponse) { loseResponse=NO; RCErrorSet(e,1,"Synthetic response lost after PUT"); return 0; }
+  return 1;
+}
+static NSDictionary *ContactPaths(NSData *body,NSString *root)
+{
+  RCVCardDocument doc; CHECK(RCVCardParse([body bytes],[body length],&doc,&error));
+  NSMutableDictionary *paths=[NSMutableDictionary dictionaryWithObject:root forKey:@"root"], *counts=[NSMutableDictionary dictionary];
+  size_t p;
+  for(p=0;p<doc.propertyCount;p++) {
+    NSString *name=[[NSString stringWithUTF8String:doc.properties[p].name] uppercaseString];
+    if ([name isEqual:@"TEL"] || [name isEqual:@"EMAIL"] || [name isEqual:@"ADR"] || [name isEqual:@"URL"]) {
+      int n=[[counts objectForKey:name] intValue]; [counts setObject:[NSNumber numberWithInt:n+1] forKey:name];
+      [paths setObject:[NSString stringWithFormat:@"%@-%@-%d",root,name,n] forKey:[NSString stringWithFormat:@"%@:%d",name,n]];
+    }
+  }
+  RCVCardDocumentClear(&doc); return paths;
+}
+static NSDictionary *ContactGraph(NSData *body,NSString *root)
+{
+  NSDictionary *mapped=RCContactNativeGraphForPaths(body,ContactPaths(body,root),&error); CHECK(mapped);
+  return RCTwoWayRemap(mapped,[NSDictionary dictionaryWithObject:root forKey:@"contact-validation"]);
+}
+static NSDictionary *ContactResource(NSData *body,NSString *root,NSString *href,NSString *etag)
+{
+  return [NSDictionary dictionaryWithObjectsAndKeys:root,@"key",root,@"root",href,@"href",etag,@"etag",body,@"body",
+      ContactGraph(body,root),@"graph",ContactPaths(body,root),@"paths",[NSNumber numberWithInt:1],@"revision",nil];
+}
+static void LocalSession(ISyncClient *client,NSDictionary *push,BOOL remove)
+{
+  ISyncSession *s=[ISyncSession beginSessionWithClient:client entityNames:[client enabledEntityNames]
+      beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
+  CHECK(s);
+  NSEnumerator *it=[push keyEnumerator]; NSString *id;
+  while ((id=[it nextObject])) {
+    if (remove) [s deleteRecordWithIdentifier:id];
+    else [s pushChangesFromRecord:[push objectForKey:id] withIdentifier:id];
+  }
+  CHECK([s prepareToPullChangesForEntityNames:RCSyncPullableEntities(client) beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]);
+  it=[s changeEnumeratorForEntityNames:RCSyncPullableEntities(client)]; ISyncChange *change;
+  while ((change=[it nextObject])) {
+    NSString *first=[[change record] objectForKey:@"first name"];
+    NSString *summary=[[change record] objectForKey:@"summary"], *title=[[change record] objectForKey:@"title"];
+    if ([first hasPrefix:marker] || [summary hasPrefix:marker] || [title hasPrefix:marker]) {
+      NSString *native=[first hasPrefix:marker] ? ([first isEqual:marker] ? @"fixture" : @"new-fixture") :
+          [title hasPrefix:marker] ? @"calendar" : [summary hasPrefix:[marker stringByAppendingString:@"-new"]] ? @"new-event" : @"event";
+      [s clientAcceptedChangesForRecordWithIdentifier:[change recordIdentifier] formattedRecord:nil newRecordIdentifier:native];
+    }
+  }
+  [s clientCommittedAcceptedChanges]; [s cancelSyncing];
+}
+static ISyncClient *LegacyClient(NSString *identifier, NSString *description, NSDictionary *graph)
+{
+  NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description];
+  [desc setObject:[[desc objectForKey:@"Entities"] allKeys] forKey:@"PushOnlyEntities"];
+  NSString *path=[description stringByAppendingString:@".legacy.plist"];
+  CHECK([desc writeToFile:path atomically:YES]);
+  ISyncClient *client=[[ISyncManager sharedManager] registerClientWithIdentifier:identifier descriptionFilePath:path]; CHECK(client);
+  [client setEnabled:YES forEntityNames:[[desc objectForKey:@"Entities"] allKeys]];
+  ISyncSession *session=[ISyncSession beginSessionWithClient:client entityNames:[client enabledEntityNames] beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]; CHECK(session);
+  NSEnumerator *it=[graph keyEnumerator]; NSString *key;
+  while ((key=[it nextObject])) [session pushChangesFromRecord:[graph objectForKey:key] withIdentifier:key];
+  CHECK([session prepareToPullChangesForEntityNames:[NSArray array] beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]);
+  [session finishSyncing];
+  return client;
+}
+static long long Scalar(RCWriteJournal *j,const char *sql)
+{
+  sqlite3_stmt *q=NULL; long long result=-1;
+  CHECK(sqlite3_prepare_v2(j->db,sql,-1,&q,NULL)==SQLITE_OK);
+  if (sqlite3_step(q)==SQLITE_ROW) result=sqlite3_column_int64(q,0);
+  sqlite3_finalize(q); return result;
+}
+/* Two-way contacts now includes pre-existing native contacts. Limit this
+   synthetic account's encoder to fixtures so unrelated desktop contacts do
+   not enter its fake server or affect its operation counts. */
+static NSMutableDictionary *EncodeFixtureContact(void *store,NSDictionary *resource,
+    NSDictionary *truth,NSString *root,RCError *e)
+{
+  if (![[[truth objectForKey:root] objectForKey:@"first name"] hasPrefix:marker]) return nil;
+  return RCContactEncodeLocal(store,resource,truth,root,e);
+}
+static void Cleanup(ISyncClient *client)
+{
+  if (!client) return;
+  ISyncSession *s=[ISyncSession beginSessionWithClient:client entityNames:[client enabledEntityNames]
+      beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
+  CHECK(s);
+  NSEnumerator *entities=[[client enabledEntityNames] objectEnumerator]; NSString *entity;
+  while ((entity=[entities nextObject])) {
+    NSDictionary *snapshot=[[s snapshotOfRecordsInTruth] recordsWithMatchingAttributes:
+        [NSDictionary dictionaryWithObject:entity forKey:ISyncRecordEntityNameKey]];
+    NSEnumerator *it=[snapshot keyEnumerator]; NSString *id;
+    while ((id=[it nextObject])) {
+      NSDictionary *record=[snapshot objectForKey:id];
+      if ([[record objectForKey:@"first name"] hasPrefix:marker] || [[record objectForKey:@"summary"] hasPrefix:marker] ||
+          [[record objectForKey:@"title"] hasPrefix:marker]) [s deleteRecordWithIdentifier:id];
+    }
+  }
+  CHECK([s prepareToPullChangesForEntityNames:RCSyncPullableEntities(client) beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]);
+  [s cancelSyncing];
+}
+static void ContactCreationPolicyTests(BOOL upgrading)
+{
+  ISyncManager *manager=[ISyncManager sharedManager];
+  ISyncClient *local=nil,*server=nil; RCContactStore *store=NULL;
+  @try {
+    NSString *description=[[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:@"SyncClient.plist"];
+    NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description]; CHECK(desc);
+    [desc setObject:@"Retro Cloud Two Way Tests" forKey:@"DisplayName"];
+    [desc removeObjectForKey:@"PushOnlyEntities"]; CHECK([desc writeToFile:description atomically:YES]);
+    local=[manager registerClientWithIdentifier:@"com.retrocloudsync.tw.test.local" descriptionFilePath:description]; CHECK(local);
+    [local setEnabled:YES forEntityNames:[[desc objectForKey:@"Entities"] allKeys]];
+    store=RCContactStoreOpen(upgrading ? "UpgradeContacts.sqlite" : "InitialContacts.sqlite","synthetic",&error); CHECK(store);
+    long long run,collection;
+    CHECK(RCContactStoreBeginRun(store,&run,&error));
+    CHECK(RCContactStoreGetCollection(store,"https://fixture.invalid/book/","Fixture",&collection,&error));
+    CHECK(RCContactStoreFinishCollection(store,collection,run,&error));
+    CHECK(RCContactStoreFinishRun(store,run,1,NULL,&error));
+    RCWriteJournal j=RCContactStoreWriteJournal(store);
+    NSDictionary *card=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Contact",ISyncRecordEntityNameKey,
+        [marker stringByAppendingString:@"-new"],@"first name",@"Tiger",@"last name",@"person",@"display as company",nil];
+    LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"new-fixture"],NO);
+    RCTwoWayContext c={j,@"com.retrocloudsync.tw.test.server",description,@"com.apple.contacts.Contact",
+        [NSArray array],[NSDictionary dictionary],EncodeFixtureContact,store,NO,RCContactProjectVerified};
+    server=LegacyClient(c.clientIdentifier,description,c.graph);
+    CHECK(RCTwoWayInitialize(&j,&error));
+    if (upgrading) {
+      ISyncRecordSnapshot *snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:server];
+      NSDictionary *records=[snapshot recordsWithMatchingAttributes:[NSDictionary dictionaryWithObject:[card objectForKey:@"first name"] forKey:@"first name"]];
+      CHECK([records count]==1);
+      CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO two_way_accounts VALUES(%lld); INSERT INTO two_way_excluded VALUES(%lld,%Q)",
+          j.account,j.account,[[[records allKeys] objectAtIndex:0] UTF8String]));
+    }
+    /* Migration is scoped to the active account, not every saved account. */
+    CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO two_way_excluded VALUES(%lld,'other-account')",j.account+1));
+    remoteBodies=[NSMutableDictionary dictionary]; remoteETags=[NSMutableDictionary dictionary]; mutations=0;
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
+    CHECK(Scalar(&j,"SELECT count(*) FROM two_way_excluded")==1);
+    CHECK(Scalar(&j,"SELECT count(*) FROM two_way_excluded WHERE record_id='other-account'")==1);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==1);
+    CHECK([remoteBodies count]==1);
+    NSString *href=[[remoteBodies allKeys] objectAtIndex:0];
+    NSData *verifiedBody=[remoteBodies objectForKey:href];
+    if (upgrading) {
+      NSMutableString *latest=[NSMutableString stringWithString:[[[NSString alloc] initWithData:verifiedBody encoding:NSUTF8StringEncoding] autorelease]];
+      [latest replaceOccurrencesOfString:@"END:VCARD" withString:@"NOTE:Note added on Pinkinium\r\nEND:VCARD" options:0 range:NSMakeRange(0,[latest length])];
+      [remoteBodies setObject:[latest dataUsingEncoding:NSUTF8StringEncoding] forKey:href];
+      [remoteETags setObject:@"\"newer-note\"" forKey:href];
+    }
+    NSDictionary *created=ContactResource([remoteBodies objectForKey:href],@"contact-created",href,[remoteETags objectForKey:href]);
+    if (upgrading) {
+      NSMutableString *different=[NSMutableString stringWithString:[[[NSString alloc] initWithData:[remoteBodies objectForKey:href] encoding:NSUTF8StringEncoding] autorelease]];
+      [different replaceOccurrencesOfString:@"UID:" withString:@"UID:recreated-" options:0 range:NSMakeRange(0,[different length])];
+      NSDictionary *recreated=ContactResource([different dataUsingEncoding:NSUTF8StringEncoding],@"contact-created",href,@"\"recreated\"");
+      c.resources=[NSArray arrayWithObject:recreated]; c.graph=[recreated objectForKey:@"graph"];
+      CHECK(RCTwoWayExchange(&c,&error)); CHECK(!c.didPublish);
+      CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='applied'")==1);
+    }
+
+    c.resources=[NSArray arrayWithObject:created]; c.graph=[created objectForKey:@"graph"];
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==1);
+    if (upgrading) {
+      ISyncRecordSnapshot *snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
+      NSDictionary *native=[[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"new-fixture"]] objectForKey:@"new-fixture"];
+      CHECK([[native objectForKey:@"notes"] isEqual:@"Note added on Pinkinium"]);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_attention WHERE reason='verified-write-awaits-matching-mirror'")==0);
+      puts("PASS: Newer remote contact note publishes on the original identity after verified creation; changed UID defers");
+    }
+
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations")==1); CHECK(mutations==1);
+    puts(upgrading ? "PASS: Previously excluded contact uploads after upgrade without duplicate PUTs; other account exclusions retained" :
+        "PASS: Contact created before first two-way sync uploads and acknowledges without duplicate PUTs");
+  } @finally {
+    Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
+    RCContactStoreClose(store);
+  }
+}
+static void MapperTests(void)
+{
+  CHECK(RCTwoWayRecordsEqual([NSDictionary dictionary], [NSDictionary dictionaryWithObject:[NSArray array] forKey:@"phone numbers"]));
+  CHECK(!RCTwoWayRecordsEqual([NSDictionary dictionaryWithObject:[NSArray arrayWithObjects:@"monday",@"friday",nil] forKey:@"bydaydays"],
+      [NSDictionary dictionaryWithObject:[NSArray arrayWithObjects:@"friday",@"monday",nil] forKey:@"bydaydays"]));
+  RCContactStore *contacts=RCContactStoreOpen("MapperContacts.sqlite","synthetic",&error); CHECK(contacts);
+  long long run,collection;
+  CHECK(RCContactStoreBeginRun(contacts,&run,&error));
+  CHECK(RCContactStoreGetCollection(contacts,"https://fixture.invalid/book/","Fixture",&collection,&error));
+  CHECK(RCContactStoreFinishCollection(contacts,collection,run,&error));
+  CHECK(RCContactStoreFinishRun(contacts,run,1,NULL,&error));
+  NSString *raw=@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fixture\r\nN:Fixture;Original;;;\r\nFN:Original Fixture\r\nNOTE:old\r\nPHOTO;ENCODING=b:YWJj\r\nX-APPLE-PRIVATE;X-PARAM=keep:preserve\r\nEND:VCARD\r\n";
+  NSDictionary *r=ContactResource([raw dataUsingEncoding:NSUTF8StringEncoding],@"fixture",@"https://fixture.invalid/book/fixture.vcf",@"\"base\"");
+  NSMutableDictionary *truth=[NSMutableDictionary dictionaryWithDictionary:[r objectForKey:@"graph"]];
+  NSMutableDictionary *card=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"fixture"]];
+  [card setObject:@"new; note\nUnicode café" forKey:@"notes"]; [truth setObject:card forKey:@"fixture"];
+  NSDictionary *desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); CHECK(desired);
+  NSString *result=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([result rangeOfString:@"PHOTO;ENCODING=b:YWJj\r\n"].location!=NSNotFound);
+  CHECK([result rangeOfString:@"X-APPLE-PRIVATE;X-PARAM=keep:preserve\r\n"].location!=NSNotFound);
+  CHECK(RCContactEncodeLocal(contacts,nil,truth,@"fixture",&error));
+  NSDictionary *newer=ContactResource([desired objectForKey:@"body"],@"fixture",@"https://fixture.invalid/book/fixture.vcf",@"\"newer\"");
+  CHECK(RCContactProjectVerified(contacts,newer,[raw dataUsingEncoding:NSUTF8StringEncoding],&error));
+  NSMutableString *withPhone=[NSMutableString stringWithString:raw];
+  [withPhone replaceOccurrencesOfString:@"END:VCARD" withString:@"TEL;TYPE=HOME:555-1234\r\nEND:VCARD" options:0 range:NSMakeRange(0,[withPhone length])];
+  newer=ContactResource([withPhone dataUsingEncoding:NSUTF8StringEncoding],@"fixture",@"https://fixture.invalid/book/fixture.vcf",@"\"newer\"");
+  CHECK(!RCContactProjectVerified(contacts,newer,[raw dataUsingEncoding:NSUTF8StringEncoding],&error));
+
+  [card setObject:[NSArray arrayWithObject:@"unknown"] forKey:@"email addresses"];
+  CHECK(!RCContactEncodeLocal(contacts,r,truth,@"fixture",&error));
+  NSData *structured=[@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:structured\r\nN:Fixture,Alternate;Original;;;\r\nFN:Original Fixture\r\nORG:Company;Department;Hidden\r\nADR;TYPE=HOME:Box 1;Unit 2;Street;Old City;State;12345;Country\r\nEND:VCARD\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+  r=ContactResource(structured,@"fixture",@"https://fixture.invalid/book/structured.vcf",@"\"base\"");
+  truth=[NSMutableDictionary dictionaryWithDictionary:[r objectForKey:@"graph"]];
+  card=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"fixture"]]; [card setObject:@"Renamed" forKey:@"first name"]; [card setObject:@"New Company" forKey:@"company name"]; [truth setObject:card forKey:@"fixture"];
+  NSMutableDictionary *address=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"fixture-ADR-0"]]; [address setObject:@"New City" forKey:@"city"]; [truth setObject:address forKey:@"fixture-ADR-0"];
+  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); CHECK(desired);
+  result=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([result rangeOfString:@"N:Fixture,Alternate;Renamed;;;"].location!=NSNotFound);
+  CHECK([result rangeOfString:@"ORG:New Company;Department;Hidden"].location!=NSNotFound);
+  CHECK([result rangeOfString:@"ADR;TYPE=HOME:Box 1;Unit 2;Street;New City;State;12345;Country"].location!=NSNotFound);
+  RCContactStoreClose(contacts);
+
+  RCCalendarStore *cal=RCCalendarStoreOpen("MapperCalendar.sqlite","synthetic",&error); CHECK(cal);
+  RCWriteJournal j=RCCalendarStoreWriteJournal(cal);
+  CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO calendars(account_id,url,sync_id,display_name) VALUES(%lld,'https://fixture.invalid/calendar/','fixture','Fixture')",j.account));
+  NSData *ics=[@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:fixture\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:Original\r\nX-APPLE-PRIVATE:preserve\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *mapped=RCCalendarNativeGraph(cal,1,@"calendar-fixture",ics,&error); CHECK(mapped);
+  NSString *id=[[mapped allKeys] objectAtIndex:0];
+  NSDictionary *paths=[NSDictionary dictionaryWithObject:id forKey:@"event:"];
+  r=[NSDictionary dictionaryWithObjectsAndKeys:ics,@"body",mapped,@"graph",paths,@"paths",id,@"root",@"resource-1",@"key",@"https://fixture.invalid/calendar/fixture.ics",@"href",nil];
+  truth=[NSMutableDictionary dictionaryWithDictionary:mapped];
+  NSMutableDictionary *event=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:id]];
+  [event setObject:@"Edited" forKey:@"summary"]; [truth setObject:event forKey:id];
+  CHECK(RCCalendarEncodeLocal(cal,r,truth,id,&error));
+  CHECK(RCCalendarEncodeLocal(cal,nil,truth,id,&error));
+  [event removeObjectForKey:@"all day"]; [event removeObjectForKey:@"status"]; [event removeObjectForKey:@"classification"];
+  [event setObject:@"synthetic-ical-uid" forKey:@"com.apple.ical.uid"];
+  [event setObject:[NSNumber numberWithInt:2] forKey:@"com.apple.ical.sequence"];
+  [event setObject:[NSNumber numberWithInt:2] forKey:@"invitationSequence"];
+  [event setObject:[NSDate dateWithTimeIntervalSince1970:1234567] forKey:@"invitationTimestamp"];
+  CHECK(RCCalendarEncodeLocal(cal,nil,truth,id,&error));
+  [event setObject:@"unsupported" forKey:@"unknown-editable-property"];
+  CHECK(!RCCalendarEncodeLocal(cal,nil,truth,id,&error));
+  [event removeObjectForKey:@"unknown-editable-property"];
+  [event setObject:[NSNumber numberWithBool:YES] forKey:@"all day"];
+  CHECK(!RCCalendarEncodeLocal(cal,r,truth,id,&error));
+  RCCalendarStoreClose(cal);
+  puts("PASS: Production contact/calendar reverse mappers preserve private fields and reject unsupported changes");
+}
+static NSDictionary *CalendarResource(RCCalendarStore *store, long long identifier, NSData *body, NSString *href, NSString *etag)
+{
+  NSDictionary *mapped=RCCalendarNativeGraph(store,identifier,@"calendar-fixture",body,&error); CHECK(mapped);
+  NSString *root=nil; NSEnumerator *it=[mapped keyEnumerator]; NSString *id;
+  while ((id=[it nextObject])) if ([[[mapped objectForKey:id] objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.Event"]) root=id;
+  CHECK(root);
+  return [NSDictionary dictionaryWithObjectsAndKeys:[NSString stringWithFormat:@"resource-%lld",identifier],@"key",root,@"root",href,@"href",etag,@"etag",body,@"body",
+      mapped,@"graph",[NSDictionary dictionaryWithObject:root forKey:@"event:"],@"paths",[NSNumber numberWithInt:1],@"revision",nil];
+}
+static NSDictionary *CalendarGraph(NSArray *resources)
+{
+  NSMutableDictionary *graph=[NSMutableDictionary dictionary]; NSMutableArray *events=[NSMutableArray array];
+  NSEnumerator *it=[resources objectEnumerator]; NSDictionary *resource;
+  while ((resource=[it nextObject])) { [graph addEntriesFromDictionary:[resource objectForKey:@"graph"]]; [events addObject:[resource objectForKey:@"root"]]; }
+  [graph setObject:[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",ISyncRecordEntityNameKey,marker,@"title",
+      [NSNumber numberWithBool:NO],@"read only",events,@"events",[NSArray array],@"tasks",nil] forKey:@"calendar-fixture"];
+  return graph;
+}
+static void CalendarTests(void)
+{
+  ISyncManager *manager=[ISyncManager sharedManager]; ISyncClient *local=nil,*server=nil;
+  RCCalendarStore *store=NULL;
+  NSArray *entities=[NSArray arrayWithObjects:@"com.apple.calendars.Calendar",@"com.apple.calendars.Event",nil];
+  NSMutableDictionary *baseline=[NSMutableDictionary dictionary];
+  ISyncRecordSnapshot *snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:entities usingIdentifiersForClient:nil];
+  NSEnumerator *it=[entities objectEnumerator]; NSString *entity;
+  while ((entity=[it nextObject])) [baseline addEntriesFromDictionary:[snapshot recordsWithMatchingAttributes:[NSDictionary dictionaryWithObject:entity forKey:ISyncRecordEntityNameKey]]];
+  CHECK([NSKeyedArchiver archiveRootObject:baseline toFile:@"Calendar-baseline.archive"]);
+  @try {
+    NSString *description=[[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:@"CalendarSyncClient.plist"];
+    NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description]; CHECK(desc);
+    [desc setObject:@"Retro Cloud Two Way Tests" forKey:@"DisplayName"]; [desc removeObjectForKey:@"PushOnlyEntities"]; CHECK([desc writeToFile:description atomically:YES]);
+    CHECK(![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.local"] && ![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.server"]);
+    local=[manager registerClientWithIdentifier:@"com.retrocloudsync.tw.test.cal.local" descriptionFilePath:description]; CHECK(local);
+    [local setEnabled:YES forEntityNames:[[desc objectForKey:@"Entities"] allKeys]];
+    store=RCCalendarStoreOpen("TwoWayCalendar.sqlite","synthetic",&error); CHECK(store);
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+    CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO calendars(account_id,url,sync_id,display_name) VALUES(%lld,'https://fixture.invalid/calendar/','fixture','Fixture')",j.account));
+    NSString *href=@"https://fixture.invalid/calendar/fixture.ics";
+    NSData *body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:fixture\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:%@\r\nX-PRIVATE:keep\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",marker] dataUsingEncoding:NSUTF8StringEncoding];
+    remoteBodies=[NSMutableDictionary dictionaryWithObject:body forKey:href]; remoteETags=[NSMutableDictionary dictionaryWithObject:@"\"base\"" forKey:href]; mutations=0;
+    NSDictionary *resource=CalendarResource(store,1,body,href,@"\"base\"");
+    NSArray *resources=[NSArray arrayWithObject:resource];
+    RCTwoWayContext c={j,@"com.retrocloudsync.tw.test.cal.server",description,@"com.apple.calendars.Event",resources,CalendarGraph(resources),RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified};
+    server=LegacyClient(c.clientIdentifier,description,c.graph);
+    CHECK(![server canPullChangesForEntityName:c.rootEntity]);
+    LocalSession(local,nil,NO);
+    NSMutableDictionary *event=[NSMutableDictionary dictionaryWithDictionary:[[resource objectForKey:@"graph"] objectForKey:[resource objectForKey:@"root"]]];
+    [event setObject:[NSArray arrayWithObject:@"calendar"] forKey:@"calendar"];
+    [event setObject:[marker stringByAppendingString:@"-new"] forKey:@"summary"];
+    [event removeObjectForKey:@"all day"]; [event removeObjectForKey:@"status"]; [event removeObjectForKey:@"classification"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:event forKey:@"new-event"],NO);
+    fprintf(stderr,"Stage: migration with an event created before initial two-way sync\n");
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK([server canPullChangesForEntityName:c.rootEntity]);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==1); CHECK(mutations==1);
+    NSString *newHref=nil; it=[remoteBodies keyEnumerator]; NSString *key;
+    while ((key=[it nextObject])) if (![key isEqual:href]) newHref=key;
+    CHECK(newHref);
+    /* Another device edits the new event before the first mirror download.
+       The uploaded revision is durable in the journal but is no longer current. */
+    NSString *originalTitle=[marker stringByAppendingString:@"-new"];
+    NSString *remoteTitle=[originalTitle stringByAppendingString:@" (remote edit)"];
+    NSMutableString *newBody=[NSMutableString stringWithString:[[[NSString alloc] initWithData:[remoteBodies objectForKey:newHref] encoding:NSUTF8StringEncoding] autorelease]];
+    [newBody replaceOccurrencesOfString:originalTitle withString:remoteTitle options:0 range:NSMakeRange(0,[newBody length])];
+    [remoteBodies setObject:[newBody dataUsingEncoding:NSUTF8StringEncoding] forKey:newHref];
+    [remoteETags setObject:@"\"newer-remote-revision\"" forKey:newHref];
+    NSDictionary *created=CalendarResource(store,2,[remoteBodies objectForKey:newHref],newHref,[remoteETags objectForKey:newHref]);
+    NSMutableString *replaced=[NSMutableString stringWithString:newBody];
+    [replaced replaceOccurrencesOfString:@"UID:" withString:@"UID:different-object-" options:0 range:NSMakeRange(0,[replaced length])];
+    NSDictionary *different=CalendarResource(store,2,[replaced dataUsingEncoding:NSUTF8StringEncoding],newHref,@"\"different-object\"");
+    c.resources=[NSArray arrayWithObjects:resource,different,nil]; c.graph=CalendarGraph(c.resources);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(!c.didPublish);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='applied'")==1);
+    c.resources=[NSArray arrayWithObjects:resource,created,nil]; c.graph=CalendarGraph(c.resources);
+    [event setObject:[originalTitle stringByAppendingString:@" pending local"] forKey:@"summary"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:event forKey:@"new-event"],NO);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(!c.didPublish);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='applied'")==1); CHECK(mutations==1);
+    [event setObject:originalTitle forKey:@"summary"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:event forKey:@"new-event"],NO);
+    fprintf(stderr,"Stage: acknowledge verified creation and publish newer remote title\n");
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(c.didPublish);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==1);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations")==1); CHECK(mutations==1);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==0);
+    ISyncRecordSnapshot *updated=[manager snapshotOfRecordsInTruthWithEntityNames:entities usingIdentifiersForClient:local];
+    NSDictionary *updatedEvent=[[updated recordsWithIdentifiers:[NSArray arrayWithObject:@"new-event"]] objectForKey:@"new-event"];
+    CHECK([[updatedEvent objectForKey:@"summary"] isEqual:remoteTitle]);
+    NSDictionary *fixtureEvents=[updated recordsWithMatchingAttributes:[NSDictionary dictionaryWithObject:@"com.apple.calendars.Event" forKey:ISyncRecordEntityNameKey]];
+    NSEnumerator *fixtureIt=[fixtureEvents objectEnumerator]; NSDictionary *fixture; int fixtureCount=0;
+    while ((fixture=[fixtureIt nextObject])) if ([[fixture objectForKey:@"summary"] hasPrefix:marker]) fixtureCount++;
+    CHECK(fixtureCount==2);
+    puts("PASS: Newer remote revision publishes on the original native identity without another PUT; changed UID and newer local intent defer safely");
+    [event setObject:[marker stringByAppendingString:@" edited"] forKey:@"summary"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:event forKey:@"event"],NO);
+    fprintf(stderr,"Stage: calendar edit after migration\n"); CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='queued'")==1);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==1); CHECK(mutations==2);
+    resource=CalendarResource(store,1,[remoteBodies objectForKey:href],href,[remoteETags objectForKey:href]);
+    c.resources=[NSArray arrayWithObjects:resource,created,nil]; c.graph=CalendarGraph(c.resources);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==2);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/calendar",&error)==0);
+    puts("PASS: Push-only calendar registration migrated in place; pre-initialization creation and existing identities preserved");
+    puts("PASS: Native calendar edits and creations use conditional PUT, stable identities and exact acknowledgement");
+  } @finally {
+    Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
+    RCCalendarStoreClose(store);
+  }
+  snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:entities usingIdentifiersForClient:nil];
+  NSDictionary *after=[snapshot recordsWithIdentifiers:[baseline allKeys]];
+  CHECK(RCTwoWayGraphsEqual(baseline,after));
+  puts("PASS: Pre-existing calendar/event records unchanged");
+}
+int main(int argc,char **argv)
+{
+  NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
+  ISyncManager *manager=[ISyncManager sharedManager];
+  ISyncClient *local=nil,*server=nil; RCContactStore *store=NULL; int status=1;
+  @try {
+    if (argc==2 && !strcmp(argv[1],"--mappers")) { MapperTests(); status=0; goto done; }
+    if (argc==2 && !strcmp(argv[1],"--contact-publication")) {
+      marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
+      CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+      ContactCreationPolicyTests(YES); status=0; goto done;
+    }
+    if (argc==2 && !strcmp(argv[1],"--calendars")) {
+      marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
+      CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+      CalendarTests(); status=0; goto done;
+    }
+    marker=[NSString stringWithContentsOfFile:@"fixture-marker.txt" encoding:NSUTF8StringEncoding error:NULL];
+    if (argc==2 && !strcmp(argv[1],"--cleanup")) {
+      CHECK([marker hasPrefix:@"RetroCloudTwoWay-"]);
+      local=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.local"];
+      server=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.server"];
+      Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
+      local=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.local"]; server=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.server"];
+      Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server]; status=0; goto done;
+    }
+    CHECK(argc==1);
+    CHECK(![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.local"] && ![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.server"]);
+    marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
+    CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+    ContactCreationPolicyTests(NO); ContactCreationPolicyTests(YES); mutations=0;
+    NSString *description=[[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:@"SyncClient.plist"];
+    NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description]; CHECK(desc);
+    [desc setObject:@"Retro Cloud Two Way Tests" forKey:@"DisplayName"]; [desc removeObjectForKey:@"PushOnlyEntities"];
+    CHECK([desc writeToFile:description atomically:YES]);
+    local=[manager registerClientWithIdentifier:@"com.retrocloudsync.tw.test.local" descriptionFilePath:description]; CHECK(local);
+    [local setEnabled:YES forEntityNames:[[desc objectForKey:@"Entities"] allKeys]];
+    store=RCContactStoreOpen("TwoWay.sqlite","synthetic",&error); CHECK(store);
+    long long run,collection;
+    CHECK(RCContactStoreBeginRun(store,&run,&error)); CHECK(RCContactStoreGetCollection(store,"https://fixture.invalid/book/","Fixture",&collection,&error));
+    CHECK(RCContactStoreFinishCollection(store,collection,run,&error)); CHECK(RCContactStoreFinishRun(store,run,1,NULL,&error));
+    NSString *raw=[NSString stringWithFormat:@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fixture\r\nN:Fixture;%@;;;\r\nFN:%@ Fixture\r\nNOTE:base\r\nX-PRIVATE:keep\r\nEND:VCARD\r\n",marker,marker];
+    NSString *href=@"https://fixture.invalid/book/fixture.vcf";
+    NSData *body=[raw dataUsingEncoding:NSUTF8StringEncoding];
+    remoteBodies=[NSMutableDictionary dictionaryWithObject:body forKey:href]; remoteETags=[NSMutableDictionary dictionaryWithObject:@"\"base\"" forKey:href];
+    NSDictionary *resource=ContactResource(body,@"contact-fixture",href,@"\"base\"");
+    RCWriteJournal j=RCContactStoreWriteJournal(store);
+    RCTwoWayContext c={j,@"com.retrocloudsync.tw.test.server",description,@"com.apple.contacts.Contact",[NSArray arrayWithObject:resource],
+        [resource objectForKey:@"graph"],EncodeFixtureContact,store,NO,RCContactProjectVerified};
+    server=LegacyClient(c.clientIdentifier,description,c.graph);
+    CHECK(![server canPullChangesForEntityName:c.rootEntity]);
+    fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
+    CHECK(RCTwoWayExchange(&c,&error));
+    server=[manager clientWithIdentifier:c.clientIdentifier]; CHECK(server);
+    LocalSession(local,nil,NO);
+    NSMutableDictionary *card=[NSMutableDictionary dictionaryWithDictionary:[[resource objectForKey:@"graph"] objectForKey:@"contact-fixture"]];
+    [card setObject:@"local edit" forKey:@"notes"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
+    fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='queued'")==1);
+    CHECK(mutations==0);
+    loseResponse=YES;
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==-1);
+    CHECK(mutations==1);
+    RCContactStoreClose(store); store=RCContactStoreOpen("TwoWay.sqlite","synthetic",&error); CHECK(store);
+    j=RCContactStoreWriteJournal(store); c.journal=j; c.context=store;
+    CHECK(RCTwoWaySQL(&j,&error,"UPDATE write_operations SET retry_at=0 WHERE state='uncertain'"));
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==1);
+    resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+    c.resources=[NSArray arrayWithObject:resource]; c.graph=[resource objectForKey:@"graph"];
+    fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
+    CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==1);
+    fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
+    [card setObject:[marker stringByAppendingString:@"-new"] forKey:@"first name"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"new-fixture"],NO);
+    fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==2);
+    NSString *newHref=nil; NSEnumerator *it=[remoteBodies keyEnumerator]; NSString *key;
+    while ((key=[it nextObject])) if (![key isEqual:href]) newHref=key;
+    CHECK(newHref);
+    NSDictionary *created=ContactResource([remoteBodies objectForKey:newHref],@"contact-downloaded-create",newHref,[remoteETags objectForKey:newHref]);
+    NSMutableDictionary *full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]]; [full addEntriesFromDictionary:[created objectForKey:@"graph"]];
+    c.graph=full; c.resources=[NSArray arrayWithObjects:resource,created,nil];
+    fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==2);
+    fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(mutations==2);
+    LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"new-fixture"],YES);
+    fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='delete'")==0);
+    [card setObject:marker forKey:@"first name"]; [card setObject:@"local edit" forKey:@"notes"];
+    [card setObject:[NSArray arrayWithObject:@"phone"] forKey:@"phone numbers"];
+    NSDictionary *phone=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Phone Number",ISyncRecordEntityNameKey,
+        @"home",@"type",@"555-1234",@"value",[NSArray arrayWithObject:@"fixture"],@"contact",nil];
+    LocalSession(local,[NSDictionary dictionaryWithObjectsAndKeys:card,@"fixture",phone,@"phone",nil],NO);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==3);
+    resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+    full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]]; [full addEntriesFromDictionary:[created objectForKey:@"graph"]];
+    c.resources=[NSArray arrayWithObjects:resource,created,nil]; c.graph=full;
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==3);
+    LocalSession(local,[NSDictionary dictionaryWithObject:phone forKey:@"phone"],YES);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==4);
+    resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+    full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]]; [full addEntriesFromDictionary:[created objectForKey:@"graph"]];
+    c.resources=[NSArray arrayWithObjects:resource,created,nil]; c.graph=full;
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==4);
+    [card removeObjectForKey:@"phone numbers"];
+    [card setObject:marker forKey:@"first name"]; [card setObject:@"new local edit" forKey:@"notes"];
+    LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
+    CHECK(RCTwoWayExchange(&c,&error));
+    [remoteETags setObject:@"\"concurrent\"" forKey:href];
+    CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
+    CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='conflict'")==1); CHECK(mutations==4);
+    CHECK(RCTwoWayExchange(&c,&error)); CHECK(mutations==4);
+    puts("PASS: Lost PUT response, reopened journal and concurrent remote edit retain exact intent without duplicate or blind writes");
+    puts("PASS: Native collection -> conditional PUT -> verified mirror -> exact acceptance; create identities, replay and deletion guard");
+    Cleanup(local); Cleanup(server); [manager unregisterClient:local]; [manager unregisterClient:server]; local=nil;server=nil;
+    CalendarTests();
+    status=0;
+  } @catch(NSException *exception) {
+    fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]);
+    @try { Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server]; }
+    @catch(NSException *cleanup) { fprintf(stderr,"Cleanup requires --cleanup: %s\n",[[cleanup reason] UTF8String]); }
+  }
+done:
+  RCContactStoreClose(store); [pool release]; return status;
+}

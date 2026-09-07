@@ -1,5 +1,6 @@
 #import "RCCalendarSyncServicesBridge.h"
 #import "RCCalendarSyncClient.h"
+#import "RCTwoWaySync.h"
 #import <Foundation/Foundation.h>
 #import <SyncServices/SyncServices.h>
 #include <stdlib.h>
@@ -660,6 +661,10 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
     sqlite3_finalize(q);
     q = NULL;
     {
+      RCWriteJournal journal=RCCalendarStoreWriteJournal(store);
+      NSDictionary *aliased=RCTwoWayApplyAliases(&journal,records,error);
+      if (!aliased) goto done;
+      [records setDictionary:aliased];
       ISyncManager *manager = [ISyncManager sharedManager];
       NSDictionary *description =
           [NSDictionary dictionaryWithContentsOfFile:String(descriptionPath)];
@@ -798,4 +803,10 @@ int RCSyncServicesUnregisterCalendarTestClient(RCError *error)
                [[exception reason] UTF8String]);
   }
   return 0;
+}
+
+NSDictionary *RCCalendarNativeGraph(RCCalendarStore *store, long long identifier,
+    NSString *calendar, NSData *body, RCError *error)
+{
+  return MapResource(store,identifier,calendar,[body bytes],[body length],error);
 }

@@ -12,6 +12,7 @@
 #include "RCSyncServicesBridge.h"
 #include "RCCalDAVMirror.h"
 #include "RCCalendarSyncServicesBridge.h"
+#import "RCTwoWayNative.h"
 
 #include <Security/Security.h>
 #include <pthread.h>
@@ -48,6 +49,8 @@ typedef struct {
   char *calendarDatabasePath;
   char *calendarDescriptionPath;
   int contactsEnabled;
+  int contactsTwoWay;
+  int calendarsTwoWay;
   int calendarsEnabled;
   int calendarHistoryYears;
 } RCSyncWorker;
@@ -104,6 +107,38 @@ static NSString *RCSyncModeFromConfiguration(NSDictionary *configuration,
   return [enabled boolValue] ? @"OneWay" : @"Disabled";
 }
 
+static void RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
+                               const char *password, BOOL calendars)
+{
+  RCHTTPClientConfig config;
+  RCError error;
+  RCHTTPClient *http;
+  if (!password) return;
+  memset(&config,0,sizeof(config)); RCErrorClear(&error);
+  config.username=worker->username; config.password=password;
+  config.certificatePath=worker->certificatePath;
+  config.allowedHostSuffix=".icloud.com";
+  http=RCHTTPClientCreate(&config,&error);
+  if (!http || RCTwoWayRunWrites(journal,http,calendars ? "text/calendar; charset=utf-8" :
+      "text/vcard; charset=utf-8",&error)<0)
+    NSLog(@"%@ outgoing sync deferred: %s",calendars ? @"Calendar" : @"Contacts",error.message);
+  RCHTTPClientDestroy(http);
+}
+
+/* Changing back to one-way must not publish over a still-journaled local edit.
+   Disabled mode simply pauses everything, including the outgoing writer. */
+static BOOL RCHasPendingWrites(RCWriteJournal *journal)
+{
+  sqlite3_stmt *query=NULL;
+  int step=SQLITE_ERROR;
+  if (sqlite3_prepare_v2(journal->db,"SELECT 1 FROM write_operations WHERE account_id=? "
+      "AND state NOT IN ('acknowledged','cancelled') LIMIT 1",-1,&query,NULL)==SQLITE_OK) {
+    sqlite3_bind_int64(query,1,journal->account); step=sqlite3_step(query);
+  }
+  sqlite3_finalize(query);
+  return step!=SQLITE_DONE;
+}
+
 static void *RCSyncWorkerMain(void *context)
 {
   RCSyncWorker *worker = (RCSyncWorker *)context;
@@ -121,6 +156,7 @@ static void *RCSyncWorkerMain(void *context)
     RCError error;
     struct timespec wakeTime;
     int shouldStop;
+    BOOL contactsFetched=NO, calendarsFetched=NO;
 
     pthread_mutex_lock(&worker->mutex);
     shouldStop = worker->shouldStop;
@@ -141,6 +177,8 @@ static void *RCSyncWorkerMain(void *context)
       if (store == NULL) {
         NSLog(@"Contacts database failed: %s", error.message);
       } else {
+        RCWriteJournal journal=RCContactStoreWriteJournal(store);
+        if (worker->contactsTwoWay) RCRunAccountWrites(&journal,worker,password,NO);
         memset(&mirrorConfig, 0, sizeof(mirrorConfig));
         mirrorConfig.serviceURL = worker->serviceURL;
         mirrorConfig.username = worker->username;
@@ -149,7 +187,7 @@ static void *RCSyncWorkerMain(void *context)
         mirrorConfig.allowedHostSuffix = ".icloud.com";
         mirrorConfig.progress = RCContactProgress;
         if (password != NULL) {
-          if (RCCardDAVMirrorFetch(&mirrorConfig, store, &result, &error) &&
+          if ((contactsFetched=RCCardDAVMirrorFetch(&mirrorConfig, store, &result, &error)) &&
               RCContactStoreGetStatistics(store, &statistics, &error)) {
             NSLog(@"Contacts sync complete: %ld downloaded, %ld unchanged, "
                   @"%ld available, %ld remotely absent, %ld invalid resources",
@@ -163,8 +201,18 @@ static void *RCSyncWorkerMain(void *context)
         /* A failed fetch (or locked Keychain) must not prevent retrying the
            last committed mirror. The bridge refuses a never-completed mirror. */
         RCErrorClear(&error);
-        if (RCSyncServicesPushContacts(store, worker->syncClientDescriptionPath,
-                                       &syncRecordCount, &error)) {
+        BOOL exported;
+        if (worker->contactsTwoWay) {
+          exported=contactsFetched && RCSyncServicesTwoWayContacts(store,
+              worker->syncClientDescriptionPath,&syncRecordCount,&error);
+          if (!contactsFetched) RCErrorSet(&error,1,"Two-way sync requires a successful download");
+          if (exported) RCRunAccountWrites(&journal,worker,password,NO);
+        } else if (RCHasPendingWrites(&journal)) {
+          exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
+        } else exported=RCSyncServicesPushContacts(store,worker->syncClientDescriptionPath,&syncRecordCount,&error);
+        if (exported && syncRecordCount<0) {
+          NSLog(@"Sync Services publication deferred: outgoing changes await completion");
+        } else if (exported) {
           NSLog(@"Sync Services export complete: %ld records", syncRecordCount);
         } else {
           NSLog(@"Sync Services export failed: %s", error.message);
@@ -180,6 +228,8 @@ static void *RCSyncWorkerMain(void *context)
       if (calendarStore == NULL)
         NSLog(@"Calendar database failed: %s", error.message);
       else {
+        RCWriteJournal journal=RCCalendarStoreWriteJournal(calendarStore);
+        if (worker->calendarsTwoWay) RCRunAccountWrites(&journal,worker,password,YES);
         memset(&mirrorConfig, 0, sizeof(mirrorConfig));
         mirrorConfig.serviceURL = "https://caldav.icloud.com";
         mirrorConfig.username = worker->username;
@@ -193,8 +243,8 @@ static void *RCSyncWorkerMain(void *context)
               timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil] UTF8String];
           if ((worker->calendarHistoryYears == 0 ||
                RCCalDAVHistoryStart(today, worker->calendarHistoryYears, historyStart, &error)) &&
-              RCCalDAVMirrorFetchSince(&mirrorConfig, calendarStore,
-                  worker->calendarHistoryYears ? historyStart : NULL, &result, &error))
+              (calendarsFetched=RCCalDAVMirrorFetchSince(&mirrorConfig, calendarStore,
+                  worker->calendarHistoryYears ? historyStart : NULL, &result, &error)))
             NSLog(@"Calendars sync complete: %ld calendars, %ld downloaded, %ld "
                   @"unchanged",
                   result.collectionCount, result.downloadedResourceCount,
@@ -203,8 +253,18 @@ static void *RCSyncWorkerMain(void *context)
             NSLog(@"Calendars sync failed: %s", error.message);
         }
         RCErrorClear(&error);
-        if (RCSyncServicesPushCalendars(calendarStore, worker->calendarDescriptionPath,
-                                        0, &syncRecordCount, &error)) {
+        BOOL exported;
+        if (worker->calendarsTwoWay) {
+          exported=calendarsFetched && RCSyncServicesTwoWayCalendars(calendarStore,
+              worker->calendarDescriptionPath,&syncRecordCount,&error);
+          if (!calendarsFetched) RCErrorSet(&error,1,"Two-way sync requires a successful download");
+          if (exported) RCRunAccountWrites(&journal,worker,password,YES);
+        } else if (RCHasPendingWrites(&journal)) {
+          exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
+        } else exported=RCSyncServicesPushCalendars(calendarStore,worker->calendarDescriptionPath,0,&syncRecordCount,&error);
+        if (exported && syncRecordCount<0) {
+          NSLog(@"Calendar Sync Services publication deferred: outgoing changes await completion");
+        } else if (exported) {
           NSLog(@"Calendar Sync Services export complete: %ld records",
                 syncRecordCount);
           if (!RCCalendarStorePruneHistory(calendarStore, &error))
@@ -261,8 +321,10 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
     NSLog(@"Contacts and Calendars sync mode configuration is invalid");
     return NO;
   }
-  worker->contactsEnabled = [contactsSyncMode isEqualToString:@"OneWay"];
-  worker->calendarsEnabled = [calendarsSyncMode isEqualToString:@"OneWay"];
+  worker->contactsTwoWay = [contactsSyncMode isEqualToString:@"TwoWay"];
+  worker->calendarsTwoWay = [calendarsSyncMode isEqualToString:@"TwoWay"];
+  worker->contactsEnabled = worker->contactsTwoWay || [contactsSyncMode isEqualToString:@"OneWay"];
+  worker->calendarsEnabled = worker->calendarsTwoWay || [calendarsSyncMode isEqualToString:@"OneWay"];
   historyYears = [contacts objectForKey:@"CalendarHistoryYears"];
   worker->calendarHistoryYears = historyYears == nil ? 2 :
       ([historyYears isKindOfClass:[NSNumber class]] ? [historyYears intValue] : -1);
@@ -272,10 +334,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
     NSLog(@"Calendar history must be 0 (all history), 1, or 2 years");
     return NO;
   }
-  if ([contactsSyncMode isEqualToString:@"TwoWay"])
-    NSLog(@"Contacts 2-way sync is not implemented yet");
-  if ([calendarsSyncMode isEqualToString:@"TwoWay"])
-    NSLog(@"Calendar 2-way sync is not implemented yet");
+
   if (!worker->contactsEnabled)
     NSLog(@"Contacts sync is disabled");
   if (!worker->calendarsEnabled)
@@ -498,6 +557,14 @@ int main(int argc, char *argv[])
             sqlite3_column_text(statement,3));
       ok=step==SQLITE_DONE;
       if (!ok) RCErrorSet(&error,1,"Could not inspect recovery operations");
+      sqlite3_finalize(statement); statement=NULL;
+      if (ok && sqlite3_prepare_v2(database,"SELECT reason,count(*) FROM two_way_attention GROUP BY reason",
+          -1,&statement,NULL)==SQLITE_OK) {
+        puts("Deferred native changes (reason/count)");
+        while ((step=sqlite3_step(statement))==SQLITE_ROW)
+          printf("%s %d\n",sqlite3_column_text(statement,0),sqlite3_column_int(statement,1));
+        if (step!=SQLITE_DONE) { ok=0; RCErrorSet(&error,1,"Could not inspect native attention state"); }
+      }
     } else RCErrorSet(&error,1,"Database has no current recovery journal");
     sqlite3_finalize(statement);
     if (database) sqlite3_close(database);

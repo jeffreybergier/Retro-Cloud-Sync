@@ -25,6 +25,7 @@ int RCWriteJournalSetBase(RCWriteJournal *, const char *resourceKey,
 /* Stable changeID makes replay idempotent. One unacknowledged operation per
    resource/href. Updates/deletes require the exact published localRevision;
    creates require revision zero, no base, and a caller-chosen stable href.
+   May join a caller transaction to commit a native change receipt atomically.
    kind is create/update/delete; body is NULL only for delete. */
 int RCWriteJournalEnqueue(RCWriteJournal *, const char *changeID,
     const char *resourceKey, const char *href, const char *kind,

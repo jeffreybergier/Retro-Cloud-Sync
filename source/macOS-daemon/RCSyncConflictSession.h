@@ -4,6 +4,16 @@
 #import <SyncServices/SyncServices.h>
 #include "RCError.h"
 
+/* Only pull entities that this client can receive. Unsupported types can
+   remain push-only while contacts/events use the same two-way registration. */
+static inline NSArray *RCSyncPullableEntities(ISyncClient *client)
+{
+  NSMutableArray *result=[NSMutableArray array];
+  NSEnumerator *it=[[client enabledEntityNames] objectEnumerator]; NSString *entity;
+  while ((entity=[it nextObject])) if ([client canPullChangesForEntityName:entity]) [result addObject:entity];
+  return result;
+}
+
 /* Use the existing two-way server client and its existing record identities.
    completeRemoteGraph must contain ALL of that client's remote records in the
    enabled entities, including retained unsupported records. It must not contain
@@ -24,7 +34,8 @@ NSDictionary *RCSyncResolveConflictWithIntent(ISyncClient *client,
     NSDictionary *expectedLocal, RCError *error);
 
 /* Call only after remote verification and durable mirror completion. The exact
-   canonical decision is the receipt stored in the journal. Returns NO without
+   canonical decision is the receipt stored in the journal. NSNull may represent
+   a child deletion already applied as part of a verified parent-resource PUT. Returns NO without
    accepting anything if a target has since changed or disappeared, or the engine
    requires a full resync. Repeating after a successful acceptance is safe. */
 BOOL RCSyncAcceptConflictResolution(ISyncClient *client,

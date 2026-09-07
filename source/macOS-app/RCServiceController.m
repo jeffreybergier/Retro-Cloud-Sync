@@ -6,6 +6,7 @@
 #import "RCServiceController.h"
 
 #import "RCConfiguration.h"
+#include "RCICloudCredentials.h"
 
 #include <unistd.h>
 
@@ -63,9 +64,44 @@ static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
   if ([self isServiceRunning]) {
     return YES;
   }
+  NSString *embeddedDaemonPath = [[[NSBundle mainBundle] bundlePath]
+      stringByAppendingPathComponent:
+          @"Contents/Library/LaunchServices/RetroCloudSyncDaemon"];
+  BOOL daemonChanged = ![[NSFileManager defaultManager]
+      contentsEqualAtPath:embeddedDaemonPath andPath:[self installedDaemonPath]];
+  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+  NSString *pendingAccessKey = @"RCDaemonKeychainAccessPending";
+  /* Retain an interrupted or declined upgrade approval for the next Start,
+     even though installation may already have replaced the binary. */
+  if (daemonChanged) {
+    [defaults setBool:YES forKey:pendingAccessKey];
+    if (![defaults synchronize]) {
+      if (errorMessage) *errorMessage = @"Could not save pending daemon access update";
+      return NO;
+    }
+  }
   if (![self installServiceFilesWithError:errorMessage]) {
     return NO;
   }
+  /* Tiger's trusted-application identity changes when an upgrade replaces
+     the daemon. Changing a Keychain ACL requires approval on every call, so
+     refresh only for an actual binary upgrade, never an ordinary restart. */
+  NSDictionary *configuration=[RCConfiguration loadConfigurationWithError:errorMessage];
+  if (!configuration) return NO;
+  NSString *username=[[RCConfiguration contactsConfigurationFromConfiguration:configuration]
+      objectForKey:@"Username"];
+  if ([defaults boolForKey:pendingAccessKey] && [username isKindOfClass:[NSString class]] &&
+      RCICloudCredentialsExist([username UTF8String])) {
+    RCError error;
+    RCErrorClear(&error);
+    if (!RCICloudCredentialsRefreshAccess([username UTF8String],
+        [[self installedDaemonPath] fileSystemRepresentation],&error)) {
+      if (errorMessage) *errorMessage=[NSString stringWithUTF8String:error.message];
+      return NO;
+    }
+  }
+  [defaults removeObjectForKey:pendingAccessKey];
+  [defaults synchronize];
 
   /* Clear any loaded but inactive copy before loading the current plist. */
   [self runLaunchctlWithArguments:
@@ -321,20 +357,22 @@ static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
     return NO;
   }
 
-  if ([fileManager fileExistsAtPath:installedDaemonPath] &&
-      ![fileManager removeFileAtPath:installedDaemonPath handler:nil]) {
-    if (errorMessage != NULL) {
-      *errorMessage = @"Could not replace the installed daemon";
+  if (![fileManager contentsEqualAtPath:embeddedDaemonPath andPath:installedDaemonPath]) {
+    if ([fileManager fileExistsAtPath:installedDaemonPath] &&
+        ![fileManager removeFileAtPath:installedDaemonPath handler:nil]) {
+      if (errorMessage != NULL) {
+        *errorMessage = @"Could not replace the installed daemon";
+      }
+      return NO;
     }
-    return NO;
-  }
-  if (![fileManager copyPath:embeddedDaemonPath
-                      toPath:installedDaemonPath
-                     handler:nil]) {
-    if (errorMessage != NULL) {
-      *errorMessage = @"Could not install the embedded daemon";
+    if (![fileManager copyPath:embeddedDaemonPath
+                        toPath:installedDaemonPath
+                       handler:nil]) {
+      if (errorMessage != NULL) {
+        *errorMessage = @"Could not install the embedded daemon";
+      }
+      return NO;
     }
-    return NO;
   }
   if ([fileManager fileExistsAtPath:installedCertificatePath] &&
       ![fileManager removeFileAtPath:installedCertificatePath handler:nil]) {

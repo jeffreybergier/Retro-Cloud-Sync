@@ -152,3 +152,5 @@ clean:
 	test-host-contacts \
 	build-mac-contacts-syncservices-tests analyze-mac-contacts-syncservices-tests test-mac-contacts-syncservices \
 	build-all analyze clean
+
+include $(SOURCE_ROOT)/make/mac-two-way-tests.mk

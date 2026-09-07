@@ -104,6 +104,12 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
     if (!token(edits[i].property) || (edits[i].group && !token(edits[i].group)) ||
         edits[i].occurrence < -1 || (edits[i].occurrence == -1 && !edits[i].value) ||
         (edits[i].value && (strchr(edits[i].value,'\r') || strchr(edits[i].value,'\n')))) goto invalid;
+    if (edits[i].parameters) {
+      const char *p=edits[i].parameters;
+      if (edits[i].occurrence!=-1 || !*p || !strchr(p,'=')) goto invalid;
+      for (;*p;p++) if (!((*p>='a' && *p<='z') || (*p>='A' && *p<='Z') ||
+          (*p>='0' && *p<='9') || strchr("=,;-_./",*p))) goto invalid;
+    }
   }
   while (pos<length) {
     size_t start=pos, n;
@@ -136,7 +142,9 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
         Buffer prefix={NULL,0};
         if (!allowed(kinds[depth-1],edits[i].property)) goto invalid;
         if ((edits[i].group && (!add(&prefix,edits[i].group,strlen(edits[i].group)) || !add(&prefix,".",1))) ||
-            !add(&prefix,edits[i].property,strlen(edits[i].property)) || !add(&prefix,":",1) ||
+            !add(&prefix,edits[i].property,strlen(edits[i].property)) ||
+            (edits[i].parameters && (!add(&prefix,";",1) ||
+              !add(&prefix,edits[i].parameters,strlen(edits[i].parameters)))) || !add(&prefix,":",1) ||
             !folded(&patches[i].replacement,(char *)prefix.data,prefix.length,edits[i].value)) {
           free(prefix.data); goto memory;
         }

@@ -16,6 +16,9 @@ typedef struct {
   /* Encoded property value (vCard/iCalendar escaping), not a content line.
      NULL removes an existing property. Existing parameters are retained. */
   const char *value;
+  /* Optional parameters for a NEW property only, e.g. TYPE=HOME,PREF.
+     Existing property parameters always remain byte-for-byte preserved. */
+  const char *parameters;
 } RCResourceEdit;
 
 /* All selectors address the same immutable base, including multiple deletions.

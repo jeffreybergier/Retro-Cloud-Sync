@@ -13,6 +13,7 @@ and transfers tools to `TEST_HOST` (default `x4-vm`) and runs them on the Mac.
 | Contacts | vCard parsing, SQLite storage, identities, account isolation, mirror rollback and recovery | Linux, offline; simulated HTTP | `make test-host-contacts` |
 | Calendars | iCalendar codec, SQLite storage, discovery, inventory and failure handling | Linux, offline; simulated HTTP | `make test-host-calendars` |
 | Write safety | Durable outgoing operations, crash recovery, conflicts, base revisions, loss-preserving edits and production HTTP preconditions/TLS | Linux; synthetic fixtures and local TLS server; Python 3, OpenSSL CLI, native libcurl | `make test-host-writes` |
+| Two-way sync | Production reverse mappers and real Sync Services collection, conditional PUTs through a synthetic transport, verified acceptance, creation identity, replay and deletion guard | Mac desktop, offline; daemon stopped; separate synthetic clients | `make test-mac-two-way TEST_HOST=x4-vm` |
 | Conflict recovery | Journal-to-Sync Services contact reconciliation, exact acknowledgement, newer local edits, field preservation and cleanup | Mac desktop, offline; production daemon stopped; separate synthetic clients | `make test-mac-conflicts TEST_HOST=x4-vm` |
 | DAV sync tokens | Pagination, expired/unsupported tokens, durable rollback, account isolation and rolling calendar windows through the real mirrors | Linux, offline; scripted HTTP | `make test-host-sync` |
 | App GUI | Preferences, autosave/validation, Start/Stop, installation, logs and loopback mail listeners | Mac desktop with Accessibility; controls the service and local listeners | `make test-mac-app TEST_HOST=x4-vm` |
@@ -150,3 +151,28 @@ The `analyze-*` targets run Clang static analysis on Linux against the Mac SDK;
 they do not execute tests. Make fragments use the same subjects: host contacts,
 host calendars, Mac app, Mac contacts Sync Services, Mac calendars Sync Services,
 Mac network diagnostics, and the libicalvcal experiment. `source/make/tests.mk` owns aggregates and aliases.
+
+## Two-way integration tests
+
+`make build-mac-two-way-tests` builds `tests/macOS/two-way/TwoWaySyncTests`.
+`make test-mac-two-way TEST_HOST=x4-vm` runs it from a fresh Desktop directory.
+Its HTTP functions are replaced at link time with an in-memory fixture that
+rejects every non-fixture URL and every method other than GET/PUT. It cannot
+contact iCloud and never reads Keychain. Tests exercise both real Contacts and
+Calendars schemas, keep baseline snapshots, and clean up only marked fixtures.
+Contact cases cover first-sync uploads, recovery of saved exclusions, and replay
+without duplicate uploads. A fixture-only encoder delegates marked contacts to
+the production mapper and keeps unrelated desktop contacts out of the synthetic
+account. Only sync alerts naming "Retro Cloud Two Way Tests" are allowed automatically.
+The production daemon must be stopped, and Mac suites must run sequentially.
+
+`TwoWaySyncTests --mappers` runs the production reverse-mapping checks without
+opening any Sync Services session. Run it in a fresh Desktop directory; it
+creates synthetic databases there. The remote runner runs these checks too.
+An interrupted integration test can be recovered with `./TwoWaySyncTests --cleanup`
+in its original Desktop directory. Preserve the marker and baseline files.
+
+The `TWO_WAY_TEST_MODE=contact-publication` two-way subset covers a server-side
+note edit before initial upload acknowledgement, changed-UID rejection, and
+replay without duplicate uploads. It runs contact mapper checks and verifies
+the pre-existing Address Book baseline without running the calendar suite.

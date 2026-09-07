@@ -4,11 +4,12 @@ The recovery implementation uses the existing Sync Services server client for
 canonical field decisions. It preserves remote-write conflicts in SQLite and
 never changes an old operation's ETag to retry its old body.
 
-The production app still runs one-way: local change collection and automatic
-outgoing execution (concept phase 4) are not enabled by this change. The recovery
-APIs and native adapter are built into the daemon and exercised by an offline
-Tiger integration suite. They are the contacts-first integration milestone, not
-a claim that general two-way contacts/calendars synchronization is complete.
+The production app now supports opt-in two-way creation and updates through
+[RCTwoWaySync](source/macOS-daemon/RCTwoWaySync.m). Its coordinator retains
+conflicts for attention; it does not automatically invoke the narrow contact
+conflict resolver described below. That adapter remains separately tested and
+available for future integration. See [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md) for the
+production feature's supported mapping and recovery boundaries.
 
 ## Durable operation lifecycle
 

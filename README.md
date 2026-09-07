@@ -47,13 +47,17 @@ Contacts and Calendars each support a one-way iCloud mirror and Sync Services
 import. Either can run independently; a failure in one does not skip the other.
 The configuration stores `ContactsSyncMode` and `CalendarsSyncMode` as
 `Disabled`, `OneWay`, or `TwoWay`. Legacy `Enabled` and `CalendarsEnabled`
-booleans remain in the plist for compatibility. Two-way synchronization is not implemented. Unsupported modes are logged
-and are never treated as one-way sync by the daemon.
+booleans remain in the plist for compatibility. **2-way** enables conditional
+uploads of supported local creations and edits, including contacts already on
+the Mac when two-way sync is enabled. Previously excluded local contacts become
+eligible automatically. Remote resource deletion remains
+disabled. See [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md) for the supported fields,
+first-sync behavior, failure handling, and testing boundaries.
 
 The shared write-safety foundations now include durable outgoing operations,
 published base revisions, conditional DAV writes with interruption recovery,
-and edits that preserve unrecognized resource fields. These APIs are not yet
-connected to local change collection or automatic uploads. See
+and edits that preserve unrecognized resource fields. The two-way coordinator connects these APIs to native change collection and
+automatic conditional PUTs. See
 [WRITE_SAFETY.md](WRITE_SAFETY.md) for the state machine, APIs and tests.
 Conflict recovery now has durable successor operations, exact acknowledgement
 receipts, a Sync Services adapter and a tested initial contact text-field mapper.
@@ -110,9 +114,9 @@ toolbar to follow that log. It is stored at:
 ~/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log
 ```
 
-The daemon submits the last complete contact inventory to Tiger's Sync Services
-Contacts schema, even if the latest download or Keychain access failed. This is a
-one-way, push-only bridge:
+In one-way mode, the daemon submits the last complete contact inventory to
+Tiger's Sync Services Contacts schema, even if the latest download or Keychain
+access failed. This mode uses a push-only bridge:
 it does not upload Address Book edits to iCloud or treat existing local Address
 Book cards as CardDAV records. Tiger's Address Book application identifier is
 `com.apple.AddressBook`; the separate Sync Services data class is named
@@ -140,8 +144,10 @@ contacts. A malformed new card stays cached until a usable revision arrives.
 The daemon log and CardDAV probe report invalid-resource counts. The bridge
 builds the complete contact graph before opening a Sync Services session.
 
-Re-enter and save the app-specific password after installing a newly built
-application so the replacement daemon is authorized by the login Keychain.
+When Start installs a changed daemon binary, the app refreshes its login
+Keychain access and may request upgrade approval. Ordinary starts preserve the
+installed binary and saved access rules. An interrupted upgrade approval is
+retried on the next Start; the saved app-specific password is retained.
 
 ## Calendar database and iCal import
 
@@ -209,8 +215,9 @@ be represented. Tasks, unknown extensions, and unsupported alarm actions are
 stored but not exported. Calendar color is stored but is not a Tiger schema field.
 
 iCal creates ordinary local calendars with a stable short suffix in their names
-to distinguish equal remote calendar names. Local edits are never uploaded to
-iCloud and may be replaced by a later import. The daemon checks completion of
+to distinguish equal remote calendar names. In one-way mode, local edits are never uploaded to
+iCloud and may be replaced by a later import. Two-way mode uploads the supported
+changes described in [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md). The daemon checks completion of
 Sync Services' merge phase before recording a successful export. System sync
 confirmation dialogs, when required, must be available in the logged-in desktop
 session; the app's per-user LaunchAgent runs there.

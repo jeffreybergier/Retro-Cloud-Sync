@@ -1,5 +1,6 @@
 #import "RCSyncServicesBridge.h"
 #import "RCContactSyncClient.h"
+#import "RCTwoWaySync.h"
 
 #import <Foundation/Foundation.h>
 #import <SyncServices/SyncServices.h>
@@ -28,6 +29,7 @@ typedef struct {
   RCContactStore *store;
   NSMutableDictionary *records;
   long recordCount;
+  NSDictionary *propertyIdentities; /* optional detached reverse-mapping validation */
 } RCSyncExportContext;
 
 static NSString *RCString(const char *value)
@@ -165,10 +167,14 @@ static int RCPushChild(RCSyncExportContext *context, long long contactIdentifier
   NSString *value;
   NSString *label;
 
-  if (!RCContactStoreCopyPropertySyncIdentifier(context->store,
-      contactIdentifier, property->position, &storedIdentifier, error)) return 0;
-  recordIdentifier = RCPrefixedIdentifier(@"property-", storedIdentifier);
-  free(storedIdentifier);
+  if (context->propertyIdentities) {
+    recordIdentifier=[context->propertyIdentities objectForKey:[NSNumber numberWithInt:property->position]];
+  } else {
+    if (!RCContactStoreCopyPropertySyncIdentifier(context->store,
+        contactIdentifier, property->position, &storedIdentifier, error)) return 0;
+    recordIdentifier = RCPrefixedIdentifier(@"property-", storedIdentifier);
+    free(storedIdentifier);
+  }
   if (recordIdentifier == nil) {
     RCErrorSet(error, 1, "A cached contact property has no sync identity");
     return 0;
@@ -361,6 +367,10 @@ static int RCSyncServicesPushContactsForClient(
     context.records = [NSMutableDictionary dictionary];
     if (!RCContactStoreForEachAvailableContact(store, RCExportContact,
                                                &context, error)) return 0;
+    RCWriteJournal journal=RCContactStoreWriteJournal(store);
+    NSDictionary *aliased=RCTwoWayApplyAliases(&journal,context.records,error);
+    if (!aliased) return 0;
+    [context.records setDictionary:aliased];
     manager = [ISyncManager sharedManager];
     if (![manager isEnabled]) {
       RCErrorSet(error, 1, "Sync Services is disabled or unavailable");
@@ -487,4 +497,36 @@ int RCSyncServicesUnregisterTestClient(RCError *error)
     return 0;
   }
   return 1;
+}
+
+/* Reuse the production forward mapper for two-way comparison and validation. */
+NSDictionary *RCContactNativeGraph(RCContactStore *store, long long identifier,
+    const char *syncID, NSData *body, RCError *error)
+{
+  RCSyncExportContext context;
+  memset(&context,0,sizeof(context));
+  context.store=store; context.records=[NSMutableDictionary dictionary];
+  return RCExportContact(identifier,syncID,[body bytes],[body length],&context,error) ? context.records : nil;
+}
+
+NSDictionary *RCContactNativeGraphForPaths(NSData *body, NSDictionary *paths, RCError *error)
+{
+  RCSyncExportContext context;
+  RCVCardDocument doc;
+  NSMutableDictionary *identities=[NSMutableDictionary dictionary], *counts=[NSMutableDictionary dictionary];
+  size_t i;
+  if (!RCVCardParse([body bytes],[body length],&doc,error)) return nil;
+  for(i=0;i<doc.propertyCount;i++) {
+    NSString *name=[RCString(doc.properties[i].name) uppercaseString];
+    if ([name isEqual:@"TEL"] || [name isEqual:@"EMAIL"] || [name isEqual:@"ADR"] || [name isEqual:@"URL"]) {
+      int n=[[counts objectForKey:name] intValue];
+      NSString *identifier=[paths objectForKey:[NSString stringWithFormat:@"%@:%d",name,n]];
+      [counts setObject:[NSNumber numberWithInt:n+1] forKey:name];
+      if (identifier) [identities setObject:identifier forKey:[NSNumber numberWithInt:doc.properties[i].position]];
+    }
+  }
+  RCVCardDocumentClear(&doc);
+  memset(&context,0,sizeof(context)); context.records=[NSMutableDictionary dictionary]; context.propertyIdentities=identities;
+  if (!RCExportContact(0,"validation",[body bytes],[body length],&context,error)) return nil;
+  return context.records;
 }

@@ -209,9 +209,9 @@ static void patchTests(const char *path)
       "SUMMARY;LANGUAGE=en;X-PRIVATE=stay:Master\r\nX-APPLE-TRAVEL:keep\r\n"
       "BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:alarm\r\nEND:VALARM\r\nEND:VEVENT\r\n"
       "BEGIN:VEVENT\r\nUID:event\r\nRECURRENCE-ID:20260907T100000Z\r\nDTSTART:20260907T120000Z\r\nSUMMARY:Exception\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
-  RCResourceEdit ce[]={{0,"TEL","item1",0,"999"},{0,"TEL",NULL,0,NULL},{0,"TEL",NULL,1,NULL},{0,"NOTE",NULL,-1,"new\\nline"}};
-  RCResourceEdit ie[]={{3,"SUMMARY",NULL,0,"Changed master"},{5,"SUMMARY",NULL,0,"Changed exception"}};
-  RCResourceEdit bad={0,"UID",NULL,0,"changed"};
+  RCResourceEdit ce[]={{0,"TEL","item1",0,"999",NULL},{0,"TEL",NULL,0,NULL,NULL},{0,"TEL",NULL,1,NULL,NULL},{0,"NOTE",NULL,-1,"new\\nline",NULL}};
+  RCResourceEdit ie[]={{3,"SUMMARY",NULL,0,"Changed master",NULL},{5,"SUMMARY",NULL,0,"Changed exception",NULL}};
+  RCResourceEdit bad={0,"UID",NULL,0,"changed",NULL};
   unsigned char *out=NULL; size_t n; RCWriteJournal j=openJournal(path); long long id,again;
   CHECK(RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),ce,4,&out,&n,&error));
   CHECK(strstr((char *)out,"item1.TEL;TYPE=CELL;X-PRIVATE=\"a:b\":999\r\n"));
@@ -219,6 +219,15 @@ static void patchTests(const char *path)
   CHECK(strstr((char *)out,"item1.X-ABLabel:custom\r\n") && strstr((char *)out,"X-APPLE-UNKNOWN;X-PARAM=keep:private\r\n"));
   CHECK(!strstr((char *)out,"TEL:222") && !strstr((char *)out,"TEL:333") && strstr((char *)out,"NOTE:new\\nline\r\n")); free(out);
   CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&bad,1,&out,&n,&error));
+  {
+    RCResourceEdit append={0,"EMAIL","new-entry",-1,"new@example.test","TYPE=HOME,PREF"};
+    CHECK(RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&append,1,&out,&n,&error));
+    CHECK(strstr((char *)out,"new-entry.EMAIL;TYPE=HOME,PREF:new@example.test\r\n")); free(out);
+    append.parameters="TYPE=HOME\r\nUID:injected";
+    CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&append,1,&out,&n,&error));
+    append.parameters="TYPE=WORK"; append.property="TEL"; append.group="item1"; append.occurrence=0;
+    CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&append,1,&out,&n,&error));
+  }
   ce[1]=ce[0]; CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),ce,2,&out,&n,&error));
   ce[0].value="bad\r\nUID:injected"; CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),ce,1,&out,&n,&error));
   CHECK(RCResourcePatch(RCResourceCalendar,(const unsigned char *)calendar,strlen(calendar),ie,2,&out,&n,&error));
@@ -229,7 +238,7 @@ static void patchTests(const char *path)
   CHECK(n==strlen(calendar) && !memcmp(out,calendar,n)); free(out);
   {
     char longValue[601]; size_t index; RCVCardDocument document;
-    RCResourceEdit edit={0,"NOTE",NULL,-1,longValue};
+    RCResourceEdit edit={0,"NOTE",NULL,-1,longValue,NULL};
     for(index=0;index<sizeof(longValue)-1;index+=2) { longValue[index]=(char)0xc3; longValue[index+1]=(char)0xa9; }
     longValue[sizeof(longValue)-1]=0;
     CHECK(RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&edit,1,&out,&n,&error));
@@ -455,13 +464,36 @@ static void conflictTests(const char *path)
   }
   CHECK(sqlite3_close(j.db)==SQLITE_OK); unlink(c.acceptancePath);
 }
+static void nativeReceiptTransactionTests(const char *path)
+{
+  RCWriteJournal j=openJournal(path);
+  long long id;
+  sql(j.db,"DELETE FROM write_attention;DELETE FROM write_resolutions;DELETE FROM write_operations;DELETE FROM write_bases;"
+      "CREATE TABLE IF NOT EXISTS native_receipts(operation_id INTEGER PRIMARY KEY,receipt TEXT NOT NULL)");
+  sql(j.db,"BEGIN IMMEDIATE");
+  CHECK(RCWriteJournalEnqueue(&j,"receipt-rollback","native-resource",href,"create",0,newCard,strlen(newCard),&id,&error));
+  CHECK(!sqlite3_get_autocommit(j.db));
+  sql(j.db,"INSERT INTO native_receipts SELECT id,'exact snapshot' FROM write_operations;ROLLBACK");
+  CHECK(scalar(j.db,"SELECT count(*) FROM write_operations")==0);
+  CHECK(scalar(j.db,"SELECT count(*) FROM native_receipts")==0);
+  sql(j.db,"BEGIN IMMEDIATE");
+  CHECK(RCWriteJournalEnqueue(&j,"receipt-commit","native-resource",href,"create",0,newCard,strlen(newCard),&id,&error));
+  sql(j.db,"INSERT INTO native_receipts SELECT id,'exact snapshot' FROM write_operations;COMMIT");
+  CHECK(scalar(j.db,"SELECT count(*) FROM write_operations JOIN native_receipts ON operation_id=id")==1);
+  sql(j.db,"BEGIN IMMEDIATE");
+  CHECK(!RCWriteJournalEnqueue(&j,"collision","other",href,"create",0,newCard,strlen(newCard),&id,&error));
+  CHECK(!sqlite3_get_autocommit(j.db));
+  sql(j.db,"ROLLBACK");
+  CHECK(scalar(j.db,"SELECT count(*) FROM write_operations")==1);
+  CHECK(sqlite3_close(j.db)==SQLITE_OK);
+}
 int main(void)
 {
   char dir[]="/tmp/retro-write-tests-XXXXXX",db[100],contacts[100],calendars[100];
   CHECK(mkdtemp(dir)); snprintf(db,sizeof(db),"%s/journal.sqlite",dir);
   snprintf(serverFile,sizeof(serverFile),"%s/server",dir);
   snprintf(contacts,sizeof(contacts),"%s/contacts.sqlite",dir); snprintf(calendars,sizeof(calendars),"%s/calendars.sqlite",dir);
-  crashTests(db); recoveryTests(db); patchTests(db); storeTests(contacts,calendars); conflictTests(db);
+  crashTests(db); recoveryTests(db); patchTests(db); storeTests(contacts,calendars); conflictTests(db); nativeReceiptTransactionTests(db);
   unlink(db); unlink(serverFile); unlink(contacts); unlink(calendars); rmdir(dir);
   puts("Write journal, conflict reconciliation/repeated races, completion crash recovery, account isolation and loss-preserving edits passed.");
   return 0;
