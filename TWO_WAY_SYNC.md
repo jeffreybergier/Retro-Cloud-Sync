@@ -79,15 +79,30 @@ Native identities are associated with downloaded identities before accepting
 changes, and that mapping survives interruption. A repeated completion does not
 create another resource or accept an unrelated newer local revision.
 
-Conflicts, unsupported mappings and a changed native snapshot are not silently
-overwritten. They remain pending and are logged. Unresolved queued, conflicting
-or applied operations currently defer publication/collection for that data
-class; the other data class and mail can still run. General conflict resolution
-is a separate milestone. In particular, a newer native edit before exact
-acknowledgement can still require attention. Contacts still require the exact verified revision in the
-mirror. A calendar resource replaced with a different UID at the same href is
-also deferred; it is never treated as the uploaded event. A calendar resource
-moved outside the configured history window can also require attention.
+A supported newer native edit before acknowledgement becomes a separate durable
+update against the GET-verified upload's ETag and body. Retiring the older
+operation and saving that successor happen in one transaction. The newer native
+change is not accepted until its own upload is verified. A concurrent remote
+edit still produces a conditional-write conflict; the coordinator never adopts
+a later ETag to force an overwrite.
+
+Unresolved queued, conflicting or applied resources are isolated during fast
+publication and collection. Their native records, child records and calendar
+containers remain untouched while unrelated resources can sync. A durable
+publication checkpoint tracks explicit remote deletions during these partial
+sessions. Partial sessions do not mark the full mirror as published or authorize
+calendar history pruning. A forced Sync Services reset still requires recovery.
+General conflict resolution and unsupported mappings remain attention conditions.
+
+An uploaded resource deleted remotely or omitted by the calendar history window
+before acknowledgement can complete from its saved verified bytes and receipt.
+The forward mapper validates those bytes using the receipt's native identities;
+completion does not require the resource to reappear or issue another PUT.
+If its imported identity was not available, a separate checkpoint retains the
+verified receipt for alias recovery on a later restoration, without holding the
+upload queue open or accepting any later native change.
+A resource replaced with a different UID at the same href remains isolated,
+as do contact revisions whose child identities cannot be reconciled safely.
 
 Use the daemon's existing `--inspect-recovery DATABASE` command to inspect
 operation states and deferred-reason counts without exposing record bodies, and
@@ -119,9 +134,9 @@ round-trip validation; other unsupported changes remain deferred.
 `make test-mac-two-way TEST_HOST=x4-vm TWO_WAY_TEST_MODE=calendars` runs the
 calendar subset, including a remote edit between PUT verification and the first
 mirror download. It checks that the newer title reaches the original native
-record without another PUT or duplicate, and that changed UIDs/newer local
-intent remain protected. Deferred publication is logged as deferred and does
-not trigger history pruning.
+record without another PUT or duplicate, and that changed UIDs remain protected. It also covers a second local edit
+before acknowledgement and completion when an upload leaves the history window.
+Partial publication does not trigger history pruning.
 
 `make test-mac-two-way TEST_HOST=x4-vm TWO_WAY_TEST_MODE=contact-publication`
 checks a newer remote note arriving before the original contact creation is
@@ -129,3 +144,10 @@ acknowledged. The coordinator uses the journal's GET-verified upload to finish
 that acknowledgement, then publishes the newer note on the same native contact
 without another PUT. It requires an unchanged UID and child graph; changed or
 reordered child records remain deferred rather than acquiring incorrect aliases.
+
+The full offline suite also covers an uploaded contact deleted before its first
+mirror download, a second local edit with a journal reopen before the successor
+runs, and an unrelated contact uploading while another contact has a conflict.
+Mapper regressions cover empty raw TEL/EMAIL/URL fields followed by visible
+entries: note edits, field updates, removals and additions preserve the raw
+occurrence identities and untouched empty fields.

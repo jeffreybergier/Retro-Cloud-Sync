@@ -211,7 +211,7 @@ static void *RCSyncWorkerMain(void *context)
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else exported=RCSyncServicesPushContacts(store,worker->syncClientDescriptionPath,&syncRecordCount,&error);
         if (exported && syncRecordCount<0) {
-          NSLog(@"Sync Services publication deferred: outgoing changes await completion");
+          NSLog(@"Sync Services partial publication: unresolved outgoing records remain isolated");
         } else if (exported) {
           NSLog(@"Sync Services export complete: %ld records", syncRecordCount);
         } else {
@@ -263,7 +263,7 @@ static void *RCSyncWorkerMain(void *context)
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else exported=RCSyncServicesPushCalendars(calendarStore,worker->calendarDescriptionPath,0,&syncRecordCount,&error);
         if (exported && syncRecordCount<0) {
-          NSLog(@"Calendar Sync Services publication deferred: outgoing changes await completion");
+          NSLog(@"Calendar Sync Services partial publication: unresolved outgoing records remain isolated");
         } else if (exported) {
           NSLog(@"Calendar Sync Services export complete: %ld records",
                 syncRecordCount);

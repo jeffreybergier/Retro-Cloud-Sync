@@ -111,6 +111,11 @@ done:
 BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
     NSDictionary *receipt, RCError *error)
 {
+  return RCSyncAcceptUpload(client,receipt,NULL,error);
+}
+BOOL RCSyncAcceptUpload(ISyncClient *client, NSDictionary *receipt,
+    NSDictionary **newerTruth, RCError *error)
+{
   ISyncSession *session = nil;
   NSArray *entities = RCSyncPullableEntities(client);
   NSEnumerator *it;
@@ -118,6 +123,7 @@ BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
   ISyncChange *change;
   BOOL success = NO;
   RCErrorClear(error);
+  if (newerTruth) *newerTruth=nil;
   if (![receipt count] || !UsableClient(client,entities,error)) return NO;
   @try {
     session = [ISyncSession beginSessionWithClient:client entityNames:entities
@@ -139,12 +145,17 @@ BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
     NSMutableDictionary *live=[NSMutableDictionary dictionaryWithDictionary:receipt];
     NSEnumerator *receiptIDs=[receipt keyEnumerator]; NSString *receiptID;
     while ((receiptID=[receiptIDs nextObject])) if ([receipt objectForKey:receiptID]==[NSNull null]) {
-      if ([current objectForKey:receiptID]) {
-        RCErrorSet(error,1,"A deleted child has reappeared; its change was not acknowledged"); goto done;
-      }
       [live removeObjectForKey:receiptID];
     }
     if (!RCNativeGraphsEqual(current,live)) {
+      if (newerTruth) {
+        NSMutableDictionary *truth=[NSMutableDictionary dictionary];
+        NSEnumerator *names=[entities objectEnumerator]; NSString *name;
+        while ((name=[names nextObject])) [truth addEntriesFromDictionary:
+            [[session snapshotOfRecordsInTruth] recordsWithMatchingAttributes:
+            [NSDictionary dictionaryWithObject:name forKey:ISyncRecordEntityNameKey]]];
+        *newerTruth=[[truth copy] autorelease];
+      }
       RCErrorSet(error,1,"A newer local change is pending; resolution was not acknowledged");
       goto done;
     }

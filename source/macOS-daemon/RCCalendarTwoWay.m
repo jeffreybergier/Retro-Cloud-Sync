@@ -50,9 +50,13 @@ static NSDictionary *Paths(RCCalendarStore *store,long long resource,NSData *bod
   icalcomponent_free(calendar);
   return paths;
 }
+static BOOL Validate(RCCalendarStore *, NSData *, NSDictionary *, NSDictionary *, NSString *, RCError *);
 NSDictionary *RCCalendarProjectVerified(void *opaque,NSDictionary *current,NSData *body,RCError *error)
 {
   RCCalendarStore *store=opaque;
+  if ([[current objectForKey:@"detachedReceipt"] boolValue])
+    return Validate(store,body,[current objectForKey:@"paths"],[current objectForKey:@"graph"],
+        [current objectForKey:@"root"],error) ? current : nil;
   NSString *key=[current objectForKey:@"key"], *root=[current objectForKey:@"root"];
   if (![key hasPrefix:@"resource-"]) return nil;
   const char *number=[[key substringFromIndex:9] UTF8String]; char *end=NULL;
@@ -287,9 +291,9 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
   }
   if (step!=SQLITE_DONE) goto failed;
   sqlite3_finalize(q); q=NULL;
-  RCTwoWayContext c={j,RCCalendarSyncClientIdentifier(accountID),S(description),eventEntity,resources,graph,RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified};
+  RCTwoWayContext c={j,RCCalendarSyncClientIdentifier(accountID),S(description),eventEntity,resources,graph,RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
   if (!RCTwoWayExchange(&c,error)) return 0;
-  if (c.didPublish) {
+  if (c.didPublishAll) {
     if (!RCTwoWaySQL(&j,error,"BEGIN IMMEDIATE")) return 0;
     NSEnumerator *it=[resources objectEnumerator]; NSDictionary *r;
     while ((r=[it nextObject])) {
@@ -311,7 +315,7 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
       RCTwoWaySQL(&j,NULL,"ROLLBACK"); return 0;
     }
   }
-  if (count) *count=c.didPublish ? (long)[graph count] : -1;
+  if (count) *count=c.didPublishAll ? (long)[graph count] : -1;
   return 1;
 failed:
   sqlite3_finalize(q); if (!error->code) RCErrorSet(error,1,"Could not build two-way calendar graph"); return 0;

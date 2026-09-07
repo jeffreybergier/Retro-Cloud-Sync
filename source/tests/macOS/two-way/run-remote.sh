@@ -20,7 +20,7 @@ scp -o LogLevel=ERROR "$BUILD_ROOT/tests/macOS/two-way/TwoWaySyncTests" \
   "$test_host:$remote/"
 echo "Two-way tests: $test_host:~/$remote"
 ssh -o LogLevel=ERROR "$test_host" "osascript -e 'tell application \"Terminal\" to do script \"cd ~/$remote && bash run-on-mac.command $test_arg\"'"
-for ((attempt=0;attempt<450;attempt++)); do
+for ((attempt=0;attempt<900;attempt++)); do
   if ssh -o LogLevel=ERROR "$test_host" "test -f '$remote/status'"; then
     scp -o LogLevel=ERROR "$test_host:$remote/*.log" "$test_host:$remote/status" "$local_artifacts/"
     cat "$local_artifacts/two-way.log"

@@ -38,7 +38,7 @@ fi
 ./RetroCloudContactsSyncServicesVerifier snapshot AddressBook-baseline.plist
 baseline=1
 /usr/bin/osascript <<'APPLESCRIPT' &
-repeat 900 times
+repeat 1800 times
   tell application "System Events"
     if exists process "syncuid" then
       tell process "syncuid"

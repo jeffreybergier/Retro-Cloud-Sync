@@ -40,4 +40,7 @@ NSDictionary *RCSyncResolveConflictWithIntent(ISyncClient *client,
    requires a full resync. Repeating after a successful acceptance is safe. */
 BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
     NSDictionary *receipt, RCError *error);
+/* On a changed receipt, return the post-mingling truth without accepting it.
+   The two-way coordinator can durably queue a successor against the verified base. */
+BOOL RCSyncAcceptUpload(ISyncClient *, NSDictionary *, NSDictionary **, RCError *);
 #endif

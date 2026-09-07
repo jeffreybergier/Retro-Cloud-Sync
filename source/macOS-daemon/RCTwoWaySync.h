@@ -12,7 +12,9 @@
 typedef NSMutableDictionary *(*RCTwoWayEncoder)(void *, NSDictionary *,
     NSDictionary *, NSString *, RCError *);
 /* Reconstruct an immutable, verified upload using the current resource's
-   identity. Return nil if the href now identifies a different logical object. */
+   identity. Return nil if the href now identifies a different logical object.
+   With detachedReceipt=YES, validate the saved body against the supplied native
+   graph/paths without requiring a currently imported resource identity. */
 typedef NSDictionary *(*RCTwoWayVerifiedProjector)(void *, NSDictionary *, NSData *, RCError *);
 typedef struct {
   RCWriteJournal journal;
@@ -25,6 +27,7 @@ typedef struct {
   void *context;
   BOOL didPublish;
   RCTwoWayVerifiedProjector projectVerified;
+  BOOL didPublishAll; /* Partial fast publication must not checkpoint/prune the full mirror. */
 } RCTwoWayContext;
 
 BOOL RCTwoWayInitialize(RCWriteJournal *, RCError *);

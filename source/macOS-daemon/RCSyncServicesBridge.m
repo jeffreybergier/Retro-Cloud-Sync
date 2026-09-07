@@ -167,6 +167,11 @@ static int RCPushChild(RCSyncExportContext *context, long long contactIdentifier
   NSString *value;
   NSString *label;
 
+  /* Empty values and invalid URLs have no native child or identity. */
+  if (![entity isEqualToString:kRCAddressEntity]) {
+    NSString *visible=RCString(property->decodedValue);
+    if (![visible length] || ([entity isEqualToString:kRCURLEntity] && ![NSURL URLWithString:visible])) return 1;
+  }
   if (context->propertyIdentities) {
     recordIdentifier=[context->propertyIdentities objectForKey:[NSNumber numberWithInt:property->position]];
   } else {

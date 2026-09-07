@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #include <stdarg.h>
 #include <time.h>
+#include <string.h>
 
 BOOL RCTwoWaySQL(RCWriteJournal *j, RCError *error, const char *format, ...)
 {
@@ -20,6 +21,8 @@ BOOL RCTwoWaySQL(RCWriteJournal *j, RCError *error, const char *format, ...)
 BOOL RCTwoWayInitialize(RCWriteJournal *j, RCError *error)
 {
   return RCTwoWaySQL(j,error,
+      "CREATE TABLE IF NOT EXISTS two_way_detached(operation_id INTEGER PRIMARY KEY);"
+      "CREATE TABLE IF NOT EXISTS two_way_publications(account_id INTEGER PRIMARY KEY,graph BLOB NOT NULL);"
       "CREATE TABLE IF NOT EXISTS two_way_intents("
       "operation_id INTEGER PRIMARY KEY,receipt BLOB NOT NULL,paths BLOB NOT NULL);"
       "CREATE TABLE IF NOT EXISTS two_way_aliases(account_id INTEGER NOT NULL,"
@@ -108,6 +111,29 @@ static BOOL SaveIntent(RCWriteJournal *j, long long operation, NSDictionary *rec
   if (!ok) RCErrorSet(error,1,"Could not commit native write receipt");
   return ok;
 }
+static NSDictionary *PublishedGraph(RCWriteJournal *j, RCError *error)
+{
+  sqlite3_stmt *q=NULL; NSDictionary *graph=nil;
+  if (sqlite3_prepare_v2(j->db,"SELECT graph FROM two_way_publications WHERE account_id=?",-1,&q,NULL)==SQLITE_OK) {
+    sqlite3_bind_int64(q,1,j->account); int step=sqlite3_step(q);
+    if (step==SQLITE_ROW) graph=Unarchive(q,0);
+    else if (step==SQLITE_DONE) graph=[NSDictionary dictionary];
+  }
+  sqlite3_finalize(q);
+  if (!graph) RCErrorSet(error,1,"Could not read two-way publication checkpoint");
+  return graph;
+}
+static BOOL SavePublished(RCWriteJournal *j, NSDictionary *graph, RCError *error)
+{
+  NSData *data=[NSKeyedArchiver archivedDataWithRootObject:graph]; sqlite3_stmt *q=NULL; BOOL ok=NO;
+  if (sqlite3_prepare_v2(j->db,"INSERT OR REPLACE INTO two_way_publications VALUES(?,?)",-1,&q,NULL)==SQLITE_OK) {
+    sqlite3_bind_int64(q,1,j->account); sqlite3_bind_blob(q,2,[data bytes],(int)[data length],SQLITE_TRANSIENT);
+    ok=sqlite3_step(q)==SQLITE_DONE;
+  }
+  sqlite3_finalize(q);
+  if (!ok) RCErrorSet(error,1,"Could not checkpoint two-way publication");
+  return ok;
+}
 static NSMutableDictionary *Aliases(RCWriteJournal *j, RCError *error)
 {
   NSMutableDictionary *result=[NSMutableDictionary dictionary];
@@ -159,16 +185,43 @@ static BOOL Attention(RCWriteJournal *j, NSString *root, const char *reason, RCE
   return RCTwoWaySQL(j,error,"INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,%Q)",
       j->account,[root UTF8String],reason);
 }
-/* The mirror must contain exactly the verified revision before accepting a
-   local change. Aliases commit first, making a crash before/after acceptance
-   replayable without allocating a second identity for a native creation. */
+/* Retire the verified upload and queue the newer native revision atomically.
+   Its precondition is the verified upload, never a later remote ETag. */
+static BOOL QueueSuccessor(RCTwoWayContext *c, RCWriteOperation *o, NSDictionary *verified,
+    NSDictionary *aliases, NSDictionary *truth, RCError *error)
+{
+  RCWriteJournal *j=&c->journal;
+  NSDictionary *base=MapResource(verified,aliases);
+  NSString *root=[base objectForKey:@"root"];
+  if (![truth objectForKey:root]) return NO; /* Remote deletion remains disabled. */
+  NSMutableDictionary *desired=c->encode(c->context,base,truth,root,error);
+  if (!desired) return NO;
+  NSMutableDictionary *receipt=[NSMutableDictionary dictionaryWithDictionary:[desired objectForKey:@"graph"]];
+  NSEnumerator *ids=[[base objectForKey:@"graph"] keyEnumerator]; NSString *identifier;
+  while ((identifier=[ids nextObject])) if (![truth objectForKey:identifier]) [receipt setObject:[NSNull null] forKey:identifier];
+  NSData *body=[desired objectForKey:@"body"];
+  long long operation=0, revision=o->localRevision ?: 1;
+  NSString *change=[NSString stringWithFormat:@"two-way-successor:%lld",o->id];
+  if (!RCTwoWaySQL(j,error,"BEGIN IMMEDIATE")) return NO;
+  BOOL ok=RCWriteJournalSetBase(j,o->resourceKey,o->href,o->resultETag,o->resultBody,o->resultLength,revision,error) &&
+      RCWriteJournalAcknowledge(j,o->id,error) &&
+      RCWriteJournalEnqueue(j,[change UTF8String],o->resourceKey,o->href,
+          "update",revision,[body bytes],[body length],&operation,error) &&
+      SaveIntent(j,operation,receipt,[desired objectForKey:@"paths"],error) && RCTwoWaySQL(j,error,"COMMIT");
+  if (!ok) RCTwoWaySQL(j,NULL,"ROLLBACK");
+  return ok;
+}
+/* Validate the immutable upload against its receipt before accepting it.
+   Aliases commit first, making a crash before/after acceptance replayable
+   without allocating a second identity for a native creation. */
 static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHref,
                      NSMutableDictionary *aliases, RCError *error)
 {
   RCWriteJournal *j=&c->journal;
   sqlite3_stmt *q=NULL; NSMutableArray *pending=[NSMutableArray array]; int step=SQLITE_ERROR;
   if (sqlite3_prepare_v2(j->db,"SELECT o.id,i.receipt,i.paths FROM write_operations o JOIN two_way_intents i "
-      "ON i.operation_id=o.id WHERE o.account_id=? AND o.state='applied' ORDER BY o.id",-1,&q,NULL)==SQLITE_OK) {
+      "ON i.operation_id=o.id WHERE o.account_id=? AND (o.state='applied' OR "
+      "(o.state='acknowledged' AND EXISTS(SELECT 1 FROM two_way_detached d WHERE d.operation_id=o.id))) ORDER BY o.id",-1,&q,NULL)==SQLITE_OK) {
     sqlite3_bind_int64(q,1,j->account);
     while ((step=sqlite3_step(q))==SQLITE_ROW)
       [pending addObject:[NSArray arrayWithObjects:[NSNumber numberWithLongLong:sqlite3_column_int64(q,0)],
@@ -181,10 +234,27 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
     RCWriteOperation o;
     if (!RCWriteJournalGet(j,[[item objectAtIndex:0] longLongValue],&o,error)) return NO;
     NSDictionary *resource=[byHref objectForKey:[NSString stringWithUTF8String:o.href]];
+    BOOL acknowledged=!strcmp(o.state,"acknowledged");
+    /* A history-filtered creation may return before we have ever learned its
+       imported identity. Keep only that alias work pending, not the upload. */
+    if (acknowledged && !resource) { RCWriteOperationClear(&o); continue; }
     NSDictionary *receipt=[item objectAtIndex:1], *wantedPaths=[item objectAtIndex:2];
     NSMutableDictionary *newAliases=[NSMutableDictionary dictionary];
     NSData *verifiedBody=[NSData dataWithBytes:o.resultBody length:o.resultLength];
     NSDictionary *verified=resource;
+    BOOL missing=resource==nil;
+    if (missing && c->projectVerified) {
+      NSString *root=[wantedPaths objectForKey:@"root"] ?: [wantedPaths objectForKey:@"event:"];
+      if (root) {
+        /* The successful inventory may omit a deleted or out-of-window upload.
+           Validate its saved bytes against its original native identities. */
+        NSDictionary *detached=[NSDictionary dictionaryWithObjectsAndKeys:root,@"root",
+            [NSString stringWithUTF8String:o.resourceKey],@"key",[NSString stringWithUTF8String:o.href],@"href",
+            verifiedBody,@"body",LiveReceipt(receipt),@"graph",wantedPaths,@"paths",
+            [NSNumber numberWithBool:YES],@"detachedReceipt",nil];
+        verified=c->projectVerified(c->context,detached,verifiedBody,error);
+      }
+    }
     BOOL matched=resource && [[resource objectForKey:@"etag"] isEqual:[NSString stringWithUTF8String:o.resultETag ?: ""]] &&
         [[resource objectForKey:@"body"] isEqual:verifiedBody];
     if (!matched && resource && c->projectVerified && o.resultETag && o.resultLength) {
@@ -196,6 +266,7 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
       verified=c->projectVerified(c->context,resource,verifiedBody,&projectionError);
       matched=verified!=nil;
     }
+    if (missing) matched=verified!=nil;
     NSEnumerator *paths=[wantedPaths keyEnumerator]; NSString *path;
     while (matched && (path=[paths nextObject])) {
       NSString *imported=[[verified objectForKey:@"paths"] objectForKey:path];
@@ -204,6 +275,7 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
     }
     if (matched) matched=RCTwoWayGraphsEqual(RCTwoWayRemap([verified objectForKey:@"graph"],newAliases),LiveReceipt(receipt));
     if (!matched) {
+      if (acknowledged) { RCWriteOperationClear(&o); continue; }
       Attention(j,[[receipt allKeys] count] ? [[receipt allKeys] objectAtIndex:0] : @"unknown",
           "verified-write-awaits-matching-mirror",error);
       RCWriteOperationClear(&o); continue;
@@ -214,16 +286,23 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
       if (!RCTwoWaySQL(j,error,"INSERT OR REPLACE INTO two_way_aliases VALUES(%lld,%Q,%Q)",j->account,
           [identifier UTF8String],[[newAliases objectForKey:identifier] UTF8String])) break;
     }
-    if (identifier || !RCTwoWaySQL(j,error,"COMMIT")) {
+    if (identifier || !RCTwoWaySQL(j,error,missing ?
+        "INSERT OR IGNORE INTO two_way_detached VALUES(%lld)" :
+        "DELETE FROM two_way_detached WHERE operation_id=%lld",o.id) || !RCTwoWaySQL(j,error,"COMMIT")) {
       RCTwoWaySQL(j,NULL,"ROLLBACK"); RCWriteOperationClear(&o); return NO;
     }
     [aliases addEntriesFromDictionary:newAliases];
-    if (RCSyncAcceptConflictResolution(client,receipt,error)) {
+    if (acknowledged) { RCWriteOperationClear(&o); continue; }
+    NSDictionary *newerTruth=nil;
+    if (RCSyncAcceptUpload(client,receipt,&newerTruth,error)) {
       if (!RCWriteJournalAcknowledge(j,o.id,error)) { RCWriteOperationClear(&o); return NO; }
       NSEnumerator *completedIDs=[receipt keyEnumerator]; NSString *completedID;
       while ((completedID=[completedIDs nextObject])) if (!RCTwoWaySQL(j,error,
           "DELETE FROM two_way_attention WHERE account_id=%lld AND record_id=%Q AND reason IN ('verified-write-awaits-matching-mirror','verified-write-awaits-local-acceptance')",
           j->account,[completedID UTF8String])) { RCWriteOperationClear(&o); return NO; }
+    } else if (!missing && newerTruth && QueueSuccessor(c,&o,verified,newAliases,newerTruth,error)) {
+      NSLog(@"Two-way sync queued the newer native revision against the verified upload");
+      RCErrorClear(error);
     } else {
       NSLog(@"Two-way acceptance deferred: %s",error->message);
       Attention(j,[[receipt allKeys] objectAtIndex:0],"verified-write-awaits-local-acceptance",NULL);
@@ -241,7 +320,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
   BOOL ok=NO;
   const char *phase="registration";
   RCErrorClear(error);
-  c->didPublish=NO;
+  c->didPublish=NO; c->didPublishAll=NO;
   if (!RCTwoWayInitialize(j,error)) return NO;
   BOOL contacts=[c->rootEntity isEqual:@"com.apple.contacts.Contact"];
   /* Opting into two-way contacts includes the Mac's existing address book.
@@ -296,13 +375,34 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
       NSDictionary *receipt=Unarchive(q,1);
       [busy addObjectsFromArray:[receipt allKeys]];
       resource=[byHref objectForKey:href];
-      if (resource) [busy addObject:[MapResource(resource,aliases) objectForKey:@"root"]];
+      if (resource) [busy addObjectsFromArray:[[MapResource(resource,aliases) objectForKey:@"graph"] allKeys]];
+      NSEnumerator *pendingRecords=[receipt objectEnumerator]; id pendingRecord;
+      while ((pendingRecord=[pendingRecords nextObject])) if ([pendingRecord isKindOfClass:[NSDictionary class]])
+        [busy addObjectsFromArray:[pendingRecord objectForKey:@"calendar"] ?: [NSArray array]];
     }
     if (step!=SQLITE_DONE) goto sqlError;
     sqlite3_finalize(q); q=NULL;
-    /* Do not push a newer download while writes/acceptance remain unresolved.
-       This conservative gate preserves pending local edits across retries. */
-    if ([busy count]) { NSLog(@"Two-way sync has pending writes or conflicts; publication deferred"); ok=YES; goto done; }
+    NSDictionary *published=PublishedGraph(j,error);
+    if (!published) goto done;
+    [known addObjectsFromArray:[busy allObjects]];
+    [known addObjectsFromArray:[published allKeys]];
+    [known addObjectsFromArray:[aliases allValues]];
+    /* A deleted/filtered imported identity is not a new native creation, even
+       when upgrading an older journal without a publication checkpoint. */
+    const char *identitySQL=contacts ?
+        "SELECT 'contact-'||c.sync_record_id FROM contacts c JOIN collections b ON b.id=c.collection_id WHERE b.account_id=?" :
+        "SELECT 'cal-'||i.sync_id FROM sync_record_ids i JOIN calendar_resources r ON i.owner='resource-'||r.id JOIN calendars c ON c.id=r.calendar_id WHERE c.account_id=?";
+    if (sqlite3_prepare_v2(j->db,identitySQL,-1,&q,NULL)!=SQLITE_OK) goto sqlError;
+    sqlite3_bind_int64(q,1,j->account);
+    while ((step=sqlite3_step(q))==SQLITE_ROW) {
+      NSString *imported=[NSString stringWithUTF8String:(const char *)sqlite3_column_text(q,0)];
+      [known addObject:[aliases objectForKey:imported] ?: imported];
+    }
+    if (step!=SQLITE_DONE) goto sqlError;
+    sqlite3_finalize(q); q=NULL;
+    /* Fast publication leaves unresolved resource snapshots untouched. Keep
+       their calendar containers untouched too, including inverse relationships. */
+    if ([busy count]) NSLog(@"Two-way sync is isolating unresolved records; unrelated records can continue");
     phase="session start";
     session=[ISyncSession beginSessionWithClient:client entityNames:entities
         beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
@@ -312,14 +412,32 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
       RCErrorSet(error,1,"Two-way sync requires recovery from a truth reset; no uploads queued"); goto done;
     }
     phase="remote graph publication";
-    [session clientWantsToPushAllRecordsForEntityNames:entities];
+    if ([busy count]) {
+      it=[entities objectEnumerator];
+      while ((entity=[it nextObject])) if ([session shouldPushAllRecordsForEntityName:entity]) {
+        RCErrorSet(error,1,"Pending writes require a fast session before resynchronization"); goto done;
+      }
+    } else [session clientWantsToPushAllRecordsForEntityNames:entities];
     it=[graph keyEnumerator]; NSString *key;
-    while ((key=[it nextObject])) [session pushChangesFromRecord:[graph objectForKey:key] withIdentifier:key];
+    while ((key=[it nextObject])) if (![busy containsObject:key])
+      [session pushChangesFromRecord:[graph objectForKey:key] withIdentifier:key];
+    if ([busy count]) {
+      it=[published keyEnumerator];
+      while ((key=[it nextObject])) if (![graph objectForKey:key] && ![busy containsObject:key])
+        [session deleteRecordWithIdentifier:key];
+    }
     phase="local change collection";
     if (![session prepareToPullChangesForEntityNames:pullEntities beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]) {
       RCErrorSet(error,1,"Two-way merge is pending"); goto done;
     }
-    c->didPublish=YES;
+    NSMutableDictionary *checkpoint=[NSMutableDictionary dictionaryWithDictionary:graph];
+    it=[busy objectEnumerator];
+    while ((key=[it nextObject])) {
+      if ([published objectForKey:key]) [checkpoint setObject:[published objectForKey:key] forKey:key];
+      else [checkpoint removeObjectForKey:key];
+    }
+    if (!SavePublished(j,checkpoint,error)) goto done;
+    c->didPublish=YES; c->didPublishAll=[busy count]==0;
     NSMutableDictionary *truth=[NSMutableDictionary dictionary];
     it=[entities objectEnumerator];
     while ((entity=[it nextObject])) [truth addEntriesFromDictionary:[[session snapshotOfRecordsInTruth]
@@ -370,6 +488,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
     it=[resources objectEnumerator];
     while ((resource=[it nextObject])) {
       NSString *root=[resource objectForKey:@"root"];
+      if ([busy containsObject:root]) continue;
       BOOL creating=![resource objectForKey:@"body"];
       if (![truth objectForKey:root]) {
         if (!Attention(j,root,"remote-deletion-disabled",error)) goto done;

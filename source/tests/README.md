@@ -199,3 +199,11 @@ The `TWO_WAY_TEST_MODE=contact-publication` two-way subset covers a server-side
 note edit before initial upload acknowledgement, changed-UID rejection, and
 replay without duplicate uploads. It runs contact mapper checks and verifies
 the pre-existing Address Book baseline without running the calendar suite.
+
+The offline two-way regression suite also verifies consecutive native edits
+before acknowledgement (including a journal reopen), uploads deleted or excluded
+by the history window before mirror download, and continued unrelated uploads,
+downloads and remote deletions while a record is conflicted. Empty raw contact
+fields retain their positions through note edits, value changes, removals and
+additions. Its replacement HTTP transport accepts only `fixture.invalid`;
+it neither obtains Keychain credentials nor contacts iCloud.

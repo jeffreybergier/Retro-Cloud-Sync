@@ -45,16 +45,26 @@ static NSString *StructuredEdit(RCVCardDocument *doc, NSString *name, int occurr
   if (address && Changed(base,record,@"street")) { [parts replaceObjectAtIndex:0 withObject:@""]; [parts replaceObjectAtIndex:1 withObject:@""]; }
   return [parts componentsJoinedByString:@";"];
 }
-static NSDictionary *Paths(NSDictionary *graph,NSString *root)
+NSDictionary *RCContactNativePaths(NSData *body, NSDictionary *graph, NSString *root, RCError *error)
 {
+  RCVCardDocument doc;
+  if (!RCVCardParse([body bytes],[body length],&doc,error)) return nil;
   NSMutableDictionary *paths=[NSMutableDictionary dictionaryWithObject:root forKey:@"root"];
   NSDictionary *contact=[graph objectForKey:root]; int k;
   for (k=0;k<4;k++) {
-    NSArray *ids=[contact objectForKey:relations[k]]; NSUInteger n;
-    for (n=0;n<[ids count];n++) if ([graph objectForKey:[ids objectAtIndex:n]])
-      [paths setObject:[ids objectAtIndex:n] forKey:[NSString stringWithFormat:@"%@:%lu",properties[k],(unsigned long)n]];
+    NSArray *ids=[contact objectForKey:relations[k]]; NSUInteger n=0; size_t p; int occurrence=0;
+    for (p=0;p<doc.propertyCount;p++) if (!strcasecmp(doc.properties[p].name,[properties[k] UTF8String])) {
+      NSString *value=S(doc.properties[p].decodedValue);
+      BOOL visible=k==2 || ([value length] && (k!=3 || [NSURL URLWithString:value]));
+      if (visible) {
+        if (n>=[ids count]) { RCVCardDocumentClear(&doc); RCErrorSet(error,1,"Contact paths do not match the native graph"); return nil; }
+        [paths setObject:[ids objectAtIndex:n++] forKey:[NSString stringWithFormat:@"%@:%d",properties[k],occurrence]];
+      }
+      occurrence++;
+    }
+    if (n!=[ids count]) { RCVCardDocumentClear(&doc); RCErrorSet(error,1,"Contact paths do not match the native graph"); return nil; }
   }
-  return paths;
+  RCVCardDocumentClear(&doc); return paths;
 }
 NSDictionary *RCContactProjectVerified(void *opaque,NSDictionary *current,NSData *body,RCError *error)
 {
@@ -229,12 +239,18 @@ NSMutableDictionary *RCContactEncodeLocal(void *opaque,NSDictionary *resource,NS
   if (!RCTwoWayRecordsEqual(expected,record)) goto unsupported;
   NSMutableDictionary *desiredPaths=[NSMutableDictionary dictionaryWithObject:root forKey:@"root"];
   for(k=0;k<4;k++) {
-    NSArray *ids=[base objectForKey:relations[k]], *currentIDs=[record objectForKey:relations[k]]; NSUInteger n; int outputIndex=0;
-    for(n=0;n<[ids count];n++) {
-      NSString *identifier=[ids objectAtIndex:n];
+    NSArray *ids=[base objectForKey:relations[k]], *currentIDs=[record objectForKey:relations[k]];
+    int n=0, outputIndex=0; size_t propertyIndex;
+    for(propertyIndex=0;propertyIndex<doc.propertyCount;propertyIndex++) {
+      if (strcasecmp(doc.properties[propertyIndex].name,[properties[k] UTF8String])) continue;
+      int occurrence=n++;
+      NSString *identifier=[[resource objectForKey:@"paths"] objectForKey:
+          [NSString stringWithFormat:@"%@:%d",properties[k],occurrence]];
+      /* Invisible raw fields still occupy positions and must survive edits. */
+      if (!identifier) { outputIndex++; continue; }
       NSDictionary *old=[baseGraph objectForKey:identifier], *child=[truth objectForKey:identifier];
       if (![currentIDs containsObject:identifier]) {
-        if (!AddEdit(&doc,properties[k],(int)n,nil,edits,error)) goto done;
+        if (!AddEdit(&doc,properties[k],occurrence,nil,edits,error)) goto done;
         continue;
       }
       if (!child) goto unsupported;
@@ -248,8 +264,8 @@ NSMutableDictionary *RCContactEncodeLocal(void *opaque,NSDictionary *resource,NS
       }
       if (!RCTwoWayRecordsEqual(check,child)) goto unsupported;
       if (changed) {
-        NSString *value=k==2 ? StructuredEdit(&doc,@"ADR",(int)n,[NSArray arrayWithObjects:@"",@"",@"street",@"city",@"state",@"postal code",@"country",nil],old,child,YES) : RCTwoWayEscape([child objectForKey:@"value"]);
-        if (!AddEdit(&doc,properties[k],(int)n,value,edits,error)) goto done;
+        NSString *value=k==2 ? StructuredEdit(&doc,@"ADR",occurrence,[NSArray arrayWithObjects:@"",@"",@"street",@"city",@"state",@"postal code",@"country",nil],old,child,YES) : RCTwoWayEscape([child objectForKey:@"value"]);
+        if (!AddEdit(&doc,properties[k],occurrence,value,edits,error)) goto done;
       }
     }
     NSEnumerator *newIDs=[currentIDs objectEnumerator]; NSString *identifier;
@@ -312,17 +328,19 @@ int RCSyncServicesTwoWayContacts(RCContactStore *store,const char *description,l
     NSData *body=[NSData dataWithBytes:sqlite3_column_blob(q,4) length:sqlite3_column_bytes(q,4)];
     NSDictionary *mapped=RCContactNativeGraph(store,sqlite3_column_int64(q,0),[key UTF8String],body,error);
     if (!mapped) goto failed;
+    NSDictionary *paths=RCContactNativePaths(body,mapped,root,error);
+    if (!paths) goto failed;
     [graph addEntriesFromDictionary:mapped];
     [resources addObject:[NSDictionary dictionaryWithObjectsAndKeys:key,@"key",root,@"root",S((const char *)sqlite3_column_text(q,2)),@"href",
-        S((const char *)sqlite3_column_text(q,3)),@"etag",body,@"body",mapped,@"graph",Paths(mapped,root),@"paths",
+        S((const char *)sqlite3_column_text(q,3)),@"etag",body,@"body",mapped,@"graph",paths,@"paths",
         [NSNumber numberWithLongLong:generation],@"revision",nil]];
   }
   if (step!=SQLITE_DONE) goto failed;
   sqlite3_finalize(q); q=NULL;
-  RCTwoWayContext c={j,RCContactSyncClientIdentifier(S(RCContactStoreSyncIdentifier(store))),S(description),entity,resources,graph,RCContactEncodeLocal,store,NO,RCContactProjectVerified};
+  RCTwoWayContext c={j,RCContactSyncClientIdentifier(S(RCContactStoreSyncIdentifier(store))),S(description),entity,resources,graph,RCContactEncodeLocal,store,NO,RCContactProjectVerified,NO};
   if (!RCTwoWayExchange(&c,error)) return 0;
-  if (c.didPublish && !RCContactStoreMarkPublished(store,generation,error)) return 0;
-  if (count) *count=c.didPublish ? (long)[graph count] : -1;
+  if (c.didPublishAll && !RCContactStoreMarkPublished(store,generation,error)) return 0;
+  if (count) *count=c.didPublishAll ? (long)[graph count] : -1;
   return 1;
 failed:
   sqlite3_finalize(q); if (!error->code) RCErrorSet(error,1,"Could not build two-way contact graph"); return 0;
