@@ -10,10 +10,9 @@ int RCICloudCredentialsSave(const char *username, const void *password,
                             const char *installedDaemonPath, RCError *error);
 int RCICloudCredentialsCopyPassword(const char *username, char **password,
                                     size_t *passwordLength, RCError *error);
-int RCICloudCredentialsExist(const char *username);
-int RCICloudCredentialsRefreshAccess(const char *username,
-                                     const char *installedDaemonPath,
-                                     RCError *error);
+/* Reads account metadata only; the caller owns the returned string. */
+int RCICloudCredentialsCopyUsername(const char *username, char **savedUsername,
+                                    RCError *error);
 int RCICloudCredentialsRemove(const char *username, RCError *error);
 void RCICloudCredentialsClearPassword(char *password, size_t passwordLength);
 

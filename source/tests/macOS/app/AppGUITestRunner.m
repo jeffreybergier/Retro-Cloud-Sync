@@ -343,9 +343,32 @@ static BOOL ConfigurationMatches(NSString *path,
       PrintFail(@"Save/Reset is missing from the iCloud Account box");
       goto cleanup;
     }
-    CFRelease(accountButton);
+    {
+      CFTypeRef title = CopyAXAttribute(accountButton, kAXTitleAttribute);
+      BOOL expectsEnabled = [(NSString *)title isEqualToString:@"Save"];
+      NSMutableArray *fields = [NSMutableArray array];
+      unsigned int index;
+      BOOL passed;
+      if (title != NULL) CFRelease(title);
+      [self collectElementsWithRole:kAXTextFieldRole inElement:windowElement_
+                             depth:0 results:fields];
+      passed = [fields count] == 2;
+      for (index = 0; passed && index < [fields count]; index++) {
+        CFTypeRef enabled = CopyAXAttribute(
+            (AXUIElementRef)[fields objectAtIndex:index], kAXEnabledAttribute);
+        passed = enabled != NULL &&
+            CFGetTypeID(enabled) == CFBooleanGetTypeID() &&
+            (BOOL)CFBooleanGetValue((CFBooleanRef)enabled) == expectsEnabled;
+        if (enabled != NULL) CFRelease(enabled);
+      }
+      CFRelease(accountButton);
+      if (!passed) {
+        PrintFail(@"Account fields must both be enabled for Save and disabled for Reset");
+        goto cleanup;
+      }
+    }
   }
-  PrintPass(@"Credential Save/Reset button is inside the iCloud Account box");
+  PrintPass(@"Credential Save/Reset button is inside the box and account fields match its state");
   {
     AXUIElementRef slider = [self findElementWithRole:kAXSliderRole
         inElement:windowElement_ depth:0];

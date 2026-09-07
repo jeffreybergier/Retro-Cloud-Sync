@@ -147,45 +147,41 @@ int RCICloudCredentialsCopyPassword(const char *username, char **password,
   return 1;
 }
 
-int RCICloudCredentialsExist(const char *username)
+int RCICloudCredentialsCopyUsername(const char *username, char **savedUsername,
+                                    RCError *error)
 {
   SecKeychainItemRef item = NULL;
+  SecKeychainAttribute attribute = { kSecAccountItemAttr, 0, NULL };
+  SecKeychainAttributeList attributes = { 1, &attribute };
   OSStatus status;
+  char *copy;
 
-  if (username == NULL || username[0] == '\0') return 0;
+  if (username == NULL || username[0] == '\0' || savedUsername == NULL) {
+    RCErrorSet(error, kRCParameterError, "Invalid iCloud account parameters");
+    return 0;
+  }
+  *savedUsername = NULL;
   status = RCFindItem(username, NULL, NULL, &item);
+  if (status == noErr) {
+    /* Never request the password data when displaying the saved account. */
+    status = SecKeychainItemCopyContent(item, NULL, &attributes, NULL, NULL);
+  }
   if (item != NULL) CFRelease(item);
-  return status == noErr;
-}
-
-int RCICloudCredentialsRefreshAccess(const char *username,
-                                     const char *installedDaemonPath,
-                                     RCError *error)
-{
-  SecKeychainItemRef item = NULL;
-  SecAccessRef access = NULL;
-  OSStatus status;
-
-  if (username == NULL || username[0] == '\0' ||
-      installedDaemonPath == NULL || installedDaemonPath[0] == '\0') {
-    RCErrorSet(error, kRCParameterError,
-               "Invalid iCloud credential parameters");
-    return 0;
-  }
-  status = RCFindItem(username, NULL, NULL, &item);
   if (status != noErr) {
-    RCSetSecurityError(error, status, "Could not locate iCloud credentials");
+    RCSetSecurityError(error, status, "Could not read saved Apple ID");
     return 0;
   }
-  status = RCCreateAccess(installedDaemonPath, &access);
-  if (status == noErr) status = SecKeychainItemSetAccess(item, access);
-  if (access != NULL) CFRelease(access);
-  CFRelease(item);
-  if (status != noErr) {
-    RCSetSecurityError(error, status,
-                       "Could not update iCloud credential access rules");
+  copy = (char *)malloc((size_t)attribute.length + 1);
+  if (copy != NULL) {
+    if (attribute.length != 0) memcpy(copy, attribute.data, attribute.length);
+    copy[attribute.length] = '\0';
+  }
+  SecKeychainItemFreeContent(&attributes, NULL);
+  if (copy == NULL) {
+    RCErrorSet(error, kRCMemoryError, "Out of memory reading saved Apple ID");
     return 0;
   }
+  *savedUsername = copy;
   return 1;
 }
 

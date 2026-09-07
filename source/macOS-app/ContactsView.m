@@ -11,6 +11,10 @@
 #include "RCICloudCredentials.h"
 
 #include <string.h>
+#include <stdlib.h>
+
+/* Empty means explicitly reset; absence means a pre-marker installation. */
+static NSString * const kRCSavedAccount = @"RCKeychainSavedAppleID";
 
 /* Continuous actions update the readout; commit once dragging has finished. */
 @interface RCIntervalSlider : NSSlider {
@@ -38,6 +42,7 @@
 - (void)addLabel:(NSString *)text frame:(NSRect)frame;
 - (void)accountButtonClicked:(id)sender;
 - (void)updateAccountButton;
+- (void)rememberSavedAccount:(NSString *)username;
 - (void)syncSettingsChanged:(id)sender;
 - (void)intervalChanged:(id)sender;
 - (void)updateIntervalLabel;
@@ -228,7 +233,6 @@
                                  22)];
     [usernameField_
         setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
-    [usernameField_ setDelegate:self];
     [self addSubview:usernameField_];
 
     [self addLabel:@"Password:"
@@ -270,7 +274,6 @@
 
 - (void)dealloc;
 {
-  [usernameField_ setDelegate:nil];
   [contactsSyncMatrix_ release];
   [calendarsSyncMatrix_ release];
   [calendarHistoryPopup_ release];
@@ -331,7 +334,18 @@
        (calendarsSyncMode == nil &&
         [[contacts objectForKey:@"CalendarsEnabled"] boolValue])) ? 1 : 0
                                    column:0];
-  [usernameField_ setStringValue:username];
+  {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *savedAccount = [defaults stringForKey:kRCSavedAccount];
+    if (savedAccount == nil) {
+      /* Migrate the configured account without opening the Keychain. Reset
+         remains available even if its item has already been removed. */
+      savedAccount = username;
+      [self rememberSavedAccount:savedAccount];
+    }
+    hasCredentials_ = [savedAccount length] != 0;
+    [usernameField_ setStringValue:hasCredentials_ ? savedAccount : username];
+  }
   syncIntervalSeconds_ =
       [[contacts objectForKey:@"SyncIntervalSeconds"] longLongValue];
   [intervalSlider_ setDoubleValue:syncIntervalSeconds_ / 60.0];
@@ -346,30 +360,22 @@
       message != nil ? message : @"Unknown error", @"OK", nil, nil);
 }
 
+- (void)rememberSavedAccount:(NSString *)username;
+{
+  NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+  [defaults setObject:username forKey:kRCSavedAccount];
+  hasCredentials_ = [username length] != 0;
+  if (![defaults synchronize]) {
+    [self setError:@"The saved account state could not be written. It may be incorrect when the app next opens."];
+  }
+}
+
 - (void)updateAccountButton;
 {
-  NSString *username = [[usernameField_ stringValue]
-      stringByTrimmingCharactersInSet:
-          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-
-  hasCredentials_ = RCICloudCredentialsExist([username UTF8String]);
   [accountButton_ setTitle:hasCredentials_ ? @"Reset" : @"Save"];
+  [usernameField_ setEnabled:!hasCredentials_];
   [passwordField_ setEnabled:!hasCredentials_];
   if (hasCredentials_) [passwordField_ setStringValue:@""];
-}
-
-- (void)controlTextDidChange:(NSNotification *)notification;
-{
-  if ([notification object] == usernameField_) {
-    [self updateAccountButton];
-  }
-}
-
-- (void)controlTextDidEndEditing:(NSNotification *)notification;
-{
-  if ([notification object] == usernameField_) {
-    [self syncSettingsChanged:[notification object]];
-  }
 }
 
 - (void)syncSettingsChanged:(id)sender;
@@ -423,6 +429,8 @@
   }
   oldContacts = [RCConfiguration
       contactsConfigurationFromConfiguration:configuration];
+  /* An Apple ID being typed is committed only by an explicit Save. */
+  if (!hasCredentials_) username = [oldContacts objectForKey:@"Username"];
   if ([[oldContacts objectForKey:@"Username"] isEqualToString:username] &&
       [[oldContacts objectForKey:@"ContactsSyncMode"]
           isEqualToString:contactsSyncMode] &&
@@ -464,18 +472,15 @@
       [[[RCServiceController alloc] init] autorelease];
 
   (void)sender;
-  /* Refresh a stale button without turning a Save click into a deletion. */
-  if (hasCredentials_ != RCICloudCredentialsExist([username UTF8String])) {
-    [self updateAccountButton];
-    return;
-  }
   RCErrorClear(&credentialError);
   if (hasCredentials_) {
     if (!RCICloudCredentialsRemove([username UTF8String], &credentialError)) {
       [self setError:[NSString stringWithUTF8String:credentialError.message]];
       return;
     }
+    [self rememberSavedAccount:@""];
   } else {
+    char *savedUsername = NULL;
     if ([username length] == 0 || [username UTF8String] == NULL ||
         [password length] == 0 || [password UTF8String] == NULL) {
       [self setError:@"Enter an Apple ID and an app-specific password."];
@@ -492,9 +497,28 @@
       [self setError:[NSString stringWithUTF8String:credentialError.message]];
       return;
     }
+    /* Saving is the only GUI action that reads account metadata. Preserve the
+       successful save even if this optional read-back fails. */
+    [usernameField_ setStringValue:username];
+    [self rememberSavedAccount:username];
+    [passwordField_ setStringValue:@""];
+    [self updateAccountButton];
+    if (RCICloudCredentialsCopyUsername([username UTF8String], &savedUsername,
+                                        &credentialError)) {
+      NSString *savedAccount = [NSString stringWithUTF8String:savedUsername];
+      if ([savedAccount length] != 0) {
+        [usernameField_ setStringValue:savedAccount];
+        [self rememberSavedAccount:savedAccount];
+      }
+      free(savedUsername);
+    } else {
+      [self setError:[NSString stringWithUTF8String:credentialError.message]];
+    }
+    [self saveSyncSettings];
   }
   [passwordField_ setStringValue:@""];
   [self updateAccountButton];
+  if (!hasCredentials_) [[self window] makeFirstResponder:usernameField_];
 }
 
 @end

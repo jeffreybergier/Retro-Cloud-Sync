@@ -44,6 +44,29 @@ uses a blank account with Contacts/Calendars disabled, and restores the original
 file bytes after the app exits, on success or failure. A recovery copy is kept
 with screenshots in case the harness is interrupted. It does not change Keychain
 credentials. Mail preferences and loopback listeners are still exercised.
+The Sync panel check verifies that both account fields are enabled for Save or
+both disabled for Reset. It does not press either credential button.
+
+For credential testing on a Mac, use a disposable account and keychain entry:
+
+- Save an Apple ID and password: the Apple ID is read back, both fields disable,
+  the password field clears, and the bottom-right button becomes Reset.
+- Reopen the app and Sync panel, then restart the daemon (including with a new
+  daemon build): the GUI must not query the keychain or modify access rules.
+  A replaced daemon may require Reset and Save to establish its new access.
+- Reset: the entry is deleted and both fields enable with a Save button. Repeat
+  after deleting the item externally; Reset must still succeed. A failed or
+  cancelled deletion must leave the fields disabled.
+- Type another Apple ID and leave the field: this must not access the keychain
+  or commit the new account until Save. Failed saves must leave the form editable.
+- Verify the daemon still reads credentials on its first and subsequent sync
+  cycles. Reset does not cancel a sync cycle already using a copied password.
+
+The GUI remembers the saved Apple ID in the `RCKeychainSavedAppleID` preference;
+no password is stored there. Older installations initialize this state from the
+configured Apple ID without querying the keychain. An externally deleted item
+can therefore still appear saved until Reset is pressed.
+
 
 Sync Services tests are offline, but they create/update/remove synthetic local
 contacts or calendars. They use separate test clients, check cleanup and preserve
