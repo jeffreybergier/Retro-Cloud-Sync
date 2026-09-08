@@ -94,6 +94,7 @@
 			<string>repeat interval</string>
 			<string>description</string>
 			<string>summary</string>
+			<string>com.apple.ical.sound</string>
 			<string>owner</string>
 		</array>
 		<key>com.apple.calendars.MailAlarm</key>

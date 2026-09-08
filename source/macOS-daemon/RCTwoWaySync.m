@@ -625,6 +625,16 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
     it=[truth keyEnumerator];
     while ((key=[it nextObject])) if ([[[truth objectForKey:key] objectForKey:ISyncRecordEntityNameKey] isEqual:c->rootEntity] &&
         ![known containsObject:key] && ![excluded containsObject:key]) {
+      /* Exceptions belong to their master's conditional PUT, never a new href. */
+      if (!contacts && [[[truth objectForKey:key] objectForKey:@"main event"] count]) {
+        NSArray *parents=[[truth objectForKey:key] objectForKey:@"main event"];
+        BOOL owned=NO; NSEnumerator *owners=[resources objectEnumerator]; NSDictionary *owner;
+        while ((owner=[owners nextObject])) if ([parents count]==1 &&
+            [[owner objectForKey:@"root"] isEqual:[parents objectAtIndex:0]] && [owner objectForKey:@"body"] &&
+            [[[truth objectForKey:[parents objectAtIndex:0]] objectForKey:@"detached events"] containsObject:key]) owned=YES;
+        if (!owned && !Attention(j,key,"unsupported-detached-parent",error)) goto done;
+        continue;
+      }
       [resources addObject:[NSDictionary dictionaryWithObject:key forKey:@"root"]];
     }
     phase="local mapping and journaling";

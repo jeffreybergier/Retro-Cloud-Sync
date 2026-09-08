@@ -300,6 +300,33 @@ static void ContactCreationPolicyTests(int scenario)
     RCContactStoreClose(store);
   }
 }
+static void CalendarMapperRegressionTests(RCCalendarStore *);
+static void ContactEmptyMapperTests(RCContactStore *store)
+{
+  NSData *body=[@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:empty-contact\r\nN:Fixture;Empty;;;\r\nFN:Empty Fixture\r\nNOTE:old\r\nTEL:123\r\nX-PRIVATE:keep\r\nEND:VCARD\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *resource=ContactResource(body,@"empty-contact",@"https://fixture.invalid/book/empty.vcf",@"\"base\"");
+  NSMutableDictionary *truth=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]];
+  NSMutableDictionary *contact=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"empty-contact"]];
+  [truth setObject:contact forKey:@"empty-contact"];
+  [contact removeObjectForKey:@"display as company"];
+  [contact setObject:@"" forKey:@"nickname"];
+  [contact setObject:@"" forKey:@"birthday"];
+  NSString *phoneID=[[contact objectForKey:@"phone numbers"] objectAtIndex:0];
+  NSMutableDictionary *phone=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:phoneID]];
+  [phone setObject:@"" forKey:@"type"]; [phone setObject:@"" forKey:@"label"];
+  [truth setObject:phone forKey:phoneID];
+  NSDictionary *desired=RCContactEncodeLocal(store,resource,truth,@"empty-contact",&error); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  [contact setObject:@"" forKey:@"notes"];
+  desired=RCContactEncodeLocal(store,resource,truth,@"empty-contact",&error); CHECK(desired);
+  NSString *wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([wire rangeOfString:@"NOTE:old"].location==NSNotFound);
+  CHECK([wire rangeOfString:@"X-PRIVATE:keep\r\n"].location!=NSNotFound);
+  CHECK(RCContactEncodeLocal(store,nil,truth,@"empty-contact",&error));
+  [phone setObject:@"work" forKey:@"type"];
+  CHECK(!RCContactEncodeLocal(store,resource,truth,@"empty-contact",&error));
+  puts("PASS: Empty contact text, birthday, labels and omitted person/other defaults round-trip without hiding label edits");
+}
 static void MapperTests(void)
 {
   CHECK(RCTwoWayRecordsEqual([NSDictionary dictionary], [NSDictionary dictionaryWithObject:[NSArray array] forKey:@"phone numbers"]));
@@ -316,7 +343,7 @@ static void MapperTests(void)
   NSMutableDictionary *truth=[NSMutableDictionary dictionaryWithDictionary:[r objectForKey:@"graph"]];
   NSMutableDictionary *card=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"fixture"]];
   [card setObject:@"new; note\nUnicode café" forKey:@"notes"]; [truth setObject:card forKey:@"fixture"];
-  NSDictionary *desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); CHECK(desired);
+  NSDictionary *desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   NSString *result=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
   CHECK([result rangeOfString:@"PHOTO;ENCODING=b:YWJj\r\n"].location!=NSNotFound);
   CHECK([result rangeOfString:@"X-APPLE-PRIVATE;X-PARAM=keep:preserve\r\n"].location!=NSNotFound);
@@ -335,7 +362,7 @@ static void MapperTests(void)
   truth=[NSMutableDictionary dictionaryWithDictionary:[r objectForKey:@"graph"]];
   card=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"fixture"]]; [card setObject:@"Renamed" forKey:@"first name"]; [card setObject:@"New Company" forKey:@"company name"]; [truth setObject:card forKey:@"fixture"];
   NSMutableDictionary *address=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"fixture-ADR-0"]]; [address setObject:@"New City" forKey:@"city"]; [truth setObject:address forKey:@"fixture-ADR-0"];
-  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); CHECK(desired);
+  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   result=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
   CHECK([result rangeOfString:@"N:Fixture,Alternate;Renamed;;;"].location!=NSNotFound);
   CHECK([result rangeOfString:@"ORG:New Company;Department;Hidden"].location!=NSNotFound);
@@ -347,22 +374,23 @@ static void MapperTests(void)
   truth=[NSMutableDictionary dictionaryWithDictionary:[r objectForKey:@"graph"]];
   card=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"fixture"]];
   [card setObject:@"note edit with empty fields" forKey:@"notes"]; [truth setObject:card forKey:@"fixture"];
-  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); CHECK(desired);
+  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   NSMutableDictionary *editedPhone=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"fixture-TEL-1"]];
   [editedPhone setObject:@"456" forKey:@"value"]; [truth setObject:editedPhone forKey:@"fixture-TEL-1"];
-  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); CHECK(desired);
+  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   result=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
   CHECK([result rangeOfString:@"TEL:\r\nTEL;TYPE=HOME:456\r\n"].location!=NSNotFound);
   [card removeObjectForKey:@"phone numbers"]; [truth removeObjectForKey:@"fixture-TEL-1"];
-  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); CHECK(desired);
+  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   result=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
   CHECK([result rangeOfString:@"TEL:\r\n"].location!=NSNotFound);
   CHECK([result rangeOfString:@"TEL;TYPE=HOME:123"].location==NSNotFound);
   [card setObject:[NSArray arrayWithObject:@"added-phone"] forKey:@"phone numbers"];
   [truth setObject:editedPhone forKey:@"added-phone"];
-  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); CHECK(desired);
+  desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   CHECK([[[desired objectForKey:@"paths"] objectForKey:@"TEL:1"] isEqual:@"added-phone"]);
   puts("PASS: Empty raw contact fields preserve occurrence identities through note edits, value edits, removal and addition");
+  ContactEmptyMapperTests(contacts);
   RCContactStoreClose(contacts);
 
   RCCalendarStore *cal=RCCalendarStoreOpen("MapperCalendar.sqlite","synthetic",&error); CHECK(cal);
@@ -380,7 +408,7 @@ static void MapperTests(void)
   truth=[NSMutableDictionary dictionaryWithDictionary:mapped];
   NSMutableDictionary *event=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:id]];
   [event setObject:@"Edited" forKey:@"summary"]; [truth setObject:event forKey:id];
-  desired=RCCalendarEncodeLocal(cal,r,truth,id,&error); CHECK(desired);
+  desired=RCCalendarEncodeLocal(cal,r,truth,id,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   result=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
   CHECK([result rangeOfString:@"URL;VALUE=URI:\r\n"].location!=NSNotFound);
   CHECK([result rangeOfString:@"SUMMARY:Edited\r\n"].location!=NSNotFound);
@@ -399,28 +427,331 @@ static void MapperTests(void)
   [event removeObjectForKey:@"all day"];
   [event setObject:[NSArray arrayWithObject:@"private-organizer-id"] forKey:@"organizer"];
   CHECK(!RCCalendarEncodeLocal(cal,nil,truth,id,&error) && strstr(error.message,"field 'organizer'") && !strstr(error.message,"private-organizer-id"));
+  CalendarMapperRegressionTests(cal);
   RCCalendarStoreClose(cal);
   puts("PASS: Production contact/calendar reverse mappers preserve private fields and reject unsupported changes");
 }
 static NSDictionary *CalendarResource(RCCalendarStore *store, long long identifier, NSData *body, NSString *href, NSString *etag)
 {
   NSDictionary *mapped=RCCalendarNativeGraph(store,identifier,@"calendar-fixture",body,&error); CHECK(mapped);
-  NSString *root=nil; NSEnumerator *it=[mapped keyEnumerator]; NSString *id;
-  while ((id=[it nextObject])) if ([[[mapped objectForKey:id] objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.Event"]) root=id;
-  CHECK(root);
+  NSString *root=nil;
+  NSMutableDictionary *paths=[NSMutableDictionary dictionary];
+  icalcomponent *calendar=RCICalendarParse([body bytes],[body length],&error), *event; CHECK(calendar);
+  for(event=icalcomponent_get_first_component(calendar,ICAL_VEVENT_COMPONENT);event;
+      event=icalcomponent_get_next_component(calendar,ICAL_VEVENT_COMPONENT)) {
+    char *key=RCICalendarRecurrenceKey(event);
+    char *stable=RCCalendarStoreIdentity(store,[[NSString stringWithFormat:@"resource-%lld",identifier] UTF8String],
+        [[NSString stringWithFormat:@"%s:%s",RCICalendarValue(event,ICAL_UID_PROPERTY),key] UTF8String],&error); CHECK(stable);
+    NSString *id=[@"cal-" stringByAppendingString:[NSString stringWithUTF8String:stable]], *path=[@"event:" stringByAppendingString:[NSString stringWithUTF8String:key]];
+    if(!*key) root=id; free(key); free(stable);
+    NSDictionary *record=[mapped objectForKey:id]; if(!record) continue;
+    [paths setObject:id forKey:path];
+    NSArray *links=[NSArray arrayWithObjects:@"recurrences",@"display alarms",@"audio alarms",@"attendees",@"organizer",nil];
+    NSEnumerator *it=[links objectEnumerator]; NSString *link;
+    while((link=[it nextObject])) { NSArray *ids=[record objectForKey:link]; NSUInteger n;
+      for(n=0;n<[ids count];n++) [paths setObject:[ids objectAtIndex:n] forKey:[NSString stringWithFormat:@"%@/%@:%lu",path,link,(unsigned long)n]];
+    }
+  }
+  icalcomponent_free(calendar); CHECK(root);
   return [NSDictionary dictionaryWithObjectsAndKeys:[NSString stringWithFormat:@"resource-%lld",identifier],@"key",root,@"root",href,@"href",etag,@"etag",body,@"body",
-      mapped,@"graph",[NSDictionary dictionaryWithObject:root forKey:@"event:"],@"paths",[NSNumber numberWithInt:1],@"revision",nil];
+      mapped,@"graph",paths,@"paths",[NSNumber numberWithInt:1],@"revision",nil];
 }
+static void CalendarEmptyMapperTests(RCCalendarStore *store)
+{
+  NSString *event=@"BEGIN:VEVENT\r\nUID:empty-calendar\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:Empty fixture\r\nURL;VALUE=URI:\r\nBEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT15M\r\nATTACH;VALUE=URI:Basso\r\nX-PRIVATE:keep\r\nEND:VALARM\r\nEND:VEVENT\r\n";
+  NSData *body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n%@END:VCALENDAR\r\n",event] dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *resource=CalendarResource(store,40,body,@"https://fixture.invalid/calendar/empty.ics",@"\"base\"");
+  NSString *root=[resource objectForKey:@"root"];
+  NSMutableDictionary *truth=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]];
+  NSMutableDictionary *record=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:root]];
+  [truth setObject:record forKey:root];
+  [record removeObjectForKey:@"all day"]; [record setObject:@"" forKey:@"status"]; [record setObject:@"" forKey:@"classification"];
+  [record setObject:@"" forKey:@"url"]; [record setObject:@"" forKey:@"description"];
+  NSDictionary *desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  [record setObject:@"private" forKey:@"classification"]; [record setObject:@"tentative" forKey:@"status"];
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+  desired=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:desired]];
+  [record setObject:@"" forKey:@"classification"]; [record setObject:@"" forKey:@"status"];
+  desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  [record removeObjectForKey:@"summary"];
+  CHECK(RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  CHECK(RCCalendarEncodeLocal(store,nil,truth,root,&error));
+  [record setObject:@"Empty fixture" forKey:@"summary"];
+  [record setObject:@"A description" forKey:@"description"]; [record setObject:@"A location" forKey:@"location"];
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+  desired=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:desired]];
+  [record setObject:@"" forKey:@"description"]; [record setObject:@"" forKey:@"location"];
+  desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  NSString *alarmID=[[record objectForKey:@"audio alarms"] objectAtIndex:0];
+  NSMutableDictionary *alarm=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:alarmID]];
+  [truth setObject:alarm forKey:alarmID];
+  [alarm setObject:@"" forKey:@"description"]; [alarm setObject:@"" forKey:@"triggerdate"];
+  NSArray *emptySounds=[NSArray arrayWithObjects:@"",[NSURL URLWithString:@""],[NSNull null],nil];
+  NSEnumerator *it=[emptySounds objectEnumerator]; id sound;
+  while((sound=[it nextObject])) {
+    if(sound==[NSNull null]) [alarm removeObjectForKey:@"com.apple.ical.sound"];
+    else [alarm setObject:sound forKey:@"com.apple.ical.sound"];
+    desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+    NSString *expected=Replace([[[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding] autorelease],@"ATTACH;VALUE=URI:Basso\r\n",@"");
+    CHECK([[desired objectForKey:@"body"] isEqual:[expected dataUsingEncoding:NSUTF8StringEncoding]]);
+    CHECK(RCCalendarEncodeLocal(store,nil,truth,root,&error));
+    NSDictionary *replay=RCCalendarEncodeLocal(store,desired,truth,root,&error); CHECK(replay);
+    CHECK([[replay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
+    /* The imported graph also has to compare equal after ATTACH disappears. */
+    NSDictionary *imported=CalendarResource(store,40,[desired objectForKey:@"body"],@"https://fixture.invalid/calendar/empty.ics",@"\"next\"");
+    CHECK(RCTwoWayGraphsEqual([imported objectForKey:@"graph"],truth));
+    CHECK(RCCalendarEncodeLocal(store,imported,truth,root,&error));
+  }
+  [alarm setObject:@"Basso" forKey:@"com.apple.ical.sound"];
+  CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error)); /* Nonempty wrong types remain invalid. */
+  [alarm setObject:[NSURL URLWithString:@"Basso"] forKey:@"com.apple.ical.sound"];
+  CHECK(RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  [alarm removeObjectForKey:@"triggerduration"];
+  CHECK(!RCCalendarEncodeLocal(store,nil,truth,root,&error));
+  puts("PASS: Empty strings, URLs and absent alarm sounds omit ATTACH, retain AUDIO and survive import/replay; required triggers stay required");
+
+  NSString *people=Replace(event,@"BEGIN:VALARM",@"ATTENDEE:mailto:fixture@example.invalid\r\nBEGIN:VALARM");
+  body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n%@END:VCALENDAR\r\n",people] dataUsingEncoding:NSUTF8StringEncoding];
+  resource=CalendarResource(store,41,body,@"https://fixture.invalid/calendar/rsvp.ics",@"\"base\""); root=[resource objectForKey:@"root"];
+  truth=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]];
+  record=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:root]]; [truth setObject:record forKey:root];
+  NSString *personID=[[record objectForKey:@"attendees"] objectAtIndex:0];
+  NSMutableDictionary *person=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:personID]]; [truth setObject:person forKey:personID];
+  [person removeObjectForKey:@"rsvp"]; [person removeObjectForKey:@"role"];
+  [person setObject:@"" forKey:@"status"]; [person setObject:@"" forKey:@"user type"]; [person setObject:@"" forKey:@"common name"];
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  [record setObject:@"Edited with omitted RSVP" forKey:@"summary"];
+  CHECK(RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  [person setObject:[NSNumber numberWithBool:YES] forKey:@"rsvp"];
+  CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  [person removeObjectForKey:@"rsvp"]; [person setObject:@"accepted" forKey:@"status"];
+  CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  [person setObject:@"" forKey:@"status"]; [truth removeObjectForKey:personID];
+  CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  puts("PASS: Omitted attendee defaults permit unrelated edits while real RSVP, participation and record deletions remain protected");
+}
+static void CalendarMapperRegressionTests(RCCalendarStore *store)
+{
+  CalendarEmptyMapperTests(store);
+  NSString *event=@"BEGIN:VEVENT\r\nUID:ordering\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:Original café\r\nX-PRIVATE;P=keep:folded\r\n value\r\nEND:VEVENT\r\n";
+  NSString *zone=@"BEGIN:VTIMEZONE\r\nTZID:Etc/UTC\r\nBEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nTZOFFSETFROM:+0000\r\nTZOFFSETTO:+0000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n";
+  NSString *zone2=Replace(zone,@"Etc/UTC",@"Fixture/UTC");
+  NSArray *orders=[NSArray arrayWithObjects:[NSString stringWithFormat:@"%@%@%@",zone,zone2,event],
+      [NSString stringWithFormat:@"%@%@%@",event,zone,zone2],[NSString stringWithFormat:@"%@%@%@",zone,event,zone2],nil];
+  NSEnumerator *it=[orders objectEnumerator]; NSString *order;
+  while((order=[it nextObject])) {
+    NSData *body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n%@END:VCALENDAR\r\n",order] dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary *resource=CalendarResource(store,20,body,@"https://fixture.invalid/calendar/order.ics",@"\"base\"");
+    NSString *root=[resource objectForKey:@"root"];
+    NSMutableDictionary *truth=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]];
+    NSMutableDictionary *edited=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:root]];
+    [edited setObject:[NSDate dateWithTimeIntervalSinceReferenceDate:[[edited objectForKey:@"start date"] timeIntervalSinceReferenceDate]+3600] forKey:@"start date"];
+    [edited setObject:[NSDate dateWithTimeIntervalSinceReferenceDate:[[edited objectForKey:@"end date"] timeIntervalSinceReferenceDate]+3600] forKey:@"end date"];
+    [truth setObject:edited forKey:root];
+    NSDictionary *desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
+    NSString *wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+    NSString *expected=Replace(Replace([[[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding] autorelease],@"DTSTART:20260907T100000Z",@"DTSTART:20260907T110000Z"),@"DTEND:20260907T110000Z",@"DTEND:20260907T120000Z");
+    CHECK([wire isEqual:expected]);
+  }
+  puts("PASS: Timezones before, after and around events preserve source targeting, folded private bytes and Unicode");
+  NSString *recurring=Replace(event,@"SUMMARY:Original café",@"RRULE:FREQ=DAILY;COUNT=10\r\nSUMMARY:Original café");
+  NSData *body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n%@%@END:VCALENDAR\r\n",recurring,zone] dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *resource=CalendarResource(store,21,body,@"https://fixture.invalid/calendar/series.ics",@"\"base\"");
+  NSString *root=[resource objectForKey:@"root"];
+  NSMutableDictionary *truth=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]];
+  NSMutableDictionary *master=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:root]];
+  NSMutableDictionary *detached=[NSMutableDictionary dictionaryWithDictionary:master];
+  NSDate *original=[NSDate dateWithTimeIntervalSinceReferenceDate:[[master objectForKey:@"start date"] timeIntervalSinceReferenceDate]+86400];
+  [detached setObject:[NSArray array] forKey:@"recurrences"];
+  [detached setObject:[NSArray arrayWithObject:root] forKey:@"main event"];
+  [detached setObject:original forKey:@"original date"];
+  [detached setObject:[NSDate dateWithTimeIntervalSinceReferenceDate:[original timeIntervalSinceReferenceDate]+3600] forKey:@"start date"];
+  [detached setObject:[NSDate dateWithTimeIntervalSinceReferenceDate:[original timeIntervalSinceReferenceDate]+7200] forKey:@"end date"];
+  [detached setObject:@"Moved occurrence" forKey:@"summary"];
+  [master setObject:[NSArray arrayWithObject:@"new-exception"] forKey:@"detached events"];
+  [truth setObject:master forKey:root]; [truth setObject:detached forKey:@"new-exception"];
+  NSDictionary *desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
+  CHECK([[[desired objectForKey:@"paths"] objectForKey:@"event:DATE-TIME::20260908T100000Z"] isEqual:@"new-exception"]);
+  NSString *wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([wire rangeOfString:@"RECURRENCE-ID:20260908T100000Z"].location!=NSNotFound);
+  CHECK([wire rangeOfString:recurring].location!=NSNotFound); CHECK([wire rangeOfString:zone].location!=NSNotFound);
+  CHECK(!RCCalendarEncodeLocal(store,nil,truth,@"new-exception",&error));
+  NSMutableDictionary *bad=[NSMutableDictionary dictionaryWithDictionary:detached];
+  [bad setObject:[NSArray arrayWithObject:@"wrong-parent"] forKey:@"main event"]; [truth setObject:bad forKey:@"new-exception"];
+  CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  [truth setObject:detached forKey:@"new-exception"];
+  truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:truth]];
+  detached=[truth objectForKey:@"new-exception"]; master=[truth objectForKey:root];
+  [detached setObject:@"Second edit" forKey:@"summary"];
+  desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
+  truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:truth]]; master=[truth objectForKey:root];
+  [truth removeObjectForKey:@"new-exception"]; [master setObject:[NSArray array] forKey:@"detached events"];
+  desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:truth]]; master=[truth objectForKey:root];
+  [master setObject:[NSArray arrayWithObject:original] forKey:@"exception dates"];
+  desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
+  wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([wire rangeOfString:@"EXDATE:20260908T100000Z"].location!=NSNotFound);
+  puts("PASS: Detached additions, edits, removals and exception dates round-trip within the parent resource; wrong parents rejected");
+  NSString *allDay=Replace(Replace(recurring,@"DTSTART:20260907T100000Z",@"DTSTART;VALUE=DATE:20260907"),@"DTEND:20260907T110000Z",@"DTEND;VALUE=DATE:20260908");
+  NSData *allDayBody=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n%@END:VCALENDAR\r\n",allDay] dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *allDayResource=CalendarResource(store,23,allDayBody,@"https://fixture.invalid/calendar/all-day.ics",@"\"base\"");
+  NSString *allDayRoot=[allDayResource objectForKey:@"root"];
+  NSMutableDictionary *allDayTruth=[NSMutableDictionary dictionaryWithDictionary:[allDayResource objectForKey:@"graph"]];
+  NSMutableDictionary *allDayMaster=[NSMutableDictionary dictionaryWithDictionary:[allDayTruth objectForKey:allDayRoot]], *allDayException=[NSMutableDictionary dictionaryWithDictionary:allDayMaster];
+  NSDate *allDayOriginal=[NSDate dateWithTimeIntervalSinceReferenceDate:[[allDayMaster objectForKey:@"start date"] timeIntervalSinceReferenceDate]+86400];
+  [allDayException setObject:allDayOriginal forKey:@"original date"]; [allDayException setObject:allDayOriginal forKey:@"start date"];
+  [allDayException setObject:[NSDate dateWithTimeIntervalSinceReferenceDate:[allDayOriginal timeIntervalSinceReferenceDate]+86400] forKey:@"end date"];
+  [allDayException setObject:[NSArray array] forKey:@"recurrences"]; [allDayException setObject:[NSArray arrayWithObject:allDayRoot] forKey:@"main event"];
+  [allDayMaster setObject:[NSArray arrayWithObject:@"all-day-exception"] forKey:@"detached events"];
+  [allDayTruth setObject:allDayMaster forKey:allDayRoot]; [allDayTruth setObject:allDayException forKey:@"all-day-exception"];
+  CHECK(RCCalendarEncodeLocal(store,allDayResource,allDayTruth,allDayRoot,&error));
+  [allDayMaster setObject:[NSArray arrayWithObjects:@"all-day-exception",@"duplicate-exception",nil] forKey:@"detached events"];
+  [allDayTruth setObject:allDayException forKey:@"duplicate-exception"];
+  CHECK(!RCCalendarEncodeLocal(store,allDayResource,allDayTruth,allDayRoot,&error));
+  puts("PASS: All-day exception dates retain VALUE=DATE; duplicate recurrence identities are rejected");
+  NSString *audio=Replace(event,@"END:VEVENT",@"BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT15M\r\nATTACH;VALUE=URI:file:///System/Library/Sounds/Basso.aiff\r\nEND:VALARM\r\nEND:VEVENT");
+  body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n%@%@END:VCALENDAR\r\n",audio,zone] dataUsingEncoding:NSUTF8StringEncoding];
+  resource=CalendarResource(store,22,body,@"https://fixture.invalid/calendar/audio.ics",@"\"base\""); root=[resource objectForKey:@"root"];
+  truth=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]];
+  master=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:root]];
+  [master setObject:@"local-invitation-token" forKey:@"invitationId"]; [truth setObject:master forKey:root];
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired); CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  NSString *alarmID=[[master objectForKey:@"audio alarms"] objectAtIndex:0];
+  NSMutableDictionary *alarm=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:alarmID]];
+  [alarm setObject:[NSURL URLWithString:@"file:///System/Library/Sounds/Glass.aiff"] forKey:@"com.apple.ical.sound"]; [truth setObject:alarm forKey:alarmID];
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
+  wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([wire rangeOfString:@"ATTACH;VALUE=URI:file:///System/Library/Sounds/Glass.aiff"].location!=NSNotFound);
+  CHECK([wire rangeOfString:@"ATTACH;VALUE=URI:file:///System/Library/Sounds/Basso.aiff"].location==NSNotFound);
+  truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:truth]]; alarm=[truth objectForKey:alarmID];
+  [alarm setObject:[NSURL URLWithString:@"file:///tmp/Custom%20chime.aiff"] forKey:@"com.apple.ical.sound"];
+  desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
+  truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:truth]]; alarm=[truth objectForKey:alarmID];
+  [alarm setObject:@"must not disappear" forKey:@"unsupported-sound-field"];
+  CHECK(!RCCalendarEncodeLocal(store,desired,truth,root,&error));
+  [alarm removeObjectForKey:@"unsupported-sound-field"]; [alarm removeObjectForKey:@"com.apple.ical.sound"];
+  desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:[Replace([[[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding] autorelease],@"ATTACH;VALUE=URI:file:///System/Library/Sounds/Basso.aiff\r\n",@"") dataUsingEncoding:NSUTF8StringEncoding]]);
+  puts("PASS: Invitation metadata does not generate edits; audio sound URLs round-trip through URI attachments");
+}
+
 static NSDictionary *CalendarGraph(NSArray *resources)
 {
   NSMutableDictionary *graph=[NSMutableDictionary dictionary]; NSMutableArray *events=[NSMutableArray array];
   NSEnumerator *it=[resources objectEnumerator]; NSDictionary *resource;
-  while ((resource=[it nextObject])) { [graph addEntriesFromDictionary:[resource objectForKey:@"graph"]]; [events addObject:[resource objectForKey:@"root"]]; }
+  while ((resource=[it nextObject])) {
+    NSDictionary *mapped=[resource objectForKey:@"graph"]; [graph addEntriesFromDictionary:mapped];
+    NSEnumerator *ids=[mapped keyEnumerator]; NSString *id;
+    while((id=[ids nextObject])) if([[[mapped objectForKey:id] objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.Event"]) [events addObject:id];
+  }
   [graph setObject:[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",ISyncRecordEntityNameKey,marker,@"title",
       [NSNumber numberWithBool:NO],@"read only",events,@"events",[NSArray array],@"tasks",nil] forKey:@"calendar-fixture"];
   return graph;
 }
-static void CalendarTests(void)
+/* Accept only marked fixture records and their owned children, retaining the
+   identifiers assigned by Sync Services rather than aliasing every event alike. */
+static void CalendarFixtureSession(ISyncClient *client,NSDictionary *push,NSArray *deletes)
+{
+  ISyncSession *s=[ISyncSession beginSessionWithClient:client entityNames:[client enabledEntityNames] beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]; CHECK(s);
+  @try {
+    NSEnumerator *it=[push keyEnumerator]; NSString *key;
+    while((key=[it nextObject])) [s pushChangesFromRecord:[push objectForKey:key] withIdentifier:key];
+    it=[deletes objectEnumerator]; while((key=[it nextObject])) [s deleteRecordWithIdentifier:key];
+    CHECK([s prepareToPullChangesForEntityNames:RCSyncPullableEntities(client) beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]);
+    NSMutableDictionary *graph=[NSMutableDictionary dictionary];
+    it=[[client enabledEntityNames] objectEnumerator];
+    while((key=[it nextObject])) [graph addEntriesFromDictionary:[[s snapshotOfRecordsInTruth] recordsWithMatchingAttributes:[NSDictionary dictionaryWithObject:key forKey:ISyncRecordEntityNameKey]]];
+    NSMutableSet *owned=[NSMutableSet set]; it=[graph keyEnumerator];
+    while((key=[it nextObject])) if([[[graph objectForKey:key] objectForKey:@"summary"] hasPrefix:marker] || [[[graph objectForKey:key] objectForKey:@"title"] hasPrefix:marker]) [owned addObject:key];
+    it=[graph keyEnumerator];
+    while((key=[it nextObject])) {
+      NSEnumerator *parents=[[[graph objectForKey:key] objectForKey:@"owner"] objectEnumerator]; NSString *parent;
+      while((parent=[parents nextObject])) if([owned containsObject:parent]) [owned addObject:key];
+    }
+    it=[s changeEnumeratorForEntityNames:RCSyncPullableEntities(client)]; ISyncChange *change;
+    while((change=[it nextObject])) if([owned containsObject:[change recordIdentifier]] || [deletes containsObject:[change recordIdentifier]])
+      [s clientAcceptedChangesForRecordWithIdentifier:[change recordIdentifier] formattedRecord:nil newRecordIdentifier:nil];
+    [s clientCommittedAcceptedChanges]; [s cancelSyncing];
+  } @finally { if(![s isCancelled]) [s cancelSyncing]; }
+}
+static NSDictionary *CalendarFixtureEvents(ISyncClient *client)
+{
+  return [[[ISyncManager sharedManager] snapshotOfRecordsInTruthWithEntityNames:[client enabledEntityNames] usingIdentifiersForClient:client]
+      recordsWithMatchingAttributes:[NSDictionary dictionaryWithObject:@"com.apple.calendars.Event" forKey:ISyncRecordEntityNameKey]];
+}
+static NSString *EventWithTitle(NSDictionary *events,NSString *title)
+{
+  NSEnumerator *it=[events keyEnumerator]; NSString *key;
+  while((key=[it nextObject])) if([[[events objectForKey:key] objectForKey:@"summary"] isEqual:title]) return key;
+  return nil;
+}
+static void CalendarExceptionIntegration(RCTwoWayContext *c,ISyncClient *local,RCCalendarStore *store)
+{
+  NSString *title=[marker stringByAppendingString:@"-series"], *href=@"https://fixture.invalid/calendar/series.ics";
+  NSData *body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nRRULE:FREQ=DAILY;COUNT=10\r\nSUMMARY:%@\r\nX-PRIVATE:keep\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",title] dataUsingEncoding:NSUTF8StringEncoding];
+  [remoteBodies setObject:body forKey:href]; [remoteETags setObject:@"\"series-base\"" forKey:href];
+  NSDictionary *resource=CalendarResource(store,30,body,href,[remoteETags objectForKey:href]);
+  c->resources=[NSArray arrayWithObject:resource]; c->graph=CalendarGraph(c->resources);
+  CHECK(RCTwoWayExchange(c,&error)); CalendarFixtureSession(local,nil,nil);
+  NSDictionary *events=CalendarFixtureEvents(local); NSString *root=EventWithTitle(events,title); CHECK(root);
+  NSMutableDictionary *master=[NSMutableDictionary dictionaryWithDictionary:[events objectForKey:root]], *exception=[NSMutableDictionary dictionaryWithDictionary:master];
+  NSCalendarDate *original=[[[NSCalendarDate alloc] initWithTimeIntervalSinceReferenceDate:[[master objectForKey:@"start date"] timeIntervalSinceReferenceDate]+86400] autorelease];
+  [exception setObject:[NSArray arrayWithObject:root] forKey:@"main event"];
+  [exception setObject:original forKey:@"original date"]; [exception setObject:[NSArray array] forKey:@"recurrences"];
+  [exception setObject:[title stringByAppendingString:@"-exception"] forKey:@"summary"];
+  [exception setObject:original forKey:@"start date"];
+  [exception setObject:[[[NSCalendarDate alloc] initWithTimeIntervalSinceReferenceDate:[original timeIntervalSinceReferenceDate]+3600] autorelease] forKey:@"end date"];
+  [master setObject:[NSArray arrayWithObject:@"local-exception"] forKey:@"detached events"];
+  long long creates=Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE kind='create'"); int before=mutations;
+  CalendarFixtureSession(local,[NSDictionary dictionaryWithObjectsAndKeys:master,root,exception,@"local-exception",nil],nil);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state='queued'")==1);
+  CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE kind='create'")==creates);
+  CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==1); CHECK(mutations==before+1);
+  resource=CalendarResource(store,30,[remoteBodies objectForKey:href],href,[remoteETags objectForKey:href]);
+  c->resources=[NSArray arrayWithObject:resource]; c->graph=CalendarGraph(c->resources);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state IN ('queued','applied','conflict')")==0);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==0);
+  CalendarFixtureSession(local,nil,nil);
+  events=CalendarFixtureEvents(local); root=EventWithTitle(events,title); CHECK(root);
+  NSString *detached=EventWithTitle(events,[title stringByAppendingString:@"-exception"]); CHECK(detached);
+  master=[NSMutableDictionary dictionaryWithDictionary:[events objectForKey:root]];
+  [master setObject:[NSArray array] forKey:@"detached events"];
+  [master setObject:[NSArray arrayWithObject:original] forKey:@"exception dates"];
+  CalendarFixtureSession(local,[NSDictionary dictionaryWithObject:master forKey:root],[NSArray arrayWithObject:detached]);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==1);
+  resource=CalendarResource(store,30,[remoteBodies objectForKey:href],href,[remoteETags objectForKey:href]);
+  c->resources=[NSArray arrayWithObject:resource]; c->graph=CalendarGraph(c->resources);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state IN ('queued','applied','conflict')")==0);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==0);
+  puts("PASS: Tiger exception creation/deletion uses one parent PUT, exact acknowledgement and replay without duplicates");
+  NSString *soundTitle=[marker stringByAppendingString:@"-sound"], *soundHref=@"https://fixture.invalid/calendar/sound.ics";
+  NSData *soundBody=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:sound\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:%@\r\nBEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT15M\r\nATTACH:file:///System/Library/Sounds/Basso.aiff\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",soundTitle] dataUsingEncoding:NSUTF8StringEncoding];
+  [remoteBodies setObject:soundBody forKey:soundHref]; [remoteETags setObject:@"\"sound-base\"" forKey:soundHref];
+  NSDictionary *soundResource=CalendarResource(store,31,soundBody,soundHref,[remoteETags objectForKey:soundHref]);
+  c->resources=[NSArray arrayWithObjects:resource,soundResource,nil]; c->graph=CalendarGraph(c->resources);
+  CHECK(RCTwoWayExchange(c,&error)); CalendarFixtureSession(local,nil,nil);
+  events=CalendarFixtureEvents(local); NSString *soundRoot=EventWithTitle(events,soundTitle); CHECK(soundRoot);
+  NSMutableDictionary *soundEvent=[NSMutableDictionary dictionaryWithDictionary:[events objectForKey:soundRoot]];
+  NSString *alarmID=[[soundEvent objectForKey:@"audio alarms"] objectAtIndex:0];
+  ISyncRecordSnapshot *snapshot=[[ISyncManager sharedManager] snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
+  NSMutableDictionary *alarm=[NSMutableDictionary dictionaryWithDictionary:[[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:alarmID]] objectForKey:alarmID]];
+  [alarm setObject:[NSURL URLWithString:@"file:///System/Library/Sounds/Glass.aiff"] forKey:@"com.apple.ical.sound"];
+  CalendarFixtureSession(local,[NSDictionary dictionaryWithObjectsAndKeys:soundEvent,soundRoot,alarm,alarmID,nil],nil);
+  before=mutations;
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==1); CHECK(mutations==before+1);
+  soundResource=CalendarResource(store,31,[remoteBodies objectForKey:soundHref],soundHref,[remoteETags objectForKey:soundHref]);
+  c->resources=[NSArray arrayWithObjects:resource,soundResource,nil]; c->graph=CalendarGraph(c->resources);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state IN ('queued','applied','conflict')")==0);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==0);
+  puts("PASS: Tiger audio sound survives native collection, verified upload and replay");
+}
+static void CalendarTests(BOOL exceptionsOnly)
 {
   ISyncManager *manager=[ISyncManager sharedManager]; ISyncClient *local=nil,*server=nil;
   RCCalendarStore *store=NULL;
@@ -440,6 +771,13 @@ static void CalendarTests(void)
     store=RCCalendarStoreOpen("TwoWayCalendar.sqlite","synthetic",&error); CHECK(store);
     RCWriteJournal j=RCCalendarStoreWriteJournal(store);
     CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO calendars(account_id,url,sync_id,display_name) VALUES(%lld,'https://fixture.invalid/calendar/','fixture','Fixture')",j.account));
+    if (exceptionsOnly) {
+      remoteBodies=[NSMutableDictionary dictionary]; remoteETags=[NSMutableDictionary dictionary]; mutations=0;
+      RCTwoWayContext subset={j,@"com.retrocloudsync.tw.test.cal.server",description,@"com.apple.calendars.Event",[NSArray array],CalendarGraph([NSArray array]),RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
+      @try { CalendarExceptionIntegration(&subset,local,store); }
+      @finally { server=[manager clientWithIdentifier:subset.clientIdentifier]; }
+      goto calendarDone;
+    }
     NSString *href=@"https://fixture.invalid/calendar/fixture.ics";
     NSData *body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:fixture\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:%@\r\nX-PRIVATE:keep\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",marker] dataUsingEncoding:NSUTF8StringEncoding];
     remoteBodies=[NSMutableDictionary dictionaryWithObject:body forKey:href]; remoteETags=[NSMutableDictionary dictionaryWithObject:@"\"base\"" forKey:href]; mutations=0;
@@ -585,7 +923,8 @@ static void CalendarTests(void)
     CHECK(RCTwoWayExchange(&c,&error));
     CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state IN ('queued','conflict','applied')")==0);
     puts("PASS: Concurrent remote edit prevents stale DELETE; the system's delete/edit decision completes conditionally");
-
+    CalendarExceptionIntegration(&c,local,store);
+  calendarDone: ;
 
   } @finally {
     Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
@@ -638,10 +977,10 @@ int main(int argc,char **argv)
       CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
       ContactCreationPolicyTests(YES); status=0; goto done;
     }
-    if (argc==2 && !strcmp(argv[1],"--calendars")) {
+    if (argc==2 && (!strcmp(argv[1],"--calendars") || !strcmp(argv[1],"--calendar-exceptions"))) {
       marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
       CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
-      CalendarTests(); status=0; goto done;
+      CalendarTests(!strcmp(argv[1],"--calendar-exceptions")); status=0; goto done;
     }
     marker=[NSString stringWithContentsOfFile:@"fixture-marker.txt" encoding:NSUTF8StringEncoding error:NULL];
     if (argc==2 && !strcmp(argv[1],"--cleanup")) {
@@ -874,7 +1213,7 @@ int main(int argc,char **argv)
     ContactRemoteDeleteConflict(&c,local,href);
 
     Cleanup(local); Cleanup(server); [manager unregisterClient:local]; [manager unregisterClient:server]; local=nil;server=nil;
-    CalendarTests();
+    CalendarTests(NO);
     status=0;
   } @catch(NSException *exception) {
     fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]);

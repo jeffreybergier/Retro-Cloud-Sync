@@ -1,5 +1,6 @@
 #import "RCTwoWayNative.h"
 #import "RCCalendarSyncClient.h"
+#import "RCSyncRecordEquality.h"
 #include "RCResourcePatch.h"
 #include <stdlib.h>
 #include <errno.h>
@@ -34,12 +35,70 @@ static NSString *DateValue(NSDate *date, BOOL allDay, NSTimeZone *zone)
   return [date descriptionWithCalendarFormat:allDay ? @"%Y%m%d" : zone ? @"%Y%m%dT%H%M%S" : @"%Y%m%dT%H%M%SZ"
       timeZone:zone ?: [NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil];
 }
-static int RCNativeComponentCount(icalcomponent *c)
+static NSString *SoundValue(id sound)
 {
-  icalcomponent *child; int n=1;
-  for(child=icalcomponent_get_first_component(c,ICAL_ANY_COMPONENT);child;
-      child=icalcomponent_get_next_component(c,ICAL_ANY_COMPONENT)) n+=RCNativeComponentCount(child);
-  return n;
+  if (![sound isKindOfClass:[NSURL class]]) return nil;
+  NSString *value=[sound absoluteString];
+  return [value length] && [value rangeOfString:@"\r"].location==NSNotFound && [value rangeOfString:@"\n"].location==NSNotFound ? value : nil;
+}
+/* libical puts VTIMEZONE first. Select events in the immutable wire body,
+   not by their position in the parsed tree. Ranges and indices share the
+   patcher's unfolded-line/source-order convention. */
+static NSArray *SourceEvents(NSData *body, RCError *error)
+{
+  const unsigned char *bytes=[body bytes]; NSUInteger length=[body length],pos=0,start=0;
+  int depth=0,component=0,eventComponent=0;
+  NSMutableArray *result=[NSMutableArray array];
+  while (pos<length) {
+    NSUInteger begin=pos;
+    NSMutableData *line=[NSMutableData data];
+    do {
+      NSUInteger part=pos;
+      while(pos<length && bytes[pos]!='\r' && bytes[pos]!='\n') pos++;
+      [line appendBytes:bytes+part length:pos-part];
+      if(pos<length && bytes[pos]=='\r') pos++;
+      if(pos<length && bytes[pos]=='\n') pos++;
+      if(pos==length || (bytes[pos]!=' ' && bytes[pos]!='\t')) break;
+      pos++;
+    } while(pos<length);
+    NSString *text=[[[NSString alloc] initWithData:line encoding:NSUTF8StringEncoding] autorelease];
+    text=[text uppercaseString];
+    if([text hasPrefix:@"BEGIN:"]) {
+      if(depth==1 && [text isEqual:@"BEGIN:VEVENT"]) { start=begin; eventComponent=component; }
+      depth++; component++;
+    } else if([text hasPrefix:@"END:"]) {
+      if(depth==2 && [text isEqual:@"END:VEVENT"]) {
+        NSMutableData *wrapped=[NSMutableData dataWithData:[@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+        [wrapped appendBytes:bytes+start length:pos-start];
+        [wrapped appendData:[@"END:VCALENDAR\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+        icalcomponent *parsed=RCICalendarParse([wrapped bytes],[wrapped length],error);
+        if(!parsed) return nil;
+        icalcomponent *event=icalcomponent_get_first_component(parsed,ICAL_VEVENT_COMPONENT);
+        char *key=event ? RCICalendarRecurrenceKey(event) : NULL;
+        const char *uid=event ? RCICalendarValue(event,ICAL_UID_PROPERTY) : NULL;
+        if(!key || !uid) { free(key); icalcomponent_free(parsed); RCErrorSet(error,1,"Event has no source identity"); return nil; }
+        NSString *path=[@"event:" stringByAppendingString:S(key)];
+        NSEnumerator *it=[result objectEnumerator]; NSDictionary *previous;
+        while((previous=[it nextObject])) if([[previous objectForKey:@"path"] isEqual:path]) {
+          free(key); icalcomponent_free(parsed); RCErrorSet(error,1,"Ambiguous source recurrence identity"); return nil;
+        }
+        [result addObject:[NSDictionary dictionaryWithObjectsAndKeys:path,@"path",S(uid),@"uid",
+            [NSNumber numberWithInt:eventComponent],@"component",[NSValue valueWithRange:NSMakeRange(start,pos-start)],@"range",nil]];
+        free(key); icalcomponent_free(parsed);
+      }
+      depth--;
+    }
+  }
+  return result;
+}
+static NSDictionary *SourceEvent(NSArray *events,icalcomponent *event)
+{
+  char *key=RCICalendarRecurrenceKey(event);
+  NSString *path=[@"event:" stringByAppendingString:S(key)]; free(key);
+  NSEnumerator *it=[events objectEnumerator]; NSDictionary *entry;
+  while((entry=[it nextObject])) if([[entry objectForKey:@"path"] isEqual:path] &&
+      [[entry objectForKey:@"uid"] isEqual:S(RCICalendarValue(event,ICAL_UID_PROPERTY))]) return entry;
+  return nil;
 }
 static NSDictionary *Paths(RCCalendarStore *store,long long resource,NSData *body,
                            NSDictionary *graph,NSString **rootID,RCError *error)
@@ -167,7 +226,7 @@ static NSMutableDictionary *Create(RCCalendarStore *store,NSDictionary *truth,NS
     NSArray *ids=[record objectForKey:childLinks[k]]; NSUInteger n;
     for(n=0;n<[ids count];n++) {
       NSString *id=[ids objectAtIndex:n]; NSDictionary *alarm=[truth objectForKey:id];
-      if (!alarm || [alarm objectForKey:@"triggerdate"] || ![alarm objectForKey:@"triggerduration"] ||
+      if (!alarm || !RCNativeEmptyValue([alarm objectForKey:@"triggerdate"]) || ![alarm objectForKey:@"triggerduration"] ||
           [alarm objectForKey:@"repeat count"] || [alarm objectForKey:@"repeat interval"]) {
         RCErrorSet(error,1,"New alarm requires a simple relative trigger"); return nil;
       }
@@ -175,7 +234,12 @@ static NSMutableDictionary *Create(RCCalendarStore *store,NSDictionary *truth,NS
       if (!duration) return nil;
       [body appendFormat:@"BEGIN:VALARM\r\nACTION:%@\r\nTRIGGER:%s\r\n",k==1 ? @"DISPLAY" : @"AUDIO",duration];
       free(duration);
-      if ([alarm objectForKey:@"description"]) [body appendFormat:@"DESCRIPTION:%@\r\n",RCTwoWayEscape([alarm objectForKey:@"description"])];
+      if ([RCTwoWayString([alarm objectForKey:@"description"]) length]) [body appendFormat:@"DESCRIPTION:%@\r\n",RCTwoWayEscape([alarm objectForKey:@"description"])];
+      if (k==2 && !RCNativeEmptyValue([alarm objectForKey:@"com.apple.ical.sound"])) {
+        NSString *sound=SoundValue([alarm objectForKey:@"com.apple.ical.sound"]);
+        if (!sound) { RCErrorSet(error,1,"Invalid iCal sound URL"); return nil; }
+        [body appendFormat:@"ATTACH:%@\r\n",sound];
+      }
       [body appendString:@"END:VALARM\r\n"];
       [paths setObject:id forKey:[NSString stringWithFormat:@"event:/%@:%lu",childLinks[k],(unsigned long)n]];
     }
@@ -200,18 +264,180 @@ static BOOL AddEdit(icalcomponent *event,int component,NSString *property,NSStri
       [NSNumber numberWithInt:count ? 0 : -1],@"occurrence",value ?: (id)[NSNull null],@"value",nil]];
   return YES;
 }
+static int ComponentCount(icalcomponent *component)
+{
+  int count=1; icalcomponent *child;
+  for(child=icalcomponent_get_first_component(component,ICAL_ANY_COMPONENT);child;
+      child=icalcomponent_get_next_component(component,ICAL_ANY_COMPONENT)) count+=ComponentCount(child);
+  return count;
+}
+static BOOL AudioEdits(icalcomponent *event,int component,NSDictionary *base,
+    NSDictionary *graph,NSDictionary *truth,NSMutableArray *edits,RCError *error)
+{
+  icalcomponent *alarm; int index=component+1; NSUInteger audio=0;
+  NSArray *ids=[base objectForKey:@"audio alarms"];
+  for(alarm=icalcomponent_get_first_component(event,ICAL_ANY_COMPONENT);alarm;
+      index+=ComponentCount(alarm),alarm=icalcomponent_get_next_component(event,ICAL_ANY_COMPONENT)) {
+    const char *action=RCICalendarValue(alarm,ICAL_ACTION_PROPERTY);
+    if(icalcomponent_isa(alarm)!=ICAL_VALARM_COMPONENT || !action || strcmp(action,"AUDIO")) continue;
+    if(audio>=[ids count]) { RCErrorSet(error,1,"Audio alarm identity is missing"); return NO; }
+    NSString *identifier=[ids objectAtIndex:audio++];
+    NSDictionary *old=[graph objectForKey:identifier], *record=[truth objectForKey:identifier];
+    if(!record) { RCErrorSet(error,1,"Audio alarm removal requires a richer mapper"); return NO; }
+    NSMutableDictionary *expected=[NSMutableDictionary dictionaryWithDictionary:old];
+    id sound=[record objectForKey:@"com.apple.ical.sound"];
+    if(RCNativeEmptyValue(sound)) sound=nil;
+    if(sound && !SoundValue(sound)) { RCErrorSet(error,1,"Invalid iCal sound URL"); return NO; }
+    if(sound) [expected setObject:sound forKey:@"com.apple.ical.sound"]; else [expected removeObjectForKey:@"com.apple.ical.sound"];
+    if(!RCTwoWayRecordsEqual(expected,record)) { RCErrorSet(error,1,"Audio alarm field '%s' changed beyond the reverse mapper",[DifferentField(expected,record) UTF8String]); return NO; }
+    id prior=[old objectForKey:@"com.apple.ical.sound"];
+    if(RCNativeEmptyValue(prior)) prior=nil;
+    if((!prior && !sound) || [prior isEqual:sound]) continue;
+    int count=icalcomponent_count_properties(alarm,ICAL_ATTACH_PROPERTY);
+    icalproperty *p=icalcomponent_get_first_property(alarm,ICAL_ATTACH_PROPERTY);
+    if(count>1 || (p && !icalattach_get_is_url(icalproperty_get_attach(p)))) {
+      RCErrorSet(error,1,"Embedded or multiple sound attachments require a richer mapper"); return NO;
+    }
+    if(!count && !sound) continue;
+    [edits addObject:[NSDictionary dictionaryWithObjectsAndKeys:@"ATTACH",@"name",
+        [NSNumber numberWithInt:index],@"component",[NSNumber numberWithInt:count ? 0 : -1],@"occurrence",
+        sound ? (id)SoundValue(sound) : (id)[NSNull null],@"value",nil]];
+  }
+  return YES;
+}
+/* Add/remove detached VEVENTs as part of the master's existing DAV resource.
+   Existing components remain byte-for-byte intact; only new exceptions are
+   cloned. The normal field mapper and final projection verify the whole graph. */
+static NSDictionary *PrepareExceptions(RCCalendarStore *store,NSDictionary *resource,
+    NSDictionary *truth,NSString *root,RCError *error)
+{
+  NSDictionary *base=[resource objectForKey:@"graph"], *masterRecord=[truth objectForKey:root];
+  NSArray *before=[[base objectForKey:root] objectForKey:@"detached events"] ?: [NSArray array];
+  NSArray *after=[masterRecord objectForKey:@"detached events"] ?: [NSArray array];
+  if ([[NSSet setWithArray:before] isEqual:[NSSet setWithArray:after]]) return resource;
+  if ([[masterRecord objectForKey:@"calendar"] count]!=1) {
+    RCErrorSet(error,1,"Detached edits require a unique parent calendar"); return nil;
+  }
+  NSData *raw=[resource objectForKey:@"body"];
+  icalcomponent *calendar=RCICalendarParse([raw bytes],[raw length],error), *master=NULL,*event;
+  if(!calendar) return nil;
+  NSDictionary *result=nil;
+  NSArray *sources=SourceEvents(raw,error);
+  NSMutableDictionary *paths=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"paths"]];
+  NSMutableData *body=[NSMutableData data]; NSUInteger cursor=0;
+  NSEnumerator *it=[sources objectEnumerator]; NSDictionary *source;
+  if(!sources) goto done;
+  for(event=icalcomponent_get_first_component(calendar,ICAL_VEVENT_COMPONENT);event;
+      event=icalcomponent_get_next_component(calendar,ICAL_VEVENT_COMPONENT))
+    if(!icalcomponent_count_properties(event,ICAL_RECURRENCEID_PROPERTY)) master=event;
+  if(!master || !icalcomponent_count_properties(master,ICAL_RRULE_PROPERTY)) {
+    RCErrorSet(error,1,"Detached edits require an existing recurring master"); goto done;
+  }
+  while((source=[it nextObject])) {
+    NSString *path=[source objectForKey:@"path"], *identifier=[paths objectForKey:path];
+    if(!identifier || [identifier isEqual:root] || [after containsObject:identifier]) continue;
+    if([truth objectForKey:identifier]) { RCErrorSet(error,1,"Detached event still exists outside its parent series"); goto done; }
+    NSRange range=[[source objectForKey:@"range"] rangeValue];
+    [body appendBytes:(const unsigned char *)[raw bytes]+cursor length:range.location-cursor];
+    cursor=NSMaxRange(range);
+    NSEnumerator *keys=[[[[paths allKeys] copy] autorelease] objectEnumerator]; NSString *key;
+    while((key=[keys nextObject])) if([key isEqual:path] || [key hasPrefix:[path stringByAppendingString:@"/"]]) {
+      if([truth objectForKey:[paths objectForKey:key]]) { RCErrorSet(error,1,"Deleted exception still owns native records"); goto done; }
+      [paths removeObjectForKey:key];
+    }
+  }
+  [body appendBytes:(const unsigned char *)[raw bytes]+cursor length:[raw length]-cursor];
+  NSMutableData *additions=[NSMutableData data];
+  it=[after objectEnumerator]; NSString *identifier;
+  while((identifier=[it nextObject])) {
+    NSDictionary *record=[truth objectForKey:identifier];
+    if(![[record objectForKey:@"main event"] isEqual:[NSArray arrayWithObject:root]] ||
+        ![[record objectForKey:@"calendar"] isEqual:[masterRecord objectForKey:@"calendar"]]) {
+      RCErrorSet(error,1,"Detached event has an inconsistent parent or calendar"); goto done;
+    }
+    if([before containsObject:identifier]) continue;
+    icalproperty *start=icalcomponent_get_first_property(master,ICAL_DTSTART_PROPERTY);
+    BOOL allDay=icalproperty_get_dtstart(start).is_date;
+    const char *tz=RCICalendarTZID(start);
+    NSTimeZone *zone=tz ? [NSTimeZone timeZoneWithName:S(tz)] : nil;
+    NSString *date=DateValue([record objectForKey:@"original date"],allDay,zone);
+    if(!date || (tz && !zone)) { RCErrorSet(error,1,"Detached event has an invalid original date or timezone"); goto done; }
+    NSString *line=[NSString stringWithFormat:@"RECURRENCE-ID%@:%@",allDay ? @";VALUE=DATE" : tz ? [@";TZID=" stringByAppendingString:S(tz)] : @"",date];
+    icalproperty *rid=icalproperty_new_from_string([line UTF8String]);
+    icalcomponent *clone=icalcomponent_new_clone(master);
+    if(!rid || !clone) { if(rid) icalproperty_free(rid); if(clone) icalcomponent_free(clone); goto done; }
+    icalproperty_kind remove[]={ICAL_RRULE_PROPERTY,ICAL_EXDATE_PROPERTY,ICAL_RDATE_PROPERTY,ICAL_EXRULE_PROPERTY}; int k;
+    for(k=0;k<4;k++) { icalproperty *p; while((p=icalcomponent_get_first_property(clone,remove[k]))) { icalcomponent_remove_property(clone,p); icalproperty_free(p); } }
+    icalcomponent_add_property(clone,rid);
+    char *recurrence=RCICalendarRecurrenceKey(clone);
+    NSString *path=[@"event:" stringByAppendingString:S(recurrence)]; free(recurrence);
+    if([paths objectForKey:path]) { icalcomponent_free(clone); RCErrorSet(error,1,"Duplicate detached recurrence identity"); goto done; }
+    [paths setObject:identifier forKey:path];
+    for(k=0;k<5;k++) {
+      NSArray *children=[record objectForKey:childLinks[k]]; NSUInteger n;
+      for(n=0;n<[children count];n++) [paths setObject:[children objectAtIndex:n]
+          forKey:[NSString stringWithFormat:@"%@/%@:%lu",path,childLinks[k],(unsigned long)n]];
+    }
+    char *encoded=icalcomponent_as_ical_string_r(clone); icalcomponent_free(clone);
+    if(!encoded) goto done;
+    [additions appendBytes:encoded length:strlen(encoded)]; free(encoded);
+  }
+  /* Locate the final root END without changing line endings or folded values. */
+  if([additions length]) {
+    const unsigned char *bytes=[body bytes]; NSUInteger pos=0,end=NSNotFound;
+    while(pos<[body length]) {
+      NSUInteger begin=pos; while(pos<[body length] && bytes[pos]!='\r' && bytes[pos]!='\n') pos++;
+      if(pos-begin==13 && !strncasecmp((const char *)bytes+begin,"END:VCALENDAR",13)) end=begin;
+      if(pos<[body length] && bytes[pos]=='\r') pos++;
+      if(pos<[body length] && bytes[pos]=='\n') pos++;
+    }
+    if(end==NSNotFound) goto done;
+    [body replaceBytesInRange:NSMakeRange(end,0) withBytes:[additions bytes] length:[additions length]];
+  }
+  {
+    RCWriteJournal journal=RCCalendarStoreWriteJournal(store);
+    if(!RCTwoWaySQL(&journal,error,"SAVEPOINT prepare_exceptions")) goto done;
+    NSDictionary *mapped=RCCalendarNativeGraph(store,-1,[[masterRecord objectForKey:@"calendar"] objectAtIndex:0],body,error);
+    NSString *unused=nil;
+    NSDictionary *generated=mapped ? Paths(store,-1,body,mapped,&unused,error) : nil;
+    NSMutableDictionary *aliases=[NSMutableDictionary dictionary];
+    NSEnumerator *keys=[generated keyEnumerator]; NSString *key;
+    while((key=[keys nextObject])) if([paths objectForKey:key]) [aliases setObject:[paths objectForKey:key] forKey:[generated objectForKey:key]];
+    NSMutableDictionary *graph=generated ? [NSMutableDictionary dictionaryWithDictionary:RCTwoWayRemap(mapped,aliases)] : nil;
+    BOOL rolledBack=RCTwoWaySQL(&journal,NULL,"ROLLBACK TO prepare_exceptions;RELEASE prepare_exceptions");
+    if(!graph || !rolledBack) goto done;
+    /* Preserve the original comparison baseline for existing records. */
+    keys=[base keyEnumerator];
+    while((key=[keys nextObject])) if([graph objectForKey:key]) [graph setObject:[base objectForKey:key] forKey:key];
+    NSMutableDictionary *masterBase=[NSMutableDictionary dictionaryWithDictionary:[graph objectForKey:root]];
+    [masterBase setObject:after forKey:@"detached events"]; [graph setObject:masterBase forKey:root];
+    NSMutableDictionary *prepared=[NSMutableDictionary dictionaryWithDictionary:resource];
+    [prepared setObject:body forKey:@"body"]; [prepared setObject:paths forKey:@"paths"]; [prepared setObject:graph forKey:@"graph"];
+    result=prepared;
+  }
+done:
+  icalcomponent_free(calendar);
+  if(!result && (!error || !error->code)) RCErrorSet(error,1,"Could not encode detached recurrence changes");
+  return result;
+}
 NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,NSDictionary *truth,NSString *root,RCError *error)
 {
   if (!resource) return Create(opaque,truth,root,error);
+  resource=PrepareExceptions(opaque,resource,truth,root,error);
+  if (!resource) return nil;
   NSData *raw=[resource objectForKey:@"body"];
   icalcomponent *calendar=RCICalendarParse([raw bytes],[raw length],error), *event;
   if (!calendar) return nil;
   NSMutableArray *edits=[NSMutableArray array];
   NSDictionary *baseGraph=[resource objectForKey:@"graph"];
-  int component=1;
+  NSArray *sourceEvents=SourceEvents(raw,error);
+  if (!sourceEvents) goto failed;
   for(event=icalcomponent_get_first_component(calendar,ICAL_ANY_COMPONENT);event;
-      component+=RCNativeComponentCount(event),event=icalcomponent_get_next_component(calendar,ICAL_ANY_COMPONENT)) {
+      event=icalcomponent_get_next_component(calendar,ICAL_ANY_COMPONENT)) {
     if (icalcomponent_isa(event)!=ICAL_VEVENT_COMPONENT) continue;
+    NSDictionary *source=SourceEvent(sourceEvents,event);
+    if (!source) { RCErrorSet(error,1,"Event source identity was not found"); goto failed; }
+    int component=[[source objectForKey:@"component"] intValue];
     char *recurrence=RCICalendarRecurrenceKey(event);
     NSString *path=[@"event:" stringByAppendingString:S(recurrence)]; free(recurrence);
     NSString *identifier=[[resource objectForKey:@"paths"] objectForKey:path];
@@ -224,10 +450,12 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
     int k;
     for(k=0;k<8;k++) {
       id old=[base objectForKey:keys[k]], value=[record objectForKey:keys[k]];
-      if ((old==nil && value==nil) || [old isEqual:value]) continue;
-      NSString *encoded=value ? RCTwoWayEscape(value) : nil;
-      if (k==4) encoded=[value isEqual:@"none"] ? nil : [value uppercaseString];
-      if (k==5) encoded=[value uppercaseString];
+      if (RCNativePropertyValuesEqual(eventEntity,keys[k],old,value)) continue;
+      /* Remove cleared optional properties. libical rejects empty text values;
+         an omitted SUMMARY uses the forward mapper's existing title default. */
+      NSString *encoded=RCNativeEmptyValue(value) ? nil : RCTwoWayEscape(value);
+      if (k==4) encoded=RCNativeEmptyValue(value) || [value isEqual:@"none"] ? nil : [value uppercaseString];
+      if (k==5) encoded=RCNativeEmptyValue(value) ? nil : [value uppercaseString];
       if (k>=6) {
         BOOL allDay=[[base objectForKey:@"all day"] boolValue];
         icalproperty *p=icalcomponent_get_first_property(event,k==6 ? ICAL_DTSTART_PROPERTY : ICAL_DTEND_PROPERTY);
@@ -243,10 +471,33 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
       if (!AddEdit(event,component,names[k],encoded,edits,error)) goto failed;
       if (value) [expected setObject:value forKey:keys[k]]; else [expected removeObjectForKey:keys[k]];
     }
+    NSArray *oldExceptions=[base objectForKey:@"exception dates"] ?: [NSArray array];
+    NSArray *exceptions=[record objectForKey:@"exception dates"] ?: [NSArray array];
+    if (![RCNativeUnorderedValues(oldExceptions) isEqual:RCNativeUnorderedValues(exceptions)]) {
+      /* Cancelled detached components also contribute exception dates. Keep
+         those protected until a mapper can explicitly edit their STATUS. */
+      if ((NSUInteger)icalcomponent_count_properties(event,ICAL_EXDATE_PROPERTY)!=[oldExceptions count]) {
+        RCErrorSet(error,1,"Exception dates include retained cancellations or compound EXDATE values"); goto failed;
+      }
+      NSUInteger n;
+      for(n=0;n<[oldExceptions count];n++) [edits addObject:[NSDictionary dictionaryWithObjectsAndKeys:
+          @"EXDATE",@"name",[NSNumber numberWithInt:component],@"component",[NSNumber numberWithUnsignedInt:n],@"occurrence",[NSNull null],@"value",nil]];
+      BOOL allDay=[[base objectForKey:@"all day"] boolValue];
+      for(n=0;n<[exceptions count];n++) {
+        NSString *date=DateValue([exceptions objectAtIndex:n],allDay,nil);
+        if(!date) { RCErrorSet(error,1,"Invalid exception date"); goto failed; }
+        [edits addObject:[NSDictionary dictionaryWithObjectsAndKeys:@"EXDATE",@"name",
+            [NSNumber numberWithInt:component],@"component",[NSNumber numberWithInt:-1],@"occurrence",date,@"value",
+            allDay ? @"VALUE=DATE" : @"",@"parameters",nil]];
+      }
+      [expected setObject:exceptions forKey:@"exception dates"];
+    }
     if (!RCTwoWayRecordsEqual(expected,record)) {
       RCErrorSet(error,1,"Event component %d field '%s' changed beyond the reverse mapper",component,[DifferentField(expected,record) UTF8String]); goto failed;
     }
+    if (!AudioEdits(event,component,base,baseGraph,truth,edits,error)) goto failed;
     for(k=0;k<5;k++) {
+      if(k==2) continue; /* AudioEdits checked every mapped sound record. */
       NSEnumerator *it=[[base objectForKey:childLinks[k]] objectEnumerator]; NSString *id;
       while ((id=[it nextObject])) if (!RCTwoWayRecordsEqual([baseGraph objectForKey:id],[truth objectForKey:id])) {
         RCErrorSet(error,1,"Event component %d child '%s' field '%s' changed beyond the reverse mapper",component,
@@ -264,6 +515,7 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
       patch[n].property=[[edit objectForKey:@"name"] UTF8String];
       patch[n].occurrence=[[edit objectForKey:@"occurrence"] intValue];
       patch[n].value=[edit objectForKey:@"value"]==[NSNull null] ? NULL : [[edit objectForKey:@"value"] UTF8String];
+      if ([[edit objectForKey:@"parameters"] length]) patch[n].parameters=[[edit objectForKey:@"parameters"] UTF8String];
     }
     BOOL ok=RCResourcePatch(RCResourceCalendar,[raw bytes],[raw length],patch,[edits count],&bytes,&length,error);
     free(patch);

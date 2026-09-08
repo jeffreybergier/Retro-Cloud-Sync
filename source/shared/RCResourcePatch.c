@@ -45,7 +45,7 @@ static int allowed(const char *component, const char *name)
   size_t i;
   if (!strcmp(component,"VCARD")) fields = "|N|FN|NICKNAME|ORG|TITLE|BDAY|NOTE|TEL|EMAIL|ADR|URL|X-ABLABEL|X-ABADR|X-ABSHOWAS|";
   else if (!strcmp(component,"VEVENT")) fields = "|SUMMARY|DESCRIPTION|LOCATION|URL|DTSTART|DTEND|DURATION|STATUS|CLASS|PRIORITY|RRULE|EXDATE|ORGANIZER|ATTENDEE|";
-  else if (!strcmp(component,"VALARM")) fields = "|DESCRIPTION|SUMMARY|TRIGGER|REPEAT|DURATION|ACTION|";
+  else if (!strcmp(component,"VALARM")) fields = "|DESCRIPTION|SUMMARY|TRIGGER|REPEAT|DURATION|ACTION|ATTACH|";
   else return 0;
   if (strlen(name)>sizeof(wanted)-3) return 0;
   wanted[0]='|';

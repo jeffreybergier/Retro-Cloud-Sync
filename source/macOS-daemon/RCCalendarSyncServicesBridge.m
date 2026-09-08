@@ -343,6 +343,15 @@ static int Alarms(RCCalendarStore *store, icalcomponent *root, icalcomponent *ev
       [a setObject:[NSNumber numberWithInt:icaldurationtype_as_int(trigger.duration)]
             forKey:@"triggerduration"];
     Text(a, @"description", RCICalendarValue(alarm, ICAL_DESCRIPTION_PROPERTY));
+    /* Tiger's sound field is a URL. Only a single URI attachment has a
+       lossless native representation; embedded/multiple attachments stay raw. */
+    if (!strcmp(action,"AUDIO") && icalcomponent_count_properties(alarm,ICAL_ATTACH_PROPERTY)==1) {
+      icalattach *attachment=icalproperty_get_attach(icalcomponent_get_first_property(alarm,ICAL_ATTACH_PROPERTY));
+      if (attachment && icalattach_get_is_url(attachment)) {
+        NSURL *sound=[NSURL URLWithString:String(icalattach_get_url(attachment))];
+        if (sound) [a setObject:sound forKey:@"com.apple.ical.sound"];
+      }
+    }
     p = icalcomponent_get_first_property(alarm, ICAL_REPEAT_PROPERTY);
     if (p)
       [a setObject:[NSNumber numberWithInt:icalproperty_get_repeat(p)]

@@ -1,4 +1,5 @@
 #import "RCContactConflictResolver.h"
+#import "RCSyncRecordEquality.h"
 #include "RCResourcePatch.h"
 #include "RCVCard.h"
 #include <stdlib.h>
@@ -138,14 +139,14 @@ static int Resolve(void *opaque, const RCWriteOperation *o,
     NSMutableDictionary *a=[[record mutableCopy] autorelease];
     NSMutableDictionary *b=[[resolved mutableCopy] autorelease];
     for (i=0;i<3;i++) { [a removeObjectForKey:keys[i]]; [b removeObjectForKey:keys[i]]; }
-    if (![a isEqual:b]) goto done;
+    if (!RCNativeRecordsEqual(a,b)) goto done;
   }
   memset(edits,0,sizeof(edits));
   for (i=0;i<3;i++) {
     NSString *value=[resolved objectForKey:keys[i]];
     NSString *old=rp[i] ? String(rp[i]->decodedValue) : nil;
     if (value && ![value isKindOfClass:[NSString class]]) goto done;
-    if ((!value && !old) || [value isEqual:old]) continue;
+    if (RCNativePropertyValuesEqual(@"com.apple.contacts.Contact",keys[i],value,old)) continue;
     edits[count].property=fields[i];
     edits[count].occurrence=rp[i] ? 0 : -1;
     edits[count].value=value ? [Escape(value) UTF8String] : NULL;

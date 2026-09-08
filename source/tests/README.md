@@ -192,6 +192,37 @@ The production daemon must be stopped, and Mac suites must run sequentially.
 `TwoWaySyncTests --mappers` runs the production reverse-mapping checks without
 opening any Sync Services session. Run it in a fresh Desktop directory; it
 creates synthetic databases there. The remote runner runs these checks too.
+The mapper regressions cover timezone components before, after and around
+VEVENTs, preserving untouched wire bytes; detached exception creation, editing
+and removal; EXDATE updates; invitation metadata; and audio sound round trips.
+`TWO_WAY_TEST_MODE=calendar-exceptions` runs only the new calendar integration
+cases (also included in the full calendar suite). They check that a new exception
+uses the master's conditional PUT, with exact acknowledgement and replay without
+duplicate writes, and that sound URLs survive native collection and replay.
+Tiger date comparisons normalize unordered dates before hashing because equal
+NSCalendarDate values can have different hashes across timezone representations.
+
+Tiger's `com.apple.ical.sound` is an NSURL and maps to the AUDIO alarm's
+single URI `ATTACH` property. Sound edits preserve existing parameters and
+unrelated alarm bytes; embedded or multiple attachments remain protected.
+No sound files are read or uploaded. Invitation identifiers, sequences and
+timestamps remain native bookkeeping. Unsupported recurrence-rule changes, scheduling changes,
+and edits to retained cancelled components still fail closed.
+
+Empty strings, empty URLs and absent optional values compare equally. Empty
+audio sound selections omit ATTACH while retaining ACTION:AUDIO; the mapper
+does not substitute Basso or any other sound. Field-specific defaults also
+compare equally when omitted or empty: event title/all-day/status/classification,
+attendee RSVP/role/status/user type, contact person display, and contact child
+type "other". Real nondefault changes are still detected. Missing records,
+required dates and alarm triggers are not treated as optional defaults.
+Clearing an event title omits SUMMARY and uses the forward mapper's existing
+"Untitled event" fallback; an empty SUMMARY is rejected by the legacy codec.
+The mapper-only tests cover these cases, including import/replay, untouched
+wire bytes, and rejection of actual attendee or label changes. They can run
+alongside the daemon because they use synthetic databases and no sync session;
+the Sync Services integration suites still require the daemon to be stopped.
+
 An interrupted integration test can be recovered with `./TwoWaySyncTests --cleanup`
 in its original Desktop directory. Preserve the marker and baseline files.
 

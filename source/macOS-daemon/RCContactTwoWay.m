@@ -1,5 +1,6 @@
 #import "RCTwoWayNative.h"
 #import "RCContactSyncClient.h"
+#import "RCSyncRecordEquality.h"
 #include "RCResourcePatch.h"
 #include <string.h>
 #include <stdlib.h>
@@ -12,8 +13,9 @@ static NSString *S(const char *s) { return s ? [NSString stringWithUTF8String:s]
 static BOOL Changed(NSDictionary *a,NSDictionary *b,NSString *key)
 {
   id x=[a objectForKey:key], y=[b objectForKey:key];
-  return !RCTwoWayRecordsEqual(x ? [NSDictionary dictionaryWithObject:x forKey:key] : [NSDictionary dictionary],
-      y ? [NSDictionary dictionaryWithObject:y forKey:key] : [NSDictionary dictionary]);
+  NSString *kind=[a objectForKey:ISyncRecordEntityNameKey];
+  if (![kind isEqual:[b objectForKey:ISyncRecordEntityNameKey]]) kind=nil;
+  return !RCNativePropertyValuesEqual(kind,key,x,y);
 }
 static NSString *Structured(NSDictionary *record, NSArray *keys)
 {
@@ -125,7 +127,8 @@ static NSString *NewType(NSDictionary *child, BOOL preferred)
 {
   NSDictionary *types=[NSDictionary dictionaryWithObjectsAndKeys:@"HOME",@"home",@"WORK",@"work",@"CELL",@"mobile",
       @"PAGER",@"pager",@"HOME,FAX",@"home fax",@"WORK,FAX",@"work fax",@"",@"other",nil];
-  NSString *type=[types objectForKey:[child objectForKey:@"type"] ?: @"other"];
+  id labelType=[child objectForKey:@"type"];
+  NSString *type=[types objectForKey:RCNativeEmptyValue(labelType) ? @"other" : labelType];
   if (!type) return nil;
   if (preferred) type=[type length] ? [type stringByAppendingString:@",PREF"] : @"PREF";
   return [type length] ? [@"TYPE=" stringByAppendingString:type] : @"";
@@ -172,7 +175,7 @@ static NSMutableDictionary *Create(RCContactStore *store,NSDictionary *truth,NSS
   [body appendFormat:@"FN:%@\r\nORG:%@\r\n",RCTwoWayEscape(fn),Structured(record,[NSArray arrayWithObjects:@"company name",@"department",nil])];
   NSString *keys[]={@"notes",@"job title",@"nickname"}, *names[]={@"NOTE",@"TITLE",@"NICKNAME"}; int k;
   for(k=0;k<3;k++) if ([[record objectForKey:keys[k]] length]) [body appendFormat:@"%@:%@\r\n",names[k],RCTwoWayEscape([record objectForKey:keys[k]])];
-  if ([record objectForKey:@"birthday"]) [body appendFormat:@"BDAY:%@\r\n",Birthday([record objectForKey:@"birthday"])];
+  if (!RCNativeEmptyValue([record objectForKey:@"birthday"])) [body appendFormat:@"BDAY:%@\r\n",Birthday([record objectForKey:@"birthday"])];
   if ([[record objectForKey:@"display as company"] isEqual:@"company"]) [body appendString:@"X-ABShowAs:COMPANY\r\n"];
   NSMutableDictionary *paths=[NSMutableDictionary dictionaryWithObject:root forKey:@"root"];
   for(k=0;k<4;k++) {
@@ -180,7 +183,8 @@ static NSMutableDictionary *Create(RCContactStore *store,NSDictionary *truth,NSS
     while ((identifier=[ids nextObject])) {
       NSDictionary *child=[truth objectForKey:identifier];
       if (!child) { RCErrorSet(error,1,"New contact has an incomplete child graph"); return nil; }
-      NSString *type=[child objectForKey:@"type"] ?: @"other";
+      NSString *type=[child objectForKey:@"type"];
+      if (RCNativeEmptyValue(type)) type=@"other";
       NSDictionary *types=[NSDictionary dictionaryWithObjectsAndKeys:@"HOME",@"home",@"WORK",@"work",@"CELL",@"mobile",
           @"PAGER",@"pager",@"HOME,FAX",@"home fax",@"WORK,FAX",@"work fax",@"",@"other",nil];
       if (![types objectForKey:type]) { RCErrorSet(error,1,"Unsupported contact label type"); return nil; }

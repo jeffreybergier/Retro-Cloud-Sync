@@ -65,8 +65,10 @@ NSDictionary *RCSyncResolveConflictWithIntent(ISyncClient *client,
         NSString *property;
         if (!record) { RCErrorSet(error,1,"Pending local conflict intent is unavailable"); goto done; }
         while ((property=[properties nextObject])) {
-          id value=[record objectForKey:property] ?: [NSNull null];
-          if (![value isEqual:[expected objectForKey:property]]) {
+          id value=[record objectForKey:property], wanted=[expected objectForKey:property];
+          /* NSNull here is a field-deletion intent, not a deleted record. */
+          if (wanted==[NSNull null]) wanted=nil;
+          if (!RCNativePropertyValuesEqual([record objectForKey:ISyncRecordEntityNameKey],property,value,wanted)) {
             RCErrorSet(error,1,"Pending local conflict intent has changed"); goto done;
           }
         }
