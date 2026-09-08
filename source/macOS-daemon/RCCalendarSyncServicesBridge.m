@@ -1,3 +1,4 @@
+#import "RCLogger.h"
 #import "RCCalendarSyncServicesBridge.h"
 #import "RCCalendarSyncClient.h"
 #import "RCTwoWaySync.h"
@@ -650,7 +651,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
         }
         [update setObject:mapped ? @"retained previous" : @"unsupported"
                    forKey:@"status"];
-        NSLog(@"Calendar resource %lld: %s (%@)", resource, mappingError.message,
+        RCLogger(RCLogWarning, "Calendars", "Apply", @"Calendar resource %lld: %s (%@)", resource, mappingError.message,
               [update objectForKey:@"status"]);
       }
       [updates addObject:update];
@@ -784,7 +785,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
     RCErrorSet(error, 1, "Calendar export database error: %s",
                sqlite3_errmsg(store->db));
   } @catch (NSException *exception) {
-    RCErrorSet(error, 1, "Calendar Sync Services: %s", [[exception reason] UTF8String]);
+    RCErrorSet(error, 1, "Calendar Sync Services: %s", [[exception name] UTF8String]);
   }
 done:
   sqlite3_finalize(q);
@@ -792,7 +793,7 @@ done:
     @try {
       [session cancelSyncing];
     } @catch (NSException *exception) {
-      NSLog(@"Calendar session cancellation: %@", [exception reason]);
+      RCLogger(RCLogWarning, "Calendars", "Apply", @"Could not cancel Sync Services session: %@", [exception name]);
     }
   }
   if (!success && !sqlite3_get_autocommit(store->db))
@@ -809,7 +810,7 @@ int RCSyncServicesUnregisterCalendarTestClient(RCError *error)
     return 1;
   } @catch (NSException *exception) {
     RCErrorSet(error, 1, "Could not unregister calendar test client: %s",
-               [[exception reason] UTF8String]);
+               [[exception name] UTF8String]);
   }
   return 0;
 }

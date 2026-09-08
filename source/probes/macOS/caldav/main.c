@@ -15,9 +15,10 @@ static void RCPrintUsage(const char *program)
       "       History defaults to 2 years; 0 downloads all history.\n", program);
 }
 
-static void RCPrintProgress(const char *message, void *context)
+static void RCPrintProgress(RCLogLevel level, const char *message, void *context)
 {
   (void)context;
+  (void)level;
   fprintf(stderr, "%s...\n", message);
 }
 

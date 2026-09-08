@@ -1,3 +1,4 @@
+#import "RCLogger.h"
 #import "RCTwoWayNative.h"
 #import "RCCalendarSyncClient.h"
 #import "RCSyncRecordEquality.h"
@@ -569,7 +570,7 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
       mapped=RCCalendarNativeGraph(store,id,calendar,body,&mappingError);
       if (!mapped) { RCErrorSet(error,1,"Could not reconstruct retained calendar graph"); goto failed; }
     }
-    if (!mapped) { NSLog(@"Two-way calendar resource %lld is unsupported: %s",id,sqlite3_column_type(q,7)!=SQLITE_NULL ? (const char *)sqlite3_column_text(q,7) : mappingError.message); continue; }
+    if (!mapped) { RCLogger(RCLogWarning, "Calendars", "Apply", @"Two-way calendar resource %lld is unsupported: %s",id,sqlite3_column_type(q,7)!=SQLITE_NULL ? (const char *)sqlite3_column_text(q,7) : mappingError.message); continue; }
     NSString *root=nil; NSDictionary *paths=Paths(store,id,body,mapped,&root,error);
     if (!paths || !root) goto failed;
     [resources addObject:[NSDictionary dictionaryWithObjectsAndKeys:[NSString stringWithFormat:@"resource-%lld",id],@"key",root,@"root",

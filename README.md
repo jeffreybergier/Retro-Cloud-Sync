@@ -114,6 +114,20 @@ toolbar to follow that log. It is stored at:
 ~/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log
 ```
 
+Daemon messages pass through a shared C/Objective-C logger into `NSLog`, retaining
+its timestamp and process information. Messages use `INFO`, `WARN`, `ERROR`, or
+`DEBUG`, followed by the service and phase. Sync messages include a poll number;
+mail connections have separate connection numbers. Download completion, local
+application, and verified uploads are reported separately. Counts distinguish DAV
+resources from internal Sync Services records.
+
+Normal logging omits discovery and per-resource download chatter. To enable those
+details, set `RETROCLOUDSYNC_LOG_LEVEL=DEBUG` in the daemon's environment before
+starting it (for a LaunchAgent, use its `EnvironmentVariables` dictionary).
+Messages are bounded and flattened to a single line; raw Sync Services exception
+reasons and protocol bodies are not included. The GUI displays the last 1 MiB;
+this is a display limit, not disk log rotation.
+
 In one-way mode, the daemon submits the last complete contact inventory to
 Tiger's Sync Services Contacts schema, even if the latest download or Keychain
 access failed. This mode uses a push-only bridge:

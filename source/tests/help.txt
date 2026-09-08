@@ -10,6 +10,7 @@ Run offline host tests:
 Build Mac tools without running them (PPC/i386):
   make build-mac-tests                   All normal Mac test tools and fixtures
   make build-mac-app-tests               App GUI harness
+  make build-mac-logging-tests           NSLog and mail diagnostic harness
   make build-mac-network-tests           Standalone HTTPS test
   make build-mac-contacts-syncservices-tests
   make build-mac-calendars-syncservices-tests
@@ -18,6 +19,7 @@ Build Mac tools without running them (PPC/i386):
 
 Build and run on the Mac (TEST_HOST defaults to x4-vm):
   make test-mac-app TEST_HOST=x4-vm       Preferences, Start/Stop, files and listeners
+  make test-mac-logging TEST_HOST=x4-vm   NSLog output and injected mail errors; no GUI/account
   make test-mac-network TEST_HOST=x4-vm   Standalone HTTPS check; internet, no GUI needed
   make test-mac-contacts-syncservices TEST_HOST=x4-vm
   make test-mac-calendars-syncservices TEST_HOST=x4-vm

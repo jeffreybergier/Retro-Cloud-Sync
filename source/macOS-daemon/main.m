@@ -1,3 +1,4 @@
+#import "RCLogger.h"
 //
 //  main.m
 //  RetroCloudSyncDaemon
@@ -69,18 +70,18 @@ static char *RCCopyCString(const char *string)
   return copy;
 }
 
-static void RCContactProgress(const char *message, void *context)
+static void RCContactProgress(RCLogLevel level, const char *message, void *context)
 {
   (void)context;
   if (message != NULL)
-    NSLog(@"Contacts: %s", message);
+    RCLoggerC(level, "Contacts", "Download", "%s", message);
 }
 
-static void RCCalendarProgress(const char *message, void *context)
+static void RCCalendarProgress(RCLogLevel level, const char *message, void *context)
 {
   (void)context;
   if (message)
-    NSLog(@"Calendars: %s", message);
+    RCLoggerC(level, "Calendars", "Download", "%s", message);
 }
 
 static NSString *RCSyncModeFromConfiguration(NSDictionary *configuration,
@@ -121,7 +122,7 @@ static void RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
   http=RCHTTPClientCreate(&config,&error);
   if (!http || RCTwoWayRunWrites(journal,http,calendars ? "text/calendar; charset=utf-8" :
       "text/vcard; charset=utf-8",&error)<0)
-    NSLog(@"%@ outgoing sync deferred: %s",calendars ? @"Calendar" : @"Contacts",error.message);
+    RCLogger(RCLogWarning, NULL, "Upload", @"Outgoing pass failed; queued changes remain pending: %s",error.message);
   RCHTTPClientDestroy(http);
 }
 
@@ -142,6 +143,7 @@ static BOOL RCHasPendingWrites(RCWriteJournal *journal)
 static void *RCSyncWorkerMain(void *context)
 {
   RCSyncWorker *worker = (RCSyncWorker *)context;
+  unsigned long poll = 0;
 
   SecKeychainSetUserInteractionAllowed(0);
   for (;;) {
@@ -157,6 +159,7 @@ static void *RCSyncWorkerMain(void *context)
     struct timespec wakeTime;
     int shouldStop;
     BOOL contactsFetched=NO, calendarsFetched=NO;
+    NSTimeInterval started = [NSDate timeIntervalSinceReferenceDate];
 
     pthread_mutex_lock(&worker->mutex);
     shouldStop = worker->shouldStop;
@@ -166,16 +169,19 @@ static void *RCSyncWorkerMain(void *context)
       break;
     }
 
+    RCLoggerSetContext("Account", ++poll);
+    RCLogger(RCLogDebug, NULL, "Poll", @"Starting poll");
     RCErrorClear(&error);
     if (!RCICloudCredentialsCopyPassword(worker->username, &password, &passwordLength,
                                          &error)) {
-      NSLog(@"Account download skipped: %s", error.message);
+      RCLogger(RCLogWarning, "Account", "Credentials", @"Downloads and uploads skipped; saved password unavailable: %s", error.message);
     }
     if (worker->contactsEnabled) {
+      RCLoggerSetContext("Contacts", poll);
       RCErrorClear(&error);
       store = RCContactStoreOpen(worker->databasePath, worker->username, &error);
       if (store == NULL) {
-        NSLog(@"Contacts database failed: %s", error.message);
+        RCLogger(RCLogError, "Contacts", "Database", @"Could not open database; Contacts skipped this poll: %s", error.message);
       } else {
         RCWriteJournal journal=RCContactStoreWriteJournal(store);
         if (worker->contactsTwoWay) RCRunAccountWrites(&journal,worker,password,NO);
@@ -189,13 +195,13 @@ static void *RCSyncWorkerMain(void *context)
         if (password != NULL) {
           if ((contactsFetched=RCCardDAVMirrorFetch(&mirrorConfig, store, &result, &error)) &&
               RCContactStoreGetStatistics(store, &statistics, &error)) {
-            NSLog(@"Contacts sync complete: %ld downloaded, %ld unchanged, "
-                  @"%ld available, %ld remotely absent, %ld invalid resources",
+            RCLogger(RCLogInfo, "Contacts", "Download", @"Download complete: %ld resources downloaded, %ld unchanged this poll; "
+                  @"stored totals: %ld available, %ld remotely absent, %ld invalid resources",
                   result.downloadedResourceCount, result.unchangedResourceCount,
                   statistics.availableCount, statistics.missingCount,
                   statistics.parseErrorCount);
           } else {
-            NSLog(@"Contacts sync failed: %s", error.message);
+            RCLogger(RCLogError, "Contacts", "Download", @"%s failed: %s", contactsFetched ? "Reading download statistics" : "Download", error.message);
           }
         }
         /* A failed fetch (or locked Keychain) must not prevent retrying the
@@ -205,28 +211,34 @@ static void *RCSyncWorkerMain(void *context)
         if (worker->contactsTwoWay) {
           exported=contactsFetched && RCSyncServicesTwoWayContacts(store,
               worker->syncClientDescriptionPath,&syncRecordCount,&error);
-          if (!contactsFetched) RCErrorSet(&error,1,"Two-way sync requires a successful download");
+          if (!contactsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
           if (exported) RCRunAccountWrites(&journal,worker,password,NO);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
-        } else exported=RCSyncServicesPushContacts(store,worker->syncClientDescriptionPath,&syncRecordCount,&error);
-        if (exported && syncRecordCount<0) {
-          NSLog(@"Sync Services partial publication: unresolved outgoing records remain isolated");
-        } else if (exported) {
-          NSLog(@"Sync Services export complete: %ld records", syncRecordCount);
         } else {
-          NSLog(@"Sync Services export failed: %s", error.message);
+          if (!contactsFetched) RCLogger(RCLogInfo, "Contacts", "Apply", @"Attempting local application from the last committed download");
+          exported=RCSyncServicesPushContacts(store,worker->syncClientDescriptionPath,&syncRecordCount,&error);
+        }
+        if (exported && syncRecordCount<0) {
+          RCLogger(RCLogWarning, "Contacts", "Apply", @"Applied eligible records to local apps; unresolved local edits remain pending");
+        } else if (exported) {
+          RCLogger(RCLogInfo, "Contacts", "Apply", @"Local application complete: %ld Sync Services records in snapshot", syncRecordCount);
+        } else if (worker->contactsTwoWay && !contactsFetched) {
+          RCLogger(RCLogWarning, "Contacts", "Apply", @"Skipped: two-way local application requires a successful download");
+        } else {
+          RCLogger(RCLogError, "Contacts", "Apply", @"Local application failed: %s", error.message);
         }
       }
     }
     RCContactStoreClose(store);
     if (worker->calendarsEnabled) {
       RCCalendarStore *calendarStore;
+      RCLoggerSetContext("Calendars", poll);
       RCErrorClear(&error);
       calendarStore =
           RCCalendarStoreOpen(worker->calendarDatabasePath, worker->username, &error);
       if (calendarStore == NULL)
-        NSLog(@"Calendar database failed: %s", error.message);
+        RCLogger(RCLogError, "Calendars", "Database", @"Could not open database; Calendars skipped this poll: %s", error.message);
       else {
         RCWriteJournal journal=RCCalendarStoreWriteJournal(calendarStore);
         if (worker->calendarsTwoWay) RCRunAccountWrites(&journal,worker,password,YES);
@@ -245,35 +257,43 @@ static void *RCSyncWorkerMain(void *context)
                RCCalDAVHistoryStart(today, worker->calendarHistoryYears, historyStart, &error)) &&
               (calendarsFetched=RCCalDAVMirrorFetchSince(&mirrorConfig, calendarStore,
                   worker->calendarHistoryYears ? historyStart : NULL, &result, &error)))
-            NSLog(@"Calendars sync complete: %ld calendars, %ld downloaded, %ld "
-                  @"unchanged",
+            RCLogger(RCLogInfo, "Calendars", "Download", @"Download complete: %ld calendars, %ld resources downloaded, %ld "
+                  @"resources unchanged this poll",
                   result.collectionCount, result.downloadedResourceCount,
                   result.unchangedResourceCount);
           else
-            NSLog(@"Calendars sync failed: %s", error.message);
+            RCLogger(RCLogError, "Calendars", "Download", @"Download failed: %s", error.message);
         }
         RCErrorClear(&error);
         BOOL exported;
         if (worker->calendarsTwoWay) {
           exported=calendarsFetched && RCSyncServicesTwoWayCalendars(calendarStore,
               worker->calendarDescriptionPath,&syncRecordCount,&error);
-          if (!calendarsFetched) RCErrorSet(&error,1,"Two-way sync requires a successful download");
+          if (!calendarsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
           if (exported) RCRunAccountWrites(&journal,worker,password,YES);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
-        } else exported=RCSyncServicesPushCalendars(calendarStore,worker->calendarDescriptionPath,0,&syncRecordCount,&error);
+        } else {
+          if (!calendarsFetched) RCLogger(RCLogInfo, "Calendars", "Apply", @"Attempting local application from the last committed download");
+          exported=RCSyncServicesPushCalendars(calendarStore,worker->calendarDescriptionPath,0,&syncRecordCount,&error);
+        }
         if (exported && syncRecordCount<0) {
-          NSLog(@"Calendar Sync Services partial publication: unresolved outgoing records remain isolated");
+          RCLogger(RCLogWarning, "Calendars", "Apply", @"Applied eligible records to local apps; unresolved local edits remain pending");
         } else if (exported) {
-          NSLog(@"Calendar Sync Services export complete: %ld records",
+          RCLogger(RCLogInfo, "Calendars", "Apply", @"Local application complete: %ld Sync Services records in snapshot",
                 syncRecordCount);
           if (!RCCalendarStorePruneHistory(calendarStore, &error))
-            NSLog(@"Calendar history cleanup failed: %s", error.message);
-        } else
-          NSLog(@"Calendar Sync Services export failed: %s", error.message);
+            RCLogger(RCLogError, "Calendars", "Database", @"Calendar history cleanup failed: %s", error.message);
+        } else if (worker->calendarsTwoWay && !calendarsFetched)
+          RCLogger(RCLogWarning, "Calendars", "Apply", @"Skipped: two-way local application requires a successful download");
+        else
+          RCLogger(RCLogError, "Calendars", "Apply", @"Local application failed: %s", error.message);
         RCCalendarStoreClose(calendarStore);
       }
     }
+    RCLoggerSetContext("Account", poll);
+    RCLogger(RCLogInfo, NULL, "Poll", @"Finished in %.1fs; next poll in %us",
+        [NSDate timeIntervalSinceReferenceDate] - started, worker->interval);
     RCICloudCredentialsClearPassword(password, passwordLength);
     [pool release];
 
@@ -307,18 +327,18 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
 
   memset(worker, 0, sizeof(*worker));
   if (contacts == nil) {
-    NSLog(@"Contacts sync is disabled");
-    NSLog(@"Calendar sync is disabled");
+    RCLogger(RCLogInfo, "Contacts", "Startup", @"Sync is disabled");
+    RCLogger(RCLogInfo, "Calendars", "Startup", @"Sync is disabled");
     return YES;
   }
   if (![contacts isKindOfClass:[NSDictionary class]])
-    return NO;
+    { RCLogger(RCLogError, "Account", "Startup", @"Contacts configuration must be a dictionary; daemon cannot start"); return NO; }
   contactsSyncMode =
       RCSyncModeFromConfiguration(contacts, @"ContactsSyncMode", @"Enabled", YES);
   calendarsSyncMode = RCSyncModeFromConfiguration(contacts, @"CalendarsSyncMode",
                                                   @"CalendarsEnabled", NO);
   if (contactsSyncMode == nil || calendarsSyncMode == nil) {
-    NSLog(@"Contacts and Calendars sync mode configuration is invalid");
+    RCLogger(RCLogError, "Account", "Startup", @"Contacts and Calendars sync mode configuration is invalid");
     return NO;
   }
   worker->contactsTwoWay = [contactsSyncMode isEqualToString:@"TwoWay"];
@@ -331,14 +351,14 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
   if (worker->calendarHistoryYears < 0 || worker->calendarHistoryYears > 2 ||
       (historyYears != nil && [historyYears isKindOfClass:[NSNumber class]] &&
        [historyYears doubleValue] != worker->calendarHistoryYears)) {
-    NSLog(@"Calendar history must be 0 (all history), 1, or 2 years");
+    RCLogger(RCLogError, "Calendars", "Startup", @"Calendar history must be 0 (all history), 1, or 2 years");
     return NO;
   }
 
   if (!worker->contactsEnabled)
-    NSLog(@"Contacts sync is disabled");
+    RCLogger(RCLogInfo, "Contacts", "Startup", @"Sync is disabled");
   if (!worker->calendarsEnabled)
-    NSLog(@"Calendar sync is disabled");
+    RCLogger(RCLogInfo, "Calendars", "Startup", @"Sync is disabled");
   if (!worker->contactsEnabled && !worker->calendarsEnabled)
     return YES;
   username = [contacts objectForKey:@"Username"];
@@ -350,7 +370,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
       ![interval isKindOfClass:[NSNumber class]] || [interval unsignedIntValue] < 60 ||
       [interval unsignedIntValue] > 604800 || [username UTF8String] == NULL ||
       [serviceURL UTF8String] == NULL) {
-    NSLog(@"Account configuration is invalid; synchronization is disabled");
+    RCLogger(RCLogError, "Account", "Startup", @"Account configuration is invalid; daemon cannot start");
     return NO;
   }
   databasePath = [daemonDirectory stringByAppendingPathComponent:@"Contacts.sqlite"];
@@ -371,17 +391,21 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
   set_zone_directory([[daemonDirectory stringByAppendingPathComponent:@"zoneinfo"]
       fileSystemRepresentation]);
   worker->interval = [interval unsignedIntValue];
+  RCLogger(RCLogInfo, "Account", "Startup",
+      @"Contacts=%@, Calendars=%@, interval=%us, calendar history=%@",
+      contactsSyncMode, calendarsSyncMode, worker->interval,
+      worker->calendarHistoryYears ? [NSString stringWithFormat:@"%d years", worker->calendarHistoryYears] : @"all");
   if (worker->username == NULL || worker->serviceURL == NULL ||
       worker->databasePath == NULL || worker->certificatePath == NULL ||
       worker->syncClientDescriptionPath == NULL ||
       worker->calendarDatabasePath == NULL || worker->calendarDescriptionPath == NULL) {
-    NSLog(@"Could not allocate sync worker configuration");
+    RCLogger(RCLogError, "Daemon", "Startup", @"Could not allocate sync worker configuration");
     goto failed;
   }
   pthread_mutex_init(&worker->mutex, NULL);
   pthread_cond_init(&worker->condition, NULL);
   if (pthread_create(&worker->thread, NULL, RCSyncWorkerMain, worker) != 0) {
-    NSLog(@"Could not start the account sync worker");
+    RCLogger(RCLogError, "Daemon", "Startup", @"Could not start the account sync worker");
     pthread_cond_destroy(&worker->condition);
     pthread_mutex_destroy(&worker->mutex);
     goto failed;
@@ -442,7 +466,7 @@ static BOOL RCLoadServiceConfiguration(NSDictionary *mailProxy,
       [NSCharacterSet characterSetWithCharactersInString:@" /:\\"];
 
   if (![service isKindOfClass:[NSDictionary class]]) {
-    NSLog(@"%@ mail proxy settings are missing", serviceKey);
+    RCLogger(RCLogError, "Mail", "Startup", @"%@ mail proxy settings are missing", serviceKey);
     return NO;
   }
   localPort = [service objectForKey:@"LocalPort"];
@@ -460,7 +484,7 @@ static BOOL RCLoadServiceConfiguration(NSDictionary *mailProxy,
           [NSCharacterSet whitespaceAndNewlineCharacterSet]].location !=
           NSNotFound ||
       [remoteHost UTF8String] == NULL) {
-    NSLog(@"%@ mail proxy settings are invalid", serviceKey);
+    RCLogger(RCLogError, "Mail", "Startup", @"%@ mail proxy settings are invalid", serviceKey);
     return NO;
   }
   config->serviceName = serviceName;
@@ -480,7 +504,7 @@ static NSDictionary *RCLoadMailConfiguration(NSString *path,
   NSDictionary *mailProxy;
 
   if (configuration == nil) {
-    NSLog(@"Could not read mail proxy configuration at %@", path);
+    RCLogger(RCLogError, "Mail", "Startup", @"Could not read mail proxy configuration at %@", path);
     return nil;
   }
   version = [configuration objectForKey:@"ConfigurationVersion"];
@@ -492,7 +516,7 @@ static NSDictionary *RCLoadMailConfiguration(NSString *path,
       !RCLoadServiceConfiguration(mailProxy, @"SMTP", "SMTP",
                                   kRCMailProxySMTPStartTLS, &configs[1]) ||
       configs[0].localPort == configs[1].localPort) {
-    NSLog(@"Mail proxy configuration is invalid");
+    RCLogger(RCLogError, "Daemon", "Startup", @"Mail proxy configuration is invalid");
     [configuration release];
     return nil;
   }
@@ -576,13 +600,13 @@ int main(int argc, char *argv[])
     RCCalendarStore *store=RCCalendarStoreOpen(argv[2],"calendar-test",&error);
     long count=0;
     int ok=store && RCSyncServicesPushCalendars(store,argv[3],1,&count,&error);
-    if (ok) NSLog(@"Calendar test export complete: %ld records",count);
-    else NSLog(@"Calendar test export failed: %s",error.message);
+    if (ok) RCLogger(RCLogInfo, "Calendars", "Test", @"Calendar test export complete: %ld records",count);
+    else RCLogger(RCLogError, "Calendars", "Test", @"Calendar test export failed: %s",error.message);
     RCCalendarStoreClose(store); [processPool release]; return ok?0:1;
   }
   if (argc == 2 && strcmp(argv[1], "--unregister-calendar-test-client") == 0) {
     RCError error; int ok=RCSyncServicesUnregisterCalendarTestClient(&error);
-    if (!ok) NSLog(@"Calendar test cleanup failed: %s",error.message);
+    if (!ok) RCLogger(RCLogError, "Calendars", "Test", @"Calendar test cleanup failed: %s",error.message);
     [processPool release]; return ok?0:1;
   }
   if (argc == 4 && strcmp(argv[1], "--test-syncservices") == 0) {
@@ -596,9 +620,9 @@ int main(int argc, char *argv[])
     status = store != NULL && RCSyncServicesPushTestContacts(
         store, argv[3], &recordCount, &error);
     if (status) {
-      NSLog(@"Sync Services export complete: %ld records", recordCount);
+      RCLogger(RCLogInfo, "Contacts", "Apply", @"Local application complete: %ld Sync Services records in snapshot", recordCount);
     } else {
-      NSLog(@"Sync Services export failed: %s", error.message);
+      RCLogger(RCLogError, "Contacts", "Apply", @"Local application failed: %s", error.message);
     }
     RCContactStoreClose(store);
     [processPool release];
@@ -612,7 +636,7 @@ int main(int argc, char *argv[])
     RCErrorClear(&error);
     status = RCSyncServicesUnregisterTestClient(&error);
     if (!status) {
-      NSLog(@"Could not unregister Sync Services test client: %s",
+      RCLogger(RCLogError, "Daemon", "Test", @"Could not unregister Sync Services test client: %s",
             error.message);
     }
     [processPool release];
@@ -621,7 +645,7 @@ int main(int argc, char *argv[])
   if (argc == 3 && strcmp(argv[1], "--config") == 0) {
     configurationPath = [NSString stringWithUTF8String:argv[2]];
     if (configurationPath == nil) {
-      NSLog(@"The configuration path is not valid UTF-8");
+      RCLogger(RCLogError, "Daemon", "Startup", @"The configuration path is not valid UTF-8");
       [processPool release];
       return 1;
     }
@@ -633,7 +657,7 @@ int main(int argc, char *argv[])
   } else if (argc == 1) {
     RCUseDefaultMailConfiguration(mailConfigs);
   } else {
-    NSLog(@"Usage: RetroCloudSyncDaemon [--config path] | "
+    RCLogger(RCLogError, "Daemon", "Startup", @"Usage: RetroCloudSyncDaemon [--config path] | "
            "--inspect-recovery database | --export-recovery database new-snapshot | "
            "--test-syncservices database client-description | "
            "--unregister-syncservices-test-client");
@@ -641,7 +665,7 @@ int main(int argc, char *argv[])
     return 1;
   }
   if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
-    NSLog(@"Could not initialize AltivecCore libcurl");
+    RCLogger(RCLogError, "Daemon", "Startup", @"Could not initialize AltivecCore libcurl");
     [configuration release];
     [processPool release];
     return 1;
@@ -660,6 +684,7 @@ int main(int argc, char *argv[])
   }
   if (configuration != nil) {
     if (!RCSyncWorkerStart(&syncWorker, configuration, daemonDirectory)) {
+      RCLogger(RCLogError, "Daemon", "Startup", @"Account worker initialization failed; daemon exiting");
       RCMailProxyStop(mailProxy);
       curl_global_cleanup();
       [configuration release];
@@ -670,7 +695,7 @@ int main(int argc, char *argv[])
   keepAlivePort = [[NSPort port] retain];
   [[NSRunLoop currentRunLoop] addPort:keepAlivePort
                               forMode:NSDefaultRunLoopMode];
-  NSLog(@"Hello from Retro Cloud Sync daemon");
+  RCLogger(RCLogInfo, "Daemon", "Startup", @"Ready");
 
   while (gShouldKeepRunning) {
     NSAutoreleasePool *iterationPool;
@@ -685,10 +710,11 @@ int main(int argc, char *argv[])
   [[NSRunLoop currentRunLoop] removePort:keepAlivePort
                                  forMode:NSDefaultRunLoopMode];
   [keepAlivePort release];
+  RCLogger(RCLogInfo, "Daemon", "Shutdown", @"Stop requested; waiting for active work");
   RCSyncWorkerStop(&syncWorker);
   RCMailProxyStop(mailProxy);
 
-  NSLog(@"Retro Cloud Sync daemon stopped");
+  RCLogger(RCLogInfo, "Daemon", "Shutdown", @"Stopped");
   curl_global_cleanup();
   [configuration release];
   [processPool release];

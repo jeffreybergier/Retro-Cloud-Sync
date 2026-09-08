@@ -1,3 +1,4 @@
+#import "RCLogger.h"
 #import "RCSyncServicesBridge.h"
 #import "RCContactSyncClient.h"
 #import "RCTwoWaySync.h"
@@ -448,16 +449,15 @@ static int RCSyncServicesPushContactsForClient(
   }
   @catch (NSException *exception) {
     RCErrorSet(error, 1, "Sync Services exception: %s",
-        [[exception reason] UTF8String] != NULL ?
-        [[exception reason] UTF8String] : "unknown error");
+        [[exception name] UTF8String] != NULL ?
+        [[exception name] UTF8String] : "unknown error");
   }
 
 finished:
   if (session != nil) {
     @try { [session cancelSyncing]; }
     @catch (NSException *cancelException) {
-      NSLog(@"Could not cancel Sync Services session (%@): %@",
-            [cancelException name], [cancelException reason]);
+      RCLogger(RCLogWarning, "Contacts", "Apply", @"Could not cancel Sync Services session: %@", [cancelException name]);
     }
   }
   return success;
@@ -496,7 +496,7 @@ int RCSyncServicesUnregisterTestClient(RCError *error)
     if (client != nil) [manager unregisterClient:client];
   }
   @catch (NSException *exception) {
-    const char *reason = [[exception reason] UTF8String];
+    const char *reason = [[exception name] UTF8String];
     RCErrorSet(error, 1, "Sync Services exception: %s",
                reason != NULL ? reason : "unknown error");
     return 0;

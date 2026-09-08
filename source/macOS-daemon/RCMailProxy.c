@@ -4,7 +4,7 @@
 //
 
 #include "RCMailProxy.h"
-#include "RCMailProxyLog.h"
+#include "RCLogger.h"
 
 #include <AltivecCore/AltivecCore.h>
 #include <AltivecCore/openssl/x509v3.h>
@@ -45,6 +45,7 @@ struct RCProxyConnection {
   int localSocket;
   int remoteSocket;
   RCProxyConnection *next;
+  unsigned long identifier;
 };
 
 struct RCMailProxy {
@@ -55,39 +56,25 @@ struct RCMailProxy {
   pthread_cond_t connectionCondition;
   RCProxyConnection *connections;
   int stopping;
+  unsigned long nextConnection;
 };
 
-static void RCLog(const char *format, ...) __attribute__((format(printf, 1, 2)));
-
-static void RCLog(const char *format, ...)
+static const char *RCMailScope(const char *service)
 {
-  int savedError = errno;
-  char *message = NULL;
-  va_list arguments;
-
-  va_start(arguments, format);
-  if (vasprintf(&message, format, arguments) >= 0) {
-    RCMailProxyLogMessage(message);
-    free(message);
-  } else {
-    RCMailProxyLogMessage("Could not format mail proxy log message");
-  }
-  va_end(arguments);
-  errno = savedError;
+  return !strcmp(service, "IMAP") ? "Mail/IMAP" : "Mail/SMTP";
 }
 
 static int RCLogTLSError(const char *message, size_t length, void *context)
 {
-  (void)context;
-  while (length > 0 && (message[length - 1] == '\n' || message[length - 1] == '\r'))
-    length--;
-  RCLog("%.*s", (int)length, message);
+  RCLoggerC(RCLogWarning, context, "TLS", "%.*s", (int)length, message);
   return 1;
 }
 
 static void RCLogSocketError(const char *operation, const char *serviceName)
 {
-  RCLog("%s %s failed: %s", serviceName, operation, strerror(errno));
+  int error = errno;
+  RCLoggerC(RCLogWarning, RCMailScope(serviceName), "Connection",
+      "%s failed (socket error %d): %s", operation, error, strerror(error));
 }
 
 static int RCCreateListener(unsigned short port)
@@ -137,19 +124,24 @@ static int RCWaitForSocket(int socketDescriptor, int writeReady,
   return result;
 }
 
-static int RCConnectToHost(const char *host, unsigned short port)
+static int RCConnectToHost(const char *host, unsigned short port, char *detail, size_t capacity)
 {
   struct addrinfo hints;
   struct addrinfo *addresses = NULL;
   struct addrinfo *address;
   char portString[16];
   int remoteSocket = -1;
+  int resolverError, lastError = ECONNREFUSED;
 
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
   snprintf(portString, sizeof(portString), "%u", (unsigned int)port);
-  if (getaddrinfo(host, portString, &hints, &addresses) != 0) {
+  resolverError = getaddrinfo(host, portString, &hints, &addresses);
+  if (resolverError != 0) {
+    if (resolverError == EAI_SYSTEM)
+      snprintf(detail, capacity, "DNS lookup failed (socket error %d): %s", errno, strerror(errno));
+    else snprintf(detail, capacity, "DNS lookup failed (resolver error %d): %s", resolverError, gai_strerror(resolverError));
     return -1;
   }
   for (address = addresses; address != NULL; address = address->ai_next) {
@@ -161,6 +153,7 @@ static int RCConnectToHost(const char *host, unsigned short port)
     remoteSocket = socket(address->ai_family, address->ai_socktype,
                           address->ai_protocol);
     if (remoteSocket < 0) {
+      lastError = errno;
       continue;
     }
     flags = fcntl(remoteSocket, F_GETFL, 0);
@@ -169,11 +162,17 @@ static int RCConnectToHost(const char *host, unsigned short port)
     }
     connectResult = connect(remoteSocket, address->ai_addr,
                             address->ai_addrlen);
-    if (connectResult < 0 && errno == EINPROGRESS &&
-        RCWaitForSocket(remoteSocket, 1, 20) > 0 &&
-        getsockopt(remoteSocket, SOL_SOCKET, SO_ERROR, &socketError,
-                   &socketErrorLength) == 0 && socketError == 0) {
-      connectResult = 0;
+    if (connectResult < 0) {
+      lastError = errno;
+      if (lastError == EINPROGRESS) {
+        int ready = RCWaitForSocket(remoteSocket, 1, 20);
+        if (ready == 0) lastError = ETIMEDOUT;
+        else if (ready < 0) lastError = errno;
+        else if (getsockopt(remoteSocket, SOL_SOCKET, SO_ERROR, &socketError,
+                           &socketErrorLength) != 0) lastError = errno;
+        else if (socketError) lastError = socketError;
+        else connectResult = 0;
+      }
     }
     if (flags >= 0) {
       fcntl(remoteSocket, F_SETFL, flags);
@@ -185,6 +184,7 @@ static int RCConnectToHost(const char *host, unsigned short port)
     remoteSocket = -1;
   }
   freeaddrinfo(addresses);
+  if (remoteSocket < 0) snprintf(detail, capacity, "TCP connection failed (socket error %d): %s", lastError, strerror(lastError));
   return remoteSocket;
 }
 
@@ -402,15 +402,17 @@ static void *RCConnectionMain(void *argument)
   SSL *tls = NULL;
   int remoteSocket;
   int stopping;
+  char detail[256];
 
+  RCLoggerSetConnection(RCMailScope(connection->config.serviceName), connection->identifier);
   remoteSocket = RCConnectToHost(connection->config.remoteHost,
-                                 connection->config.remotePort);
+                                 connection->config.remotePort, detail, sizeof(detail));
   pthread_mutex_lock(&proxy->connectionMutex);
   connection->remoteSocket = remoteSocket;
   stopping = proxy->stopping;
   pthread_mutex_unlock(&proxy->connectionMutex);
   if (connection->remoteSocket < 0) {
-    RCLogSocketError("remote connection", connection->config.serviceName);
+    RCLoggerC(RCLogWarning, NULL, "Connection", "%s", detail);
     goto finished;
   }
   if (stopping) {
@@ -421,13 +423,13 @@ static void *RCConnectionMain(void *argument)
   if (connection->config.mode == kRCMailProxySMTPStartTLS &&
       !RCPrepareSMTPStartTLS(connection->remoteSocket, greeting,
                              sizeof(greeting), &greetingLength)) {
-    RCLog("%s upstream STARTTLS negotiation failed", connection->config.serviceName);
+    RCLoggerC(RCLogWarning, NULL, "TLS", "Upstream STARTTLS negotiation failed");
     goto finished;
   }
   tls = RCConnectTLS(proxy->tlsContext, connection->remoteSocket,
                      connection->config.remoteHost);
   if (tls == NULL) {
-    RCLog("%s verified TLS connection failed", connection->config.serviceName);
+    RCLoggerC(RCLogWarning, NULL, "TLS", "Verified TLS connection failed");
     ERR_print_errors_cb(RCLogTLSError, NULL);
     goto finished;
   }
@@ -435,8 +437,10 @@ static void *RCConnectionMain(void *argument)
       !RCSendAll(connection->localSocket, greeting, greetingLength)) {
     goto finished;
   }
-  RCLog("%s proxy connection established", connection->config.serviceName);
-  RCRelayConnection(connection->localSocket, connection->remoteSocket, tls);
+  RCLoggerC(RCLogDebug, NULL, "Connection", "TLS proxy connection established");
+  if (!RCRelayConnection(connection->localSocket, connection->remoteSocket, tls))
+    RCLoggerC(RCLogWarning, NULL, "Connection", "Relay failed; closing connection");
+  else RCLoggerC(RCLogDebug, NULL, "Connection", "Peer closed connection");
 
 finished:
   if (tls != NULL) {
@@ -485,6 +489,7 @@ static void *RCListenerMain(void *argument)
     }
     connection = (RCProxyConnection *)calloc(1, sizeof(*connection));
     if (connection == NULL) {
+      RCLoggerC(RCLogError, RCMailScope(listener->config.serviceName), "Connection", "Could not allocate connection; client disconnected");
       close(localSocket);
       continue;
     }
@@ -493,11 +498,13 @@ static void *RCListenerMain(void *argument)
     connection->localSocket = localSocket;
     connection->remoteSocket = -1;
     pthread_mutex_lock(&proxy->connectionMutex);
+    connection->identifier = ++proxy->nextConnection;
     connection->next = proxy->connections;
     proxy->connections = connection;
     pthread_mutex_unlock(&proxy->connectionMutex);
-    if (pthread_create(&connectionThread, NULL, RCConnectionMain,
-                       connection) != 0) {
+    int threadError = pthread_create(&connectionThread, NULL, RCConnectionMain, connection);
+    if (threadError != 0) {
+      RCLoggerC(RCLogError, RCMailScope(listener->config.serviceName), "Connection", "Could not start connection thread (pthread error %d): %s", threadError, strerror(threadError));
       RCRemoveConnection(connection);
       close(localSocket);
       free(connection);
@@ -517,10 +524,12 @@ RCMailProxy *RCMailProxyStart(const RCMailProxyConfig *configs,
 
   if (configs == NULL || configCount == 0 ||
       configCount > RC_MAX_LISTENERS || certificatePath == NULL) {
+    RCLoggerC(RCLogError, "Mail", "Startup", "Invalid proxy configuration; daemon cannot start");
     return NULL;
   }
   proxy = (RCMailProxy *)calloc(1, sizeof(*proxy));
   if (proxy == NULL) {
+    RCLoggerC(RCLogError, "Mail", "Startup", "Could not allocate proxy; daemon cannot start");
     return NULL;
   }
   pthread_mutex_init(&proxy->connectionMutex, NULL);
@@ -530,8 +539,8 @@ RCMailProxy *RCMailProxyStart(const RCMailProxyConfig *configs,
       SSL_CTX_set_min_proto_version(proxy->tlsContext, TLS1_2_VERSION) != 1 ||
       SSL_CTX_load_verify_locations(proxy->tlsContext, certificatePath,
                                     NULL) != 1) {
-    RCLog("Could not configure the mail proxy TLS context");
-    ERR_print_errors_cb(RCLogTLSError, NULL);
+    RCLoggerC(RCLogError, "Mail", "Startup", "Could not configure TLS or load CA certificates; daemon cannot start");
+    ERR_print_errors_cb(RCLogTLSError, "Mail");
     RCMailProxyStop(proxy);
     return NULL;
   }
@@ -549,14 +558,14 @@ RCMailProxy *RCMailProxyStart(const RCMailProxyConfig *configs,
       return NULL;
     }
     proxy->listenerCount++;
-    if (pthread_create(&listener->thread, NULL, RCListenerMain, listener) !=
-        0) {
-      RCLog("%s listener thread creation failed", configs[index].serviceName);
+    int threadError = pthread_create(&listener->thread, NULL, RCListenerMain, listener);
+    if (threadError != 0) {
+      RCLoggerC(RCLogError, RCMailScope(configs[index].serviceName), "Startup", "Could not start listener thread (pthread error %d): %s", threadError, strerror(threadError));
       RCMailProxyStop(proxy);
       return NULL;
     }
     listener->threadStarted = 1;
-    RCLog("%s listening on 127.0.0.1:%u -> %s:%u", configs[index].serviceName,
+    RCLoggerC(RCLogInfo, RCMailScope(configs[index].serviceName), "Startup", "Listening on 127.0.0.1:%u; upstream %s:%u",
           (unsigned int)configs[index].localPort, configs[index].remoteHost,
           (unsigned int)configs[index].remotePort);
   }

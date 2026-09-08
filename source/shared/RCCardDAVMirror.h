@@ -2,9 +2,10 @@
 #define RC_CARDDAV_MIRROR_H
 
 #include "RCContactStore.h"
+#include "RCLogLevel.h"
 #include "RCHTTPClient.h"
 
-typedef void (*RCCardDAVProgressCallback)(const char *message, void *context);
+typedef void (*RCCardDAVProgressCallback)(RCLogLevel level, const char *message, void *context);
 
 typedef struct {
   const char *serviceURL;

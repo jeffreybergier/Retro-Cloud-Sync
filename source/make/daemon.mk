@@ -5,7 +5,7 @@ DAEMON_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-daemon
 DAEMON_BUILD_ROOT := $(BUILD_ROOT)/macOS-daemon/$(CONFIG)
 DAEMON_SOURCES := main.m RCCalendarSyncServicesBridge.m RCSyncServicesBridge.m RCSyncConflictSession.m \
 	RCContactConflictResolver.m RCTwoWaySync.m RCContactTwoWay.m RCCalendarTwoWay.m \
-	RCMailProxy.c RCMailProxyLog.m
+	RCMailProxy.c RCLogger.m
 DAEMON_SOURCE_PATHS := $(addprefix $(DAEMON_SOURCE_ROOT)/,$(DAEMON_SOURCES))
 DAEMON_INTERMEDIATES := $(DAEMON_BUILD_ROOT)/Intermediates
 DAEMON_OUTPUT := $(DAEMON_BUILD_ROOT)/$(DAEMON_NAME)
@@ -36,12 +36,6 @@ $(DAEMON_INTERMEDIATES)/i386/RCCalendarSyncServicesBridge.o: \
 $(DAEMON_INTERMEDIATES)/ppc/RCSyncServicesBridge.o \
 $(DAEMON_INTERMEDIATES)/i386/RCSyncServicesBridge.o: \
 	$(DAEMON_SOURCE_ROOT)/RCContactSyncClient.h
-
-$(DAEMON_INTERMEDIATES)/ppc/RCMailProxy.o \
-$(DAEMON_INTERMEDIATES)/i386/RCMailProxy.o \
-$(DAEMON_INTERMEDIATES)/ppc/RCMailProxyLog.o \
-$(DAEMON_INTERMEDIATES)/i386/RCMailProxyLog.o: \
-	$(DAEMON_SOURCE_ROOT)/RCMailProxyLog.h
 
 $(DAEMON_OUTPUT): $(DAEMON_INTERMEDIATES)/ppc.bin \
 		$(DAEMON_INTERMEDIATES)/i386.bin

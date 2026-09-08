@@ -14,9 +14,10 @@ static void RCPrintUsage(const char *program)
       "       [--url https://contacts.icloud.com]\n", program);
 }
 
-static void RCPrintProgress(const char *message, void *context)
+static void RCPrintProgress(RCLogLevel level, const char *message, void *context)
 {
   (void)context;
+  (void)level;
   fprintf(stderr, "%s...\n", message);
 }
 

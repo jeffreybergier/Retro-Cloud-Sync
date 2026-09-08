@@ -30,10 +30,10 @@ static const char principalRequest[] =
 static const char homeRequest[] = "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\" "
                                   "xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:prop><"
                                   "c:calendar-home-set/></d:prop></d:propfind>";
-static void progress(const RCCardDAVMirrorConfig *c, const char *message)
+static void progress(const RCCardDAVMirrorConfig *c, RCLogLevel level, const char *message)
 {
   if (c->progress)
-    c->progress(message, c->progressContext);
+    c->progress(level, message, c->progressContext);
 }
 static int calendarChanges(const RCDAVResource *changes, size_t count,
                             void *context, RCError *error)
@@ -80,7 +80,7 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
     goto done;
   started = 1;
   state.db = store->db; state.account = store->account;
-  progress(config, "Discovering calendar principal and home");
+  progress(config, RCLogDebug, "Discovering calendar principal and home");
   if (!RCDAVDiscoverHref(client, config->serviceURL, principalRequest,
                          "current-user-principal", "DAV:", &principal, error) ||
       !RCDAVDiscoverHref(client, principal, homeRequest, "calendar-home-set",
@@ -97,7 +97,7 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
     if (collections[i].supportsSync && token && scope && !strcmp(scope, start ? start : "")) {
       int changed = 0;
       int status;
-      progress(config, "Checking calendar sync token");
+      progress(config, RCLogDebug, "Checking calendar sync token");
       status = RCDAVSyncCollection(client, collections[i].url, token,
                                    calendarChanges, &changed, &next, error);
       if (status == RCDAVSyncFailed) goto done;
@@ -108,12 +108,12 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
             "UPDATE calendar_resources SET seen_run=%lld WHERE calendar_id=%lld "
             "AND remote_missing=0 AND scope_excluded=0", store->run, calendar)) goto done;
         result->unchangedResourceCount += sqlite3_changes(store->db);
-        progress(config, "Calendar unchanged; retaining history window");
+        progress(config, RCLogDebug, "Calendar unchanged; retaining history window");
         goto collection_complete;
       }
       if (status == RCDAVSyncFallback) {
         RCErrorClear(error);
-        progress(config, "Sync token unavailable; refreshing calendar history window");
+        progress(config, RCLogInfo, "Sync token unavailable; refreshing calendar history window");
       }
     }
     if (!(start ? RCDAVListCalendarResourcesSince(client, collections[i].url, start,
@@ -132,7 +132,7 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
         result->unchangedResourceCount++;
         continue;
       }
-      progress(config, "Downloading changed calendar resource");
+      progress(config, RCLogDebug, "Downloading changed calendar resource");
       RCHTTPResponseInit(&response);
       if (!RCHTTPClientRequest(client, "GET", resources[j].url, NULL, NULL, NULL, 0,
                                &response, error)) {

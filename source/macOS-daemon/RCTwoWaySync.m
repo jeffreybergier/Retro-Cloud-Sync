@@ -1,3 +1,4 @@
+#import "RCLogger.h"
 #import "RCTwoWaySync.h"
 #import "RCSyncConflictSession.h"
 #import "RCSyncRecordEquality.h"
@@ -207,7 +208,20 @@ static NSDictionary *LiveReceipt(NSDictionary *receipt)
 }
 static BOOL Attention(RCWriteJournal *j, NSString *root, const char *reason, RCError *error)
 {
-  NSLog(@"Two-way sync: %s (local change retained)",reason);
+  const char *description = "Local change cannot be applied safely; edit preserved";
+  if (!strcmp(reason,"verified-write-awaits-matching-mirror"))
+    description = "Server change verified; waiting for a matching download";
+  else if (!strcmp(reason,"verified-write-awaits-local-acceptance"))
+    description = "Server change verified; waiting for local acknowledgement";
+  else if (!strcmp(reason,"verified-delete-awaits-completion"))
+    description = "Server deletion verified; local completion pending";
+  else if (!strcmp(reason,"unsupported-local-mapping"))
+    description = "Local edit uses an unsupported feature; edit preserved";
+  else if (!strcmp(reason,"missing-native-delete-receipt"))
+    description = "Local deletion is not confirmed; server record preserved";
+  else if (!strcmp(reason,"unsupported-detached-parent"))
+    description = "Recurring event edit has no supported parent; edit preserved";
+  RCLogger(RCLogWarning, NULL, "Recovery", @"%s (record=%@, reason=%s)",description,root,reason);
   return RCTwoWaySQL(j,error,"INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,%Q)",
       j->account,[root UTF8String],reason);
 }
@@ -274,6 +288,7 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
           RCTwoWaySQL(j,error,"UPDATE write_resolutions SET mirror_committed=1 WHERE successor_id=%lld",o.id) &&
           RCSyncAcceptUpload(client,receipt,NULL,error)) {
         if (!RCWriteJournalAcknowledge(j,o.id,error)) { RCWriteOperationClear(&o); return NO; }
+      RCLogger(RCLogInfo, NULL, "Upload", @"Verified server change acknowledged locally (operation=%lld)", o.id);
         NSEnumerator *ids=[receipt keyEnumerator]; NSString *key;
         while ((key=[ids nextObject])) if (!RCTwoWaySQL(j,error,
             "DELETE FROM two_way_attention WHERE account_id=%lld AND record_id=%Q",j->account,[key UTF8String])) {
@@ -342,15 +357,16 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
     NSDictionary *newerTruth=nil;
     if (RCSyncAcceptUpload(client,receipt,&newerTruth,error)) {
       if (!RCWriteJournalAcknowledge(j,o.id,error)) { RCWriteOperationClear(&o); return NO; }
+      RCLogger(RCLogInfo, NULL, "Upload", @"Verified server change acknowledged locally (operation=%lld)", o.id);
       NSEnumerator *completedIDs=[receipt keyEnumerator]; NSString *completedID;
       while ((completedID=[completedIDs nextObject])) if (!RCTwoWaySQL(j,error,
           "DELETE FROM two_way_attention WHERE account_id=%lld AND record_id=%Q AND reason IN ('verified-write-awaits-matching-mirror','verified-write-awaits-local-acceptance')",
           j->account,[completedID UTF8String])) { RCWriteOperationClear(&o); return NO; }
     } else if (!missing && newerTruth && QueueSuccessor(c,&o,verified,newAliases,newerTruth,error)) {
-      NSLog(@"Two-way sync queued the newer native revision against the verified upload");
+      RCLogger(RCLogInfo, NULL, "Upload", @"Newer local edit queued after verified server change (operation=%lld)", o.id);
       RCErrorClear(error);
     } else {
-      NSLog(@"Two-way acceptance deferred: %s",error->message);
+      RCLogger(RCLogWarning, NULL, "Apply", @"Local acknowledgement pending: %s",error->message);
       Attention(j,[[receipt allKeys] objectAtIndex:0],"verified-write-awaits-local-acceptance",NULL);
       RCErrorClear(error);
     }
@@ -431,12 +447,13 @@ static BOOL RecoverConflicts(RCTwoWayContext *c, ISyncClient *client, NSDictiona
           SaveIntent(j,successor,receipt,[desired objectForKey:@"paths"],error) &&
           SaveResource(j,successor,base,error) && RCTwoWaySQL(j,error,"COMMIT");
       if (!ok) { RCTwoWaySQL(j,NULL,"ROLLBACK"); RCWriteOperationClear(&o); return NO; }
-      NSLog(@"Two-way conflict reconciled; conditional successor queued");
+      RCLogger(RCLogInfo, NULL, "Recovery", @"Conflict decision saved; replacement queued for server verification (operation=%lld, successor=%lld)", o.id, successor);
       RCWriteOperationClear(&o); continue;
     }
 attention:
     RCErrorClear(error);
     if (!RCWriteJournalConflictAttention(j,o.id,reason,error)) { RCWriteOperationClear(&o); return NO; }
+    RCLogger(RCLogWarning, NULL, "Recovery", @"Conflict needs attention; local edit preserved (operation=%lld, reason=%s)", o.id, reason);
     RCWriteOperationClear(&o);
   }
   return YES;
@@ -541,7 +558,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
     sqlite3_finalize(q); q=NULL;
     /* Fast publication leaves unresolved resource snapshots untouched. Keep
        their calendar containers untouched too, including inverse relationships. */
-    if ([busy count]) NSLog(@"Two-way sync is isolating unresolved records; unrelated records can continue");
+    if ([busy count]) RCLogger(RCLogWarning, NULL, "Apply", @"Preserving %lu unresolved Sync Services records; eligible records can continue", (unsigned long)[busy count]);
     phase="session start";
     session=[ISyncSession beginSessionWithClient:client entityNames:entities
         beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
@@ -654,7 +671,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
       NSMutableDictionary *desired=deleting ? Deletion(resource,truth) :
           c->encode(c->context,creating ? nil : resource,truth,root,&mappingError);
       if (!desired) {
-        NSLog(@"Two-way mapping deferred (resource %@, root %@, operation %s): %s",
+        RCLogger(RCLogWarning, NULL, "Apply", @"Local edit cannot be uploaded (resource=%@, record=%@, action=%s): %s",
             [resource objectForKey:@"key"] ?: @"new",root,creating ? "create" : deleting ? "delete" : "update",
             mappingError.code ? mappingError.message : deleting ? "Deletion would discard related native records" : "Mapper returned no representable resource");
         if (!Attention(j,root,"unsupported-local-mapping",error)) goto done;
@@ -685,7 +702,6 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
   sqlError:
     RCErrorSet(error,1,"Could not read two-way account state");
   } @catch (NSException *exception) {
-    NSLog(@"Two-way Sync Services exception during %s: %@",phase,[exception name]);
     RCErrorSet(error,1,"Two-way Sync Services operation failed during %s (%s)",phase,[[exception name] UTF8String]);
   }
 done:
@@ -712,7 +728,24 @@ int RCTwoWayRunWrites(RCWriteJournal *j, RCHTTPClient *http, const char *type, R
     sqlite3_finalize(q);
     if (step!=SQLITE_ROW) { RCErrorSet(error,1,"Unowned outgoing operation requires inspection"); return -1; }
     count++;
-    if (!RCDAVWriterAttempt(j,operation,http,type,time(NULL),error)) return -1;
+    if (!RCDAVWriterAttempt(j,operation,http,type,time(NULL),error)) {
+      if (error) {
+        RCError cause = *error;
+        RCErrorSet(error, cause.code, "Attempt failed (operation=%lld): %s", operation, cause.message);
+      }
+      return -1;
+    }
+    RCWriteOperation outcome; RCError logError; RCErrorClear(&logError);
+    if (RCWriteJournalGet(j,operation,&outcome,&logError)) {
+      const char *description = !strcmp(outcome.state,"applied") ?
+          "Server change verified; local acknowledgement pending" :
+          !strcmp(outcome.state,"conflict") ? "Server version changed; reconciliation pending" :
+          "Server outcome uncertain; verification pending";
+      RCLogger(!strcmp(outcome.state,"applied") ? RCLogInfo : RCLogWarning, NULL, "Upload",
+          @"%s (operation=%lld, action=%s, state=%s, HTTP=%d)", description,
+          operation, outcome.kind, outcome.state, outcome.httpStatus);
+      RCWriteOperationClear(&outcome);
+    } else RCLogger(RCLogWarning, NULL, "Upload", @"Could not read attempt outcome (operation=%lld): %s", operation, logError.message);
   }
   return count;
 }

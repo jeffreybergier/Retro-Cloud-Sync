@@ -27,10 +27,10 @@ static const char kHomeRequest[] =
   "</d:prop></d:propfind>";
 
 static void RCProgress(const RCCardDAVMirrorConfig *config,
-                       const char *message)
+                       RCLogLevel level, const char *message)
 {
   if (config->progress != NULL) {
-    config->progress(message, config->progressContext);
+    config->progress(level, message, config->progressContext);
   }
 }
 
@@ -72,7 +72,7 @@ static int RCApplyContactChanges(const RCDAVResource *resources, size_t resource
       int parseFailed;
       const char *etag;
       RCHTTPResponseInit(&response);
-      RCProgress(config, "Downloading changed contact");
+      RCProgress(config, RCLogDebug, "Downloading changed contact");
       if (!RCHTTPClientRequest(client, "GET", resources[index].url, NULL,
           NULL, NULL, 0, &response, error)) {
         RCHTTPResponseClear(&response);
@@ -93,7 +93,7 @@ static int RCApplyContactChanges(const RCDAVResource *resources, size_t resource
       }
       result->downloadedResourceCount++;
       if (parseFailed)
-        RCProgress(config, "Invalid contact retained; keeping its last usable version if available");
+        RCProgress(config, RCLogWarning, "Invalid contact retained; keeping its last usable version if available");
       RCHTTPResponseClear(&response);
     }
   }
@@ -134,7 +134,7 @@ static int RCFetchCollection(const RCCardDAVMirrorConfig *config,
       if (!RCCollectionSQL(&state, "SAVEPOINT dav_collection", error)) goto finished;
       if (base && !RCContactStoreKeepCollection(store, fetch.collection, runIdentifier, error))
         goto finished;
-      RCProgress(config, base ? "Fetching contact changes" : "Fetching initial contact sync inventory");
+      RCProgress(config, RCLogDebug, base ? "Fetching contact changes" : "Fetching initial contact sync inventory");
       status = RCDAVSyncCollection(client, collection->url, base,
                                    RCApplyContactChanges, &fetch, &next, error);
       if (status == RCDAVSyncFailed) goto finished;
@@ -146,10 +146,10 @@ static int RCFetchCollection(const RCCardDAVMirrorConfig *config,
         goto finished;
       *result = before;
       RCErrorClear(error);
-      RCProgress(config, "Sync token unavailable; rebuilding contact inventory");
+      RCProgress(config, RCLogInfo, "Sync token unavailable; rebuilding contact inventory");
     }
   }
-  RCProgress(config, "Listing contacts");
+  RCProgress(config, RCLogDebug, "Listing contacts");
   if (!RCDAVListResources(client, collection->url, &resources, &resourceCount, error) ||
       !RCApplyContactChanges(resources, resourceCount, &fetch, error)) goto finished;
 complete:
@@ -206,15 +206,15 @@ int RCCardDAVMirrorFetch(const RCCardDAVMirrorConfig *config,
   if (client == NULL || !RCContactStoreBeginRun(store, &runIdentifier, error))
     goto finished;
   runStarted = 1;
-  RCProgress(config, "Discovering CardDAV principal");
+  RCProgress(config, RCLogDebug, "Discovering CardDAV principal");
   if (!RCDAVDiscoverHref(client, config->serviceURL, kPrincipalRequest,
       "current-user-principal", kDAVNamespace, &principalURL, error))
     goto finished;
-  RCProgress(config, "Discovering address-book home");
+  RCProgress(config, RCLogDebug, "Discovering address-book home");
   if (!RCDAVDiscoverHref(client, principalURL, kHomeRequest,
       "addressbook-home-set", kCardDAVNamespace, &homeURL, error))
     goto finished;
-  RCProgress(config, "Discovering address books");
+  RCProgress(config, RCLogDebug, "Discovering address books");
   if (!RCDAVListCollections(client, homeURL, "addressbook", kCardDAVNamespace, &collections, &collectionCount,
                          error)) goto finished;
   result->collectionCount = (long)collectionCount;
