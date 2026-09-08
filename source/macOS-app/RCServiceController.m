@@ -6,6 +6,7 @@
 #import "RCServiceController.h"
 
 #import "RCConfiguration.h"
+#import <CoreServices/CoreServices.h>
 
 #include <unistd.h>
 
@@ -13,6 +14,19 @@ static NSString * const kRCServiceLabel = @"com.retrocloudsync.daemon";
 static NSString * const kRCDaemonName = @"RetroCloudSyncDaemon";
 static NSString * const kRCCertificateName = @"cacert.pem";
 static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
+
+static NSArray *RCLaunchctlArguments(NSString *action, NSString *path)
+{
+  SInt32 systemVersion = 0;
+
+  /* Select the graphical login session for Keychain access on Leopard.
+     Tiger's launchctl does not support -S. Unload from the same session. */
+  if (Gestalt(gestaltSystemVersion, &systemVersion) == noErr &&
+      systemVersion >= 0x1050) {
+    return [NSArray arrayWithObjects:action, @"-S", @"Aqua", path, nil];
+  }
+  return [NSArray arrayWithObjects:action, path, nil];
+}
 
 @interface RCServiceController (Private)
 - (NSString *)applicationSupportDirectory;
@@ -69,12 +83,12 @@ static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
 
   /* Clear any loaded but inactive copy before loading the current plist. */
   [self runLaunchctlWithArguments:
-      [NSArray arrayWithObjects:@"unload", [self launchAgentPath], nil]
+      RCLaunchctlArguments(@"unload", [self launchAgentPath])
                            output:nil];
   {
     NSString *output = nil;
     int status = [self runLaunchctlWithArguments:
-        [NSArray arrayWithObjects:@"load", [self launchAgentPath], nil]
+        RCLaunchctlArguments(@"load", [self launchAgentPath])
                               output:&output];
     if (status != 0) {
       if (errorMessage != NULL) {
@@ -101,7 +115,7 @@ static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
 
   if ([fileManager fileExistsAtPath:launchAgentPath]) {
     status = [self runLaunchctlWithArguments:
-        [NSArray arrayWithObjects:@"unload", launchAgentPath, nil]
+        RCLaunchctlArguments(@"unload", launchAgentPath)
                               output:&output];
   }
   if (status != 0 && [self isServiceRunning]) {

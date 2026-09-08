@@ -145,7 +145,9 @@ static void *RCSyncWorkerMain(void *context)
   RCSyncWorker *worker = (RCSyncWorker *)context;
   unsigned long poll = 0;
 
-  SecKeychainSetUserInteractionAllowed(0);
+  /* This per-user LaunchAgent runs in the graphical login session. Keep
+     Keychain interaction enabled: on Leopard, disabling it can reject even
+     an unlocked item's pre-authorized reader with errSecAuthFailed. */
   for (;;) {
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
     char *password = NULL;
