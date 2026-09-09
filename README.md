@@ -269,12 +269,11 @@ The build uses libical 3.0.20 from the HTTPS Git submodule at
 It builds only the C library for PPC/i386 and native tests. Preparation copies
 the checkout into `build/dependencies` (or `BUILD_ROOT/dependencies`) and applies
 the GCC 4.2 diagnostic-only patches there, leaving the submodule unchanged.
-The source archive generated from that checkout and the reproducible patches
-are included in `RetroCloudSync-Sources/libical-source` beside the app in
-`RetroCloudSync.zip`, alongside the MPL 2.0 license. Runtime time-zone data
-and a copy of the license remain inside the app; build-only time-zone files
-are excluded. The bundled script's `prepare-archive` mode can
-prepare that archive without a Git checkout. See [CALENDAR_DESIGN.md](CALENDAR_DESIGN.md) for the
+`RetroCloudSync.zip` contains only `RetroCloudSync.app` at the archive root.
+Runtime time-zone data and a copy of the MPL 2.0 license are included inside
+the app; build-only time-zone files are excluded. The dependency build script's
+`prepare-archive` mode can prepare a source archive without a Git checkout.
+See [CALENDAR_DESIGN.md](CALENDAR_DESIGN.md) for the
 original proposal and deferred work.
 
 ## Read-only CardDAV probe
@@ -322,11 +321,9 @@ A portability shim supplies Tiger's missing `getline` and the missing
 `make test-host-contacts` includes exact-value, group, parameter, malformed-input,
 long-value and concurrent parsing checks. `make build-mac-vcard-tests` builds the
 same checks for PPC/i386; the PPC executable has also passed on Tiger.
-The release ZIP includes the libvc license, source archive, patches and daemon
-relinking inputs under `RetroCloudSync-Sources/libvc-source`, beside the app.
-A copy of the license remains in the app. Distribute the complete release ZIP
-to include this source and relinking material; only the `.app` needs to be
-copied to the Mac for installation.
+The app includes a copy of the libvc license. Debug and release ZIPs contain
+only `RetroCloudSync.app`, with no enclosing folder or companion sources.
+Copy the `.app` to the Mac for installation.
 
 ### Legacy libicalvcal compatibility check
 

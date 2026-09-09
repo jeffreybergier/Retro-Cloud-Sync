@@ -12,7 +12,6 @@ APP_INFO_PLIST := $(APP_RESOURCES_ROOT)/Info.plist
 APP_SYNC_CLIENT_PLIST := $(APP_RESOURCES_ROOT)/SyncClient.plist
 APP_INTERMEDIATES := $(APP_BUILD_ROOT)/Intermediates
 APP_BUNDLE := $(APP_BUILD_ROOT)/$(APP_NAME).app
-APP_SOURCE_BUNDLE := $(APP_BUILD_ROOT)/$(APP_NAME)-Sources
 APP_ZIP := $(APP_BUILD_ROOT)/$(APP_NAME).zip
 APP_UNIVERSAL_BINARY := $(APP_INTERMEDIATES)/$(APP_NAME)-universal
 APP_PPC_OBJECTS := $(addprefix $(APP_INTERMEDIATES)/ppc/,$(APP_SOURCES:.m=.o))
@@ -41,11 +40,9 @@ app-config: validate-build daemon-config $(APP_ZIP)
 $(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
 		$(APP_SYNC_CLIENT_PLIST) $(APP_RESOURCES_ROOT)/CalendarSyncClient.plist $(ICAL_PREPARE) \
 		$(ALTIVECCORE_CA_CERTS) $(ALTIVECCOCOA_FONTS) \
-		$(ALTIVECCOCOA_FONT_LICENSE) $(LIBVC_PREPARE) $(LIBVC_SUPPORT) \
-		$(SOURCE_ROOT)/make/scripts/libvc-README.txt \
-		$(SOURCE_ROOT)/make/scripts/relink-libvc-daemon.sh
+		$(ALTIVECCOCOA_FONT_LICENSE) $(LIBVC_PREPARE)
 	@echo " [4/5] Building app bundle and embedding daemon..."
-	@rm -rf "$(APP_BUNDLE)" "$(APP_SOURCE_BUNDLE)"
+	@rm -rf "$(APP_BUNDLE)" "$(APP_BUILD_ROOT)/$(APP_NAME)-Sources"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" \
 		"$(APP_BUNDLE)/Contents/Resources" \
 		"$(APP_BUNDLE)/Contents/Library/LaunchServices"
@@ -63,23 +60,7 @@ $(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) 
 	@rm -f "$(APP_BUNDLE)/Contents/Resources/zoneinfo/CMakeLists.txt" \
 		"$(APP_BUNDLE)/Contents/Resources/zoneinfo/zones.h"
 	@cp "$(ICAL_SOURCE)/LICENSE.MPL2.txt" "$(APP_BUNDLE)/Contents/Resources/LICENSE-libical.txt"
-	# Ship rebuild material beside the app in the same release archive.
-	@mkdir -p "$(APP_SOURCE_BUNDLE)/libical-source"
-	@cp "$(ICAL_SOURCE)/LICENSE.MPL2.txt" "$(APP_SOURCE_BUNDLE)/libical-source/"
-	@cp "$(ICAL_ROOT)/libical-3.0.20.tar.gz" "$(ICAL_SCRIPT)" "$(APP_SOURCE_BUNDLE)/libical-source/"
-	@mkdir -p "$(APP_SOURCE_BUNDLE)/libvc-source/relink/ppc" \
-		"$(APP_SOURCE_BUNDLE)/libvc-source/relink/i386"
 	@cp "$(LIBVC_CHECKOUT)/COPYING.LIB" "$(APP_BUNDLE)/Contents/Resources/LICENSE-libvc.txt"
-	@cp "$(LIBVC_CHECKOUT)/COPYING.LIB" "$(LIBVC_ROOT)/libvc-013.tar.gz" \
-		"$(LIBVC_SCRIPT)" $(LIBVC_SUPPORT) \
-		"$(SOURCE_ROOT)/make/scripts/libvc-parser.patch" \
-		"$(SOURCE_ROOT)/make/scripts/libvc-README.txt" \
-		"$(SOURCE_ROOT)/make/scripts/relink-libvc-daemon.sh" \
-		"$(APP_SOURCE_BUNDLE)/libvc-source/"
-	@cp $(DAEMON_PPC_OBJECTS) "$(PPC_SHARED_LIBRARY)" "$(DAEMON_PPC_ALTIVECCORE)" \
-		"$(ICAL_PPC_LIBRARY)" "$(APP_SOURCE_BUNDLE)/libvc-source/relink/ppc/"
-	@cp $(DAEMON_I386_OBJECTS) "$(I386_SHARED_LIBRARY)" "$(DAEMON_I386_ALTIVECCORE)" \
-		"$(ICAL_I386_LIBRARY)" "$(APP_SOURCE_BUNDLE)/libvc-source/relink/i386/"
 	@cp "$(ALTIVECCORE_CA_CERTS)" \
 		"$(APP_BUNDLE)/Contents/Resources/cacert.pem"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources/Fonts"
@@ -88,10 +69,10 @@ $(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) 
 	@cp "$(ALTIVECCOCOA_FONT_LICENSE)" \
 		"$(APP_BUNDLE)/Contents/Resources/Fonts/"
 	@printf 'APPL????' > "$(APP_BUNDLE)/Contents/PkgInfo"
-	@echo " [5/5] Zipping app and companion sources..."
+	@echo " [5/5] Zipping app..."
 	@rm -f "$@"
 	@cd "$(APP_BUILD_ROOT)" && zip -rqy "$(APP_NAME).zip" \
-		"$(APP_NAME).app" "$(APP_NAME)-Sources"
+		"$(APP_NAME).app"
 
 $(APP_UNIVERSAL_BINARY): $(APP_INTERMEDIATES)/ppc.bin \
 		$(APP_INTERMEDIATES)/i386.bin
