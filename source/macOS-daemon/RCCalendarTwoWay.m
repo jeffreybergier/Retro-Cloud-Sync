@@ -236,10 +236,11 @@ static NSMutableDictionary *Create(RCCalendarStore *store,NSDictionary *truth,NS
       [body appendFormat:@"BEGIN:VALARM\r\nACTION:%@\r\nTRIGGER:%s\r\n",k==1 ? @"DISPLAY" : @"AUDIO",duration];
       free(duration);
       if ([RCTwoWayString([alarm objectForKey:@"description"]) length]) [body appendFormat:@"DESCRIPTION:%@\r\n",RCTwoWayEscape([alarm objectForKey:@"description"])];
-      if (k==2 && !RCNativeEmptyValue([alarm objectForKey:@"com.apple.ical.sound"])) {
-        NSString *sound=SoundValue([alarm objectForKey:@"com.apple.ical.sound"]);
-        if (!sound) { RCErrorSet(error,1,"Invalid iCal sound URL"); return nil; }
-        [body appendFormat:@"ATTACH:%@\r\n",sound];
+      if (k==2) {
+        BOOL valid; NSURL *url=RCNativeAlarmSound(alarm,&valid);
+        NSString *sound=SoundValue(url);
+        if (!valid) { RCErrorSet(error,1,"Invalid iCal sound URL"); return nil; }
+        if (sound) [body appendFormat:@"ATTACH:%@\r\n",sound];
       }
       [body appendString:@"END:VALARM\r\n"];
       [paths setObject:id forKey:[NSString stringWithFormat:@"event:/%@:%lu",childLinks[k],(unsigned long)n]];
@@ -286,13 +287,12 @@ static BOOL AudioEdits(icalcomponent *event,int component,NSDictionary *base,
     NSDictionary *old=[graph objectForKey:identifier], *record=[truth objectForKey:identifier];
     if(!record) { RCErrorSet(error,1,"Audio alarm removal requires a richer mapper"); return NO; }
     NSMutableDictionary *expected=[NSMutableDictionary dictionaryWithDictionary:old];
-    id sound=[record objectForKey:@"com.apple.ical.sound"];
-    if(RCNativeEmptyValue(sound)) sound=nil;
-    if(sound && !SoundValue(sound)) { RCErrorSet(error,1,"Invalid iCal sound URL"); return NO; }
+    BOOL valid,priorValid;
+    NSURL *sound=RCNativeAlarmSound(record,&valid), *prior=RCNativeAlarmSound(old,&priorValid);
+    if(!valid || !priorValid) { RCErrorSet(error,1,"Invalid or conflicting audio alarm sound fields"); return NO; }
+    [expected removeObjectForKey:@"sound"];
     if(sound) [expected setObject:sound forKey:@"com.apple.ical.sound"]; else [expected removeObjectForKey:@"com.apple.ical.sound"];
     if(!RCTwoWayRecordsEqual(expected,record)) { RCErrorSet(error,1,"Audio alarm field '%s' changed beyond the reverse mapper",[DifferentField(expected,record) UTF8String]); return NO; }
-    id prior=[old objectForKey:@"com.apple.ical.sound"];
-    if(RCNativeEmptyValue(prior)) prior=nil;
     if((!prior && !sound) || [prior isEqual:sound]) continue;
     int count=icalcomponent_count_properties(alarm,ICAL_ATTACH_PROPERTY);
     icalproperty *p=icalcomponent_get_first_property(alarm,ICAL_ATTACH_PROPERTY);

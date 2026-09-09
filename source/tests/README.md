@@ -206,6 +206,14 @@ NSCalendarDate values can have different hashes across timezone representations.
 Tiger's `com.apple.ical.sound` is an NSURL and maps to the AUDIO alarm's
 single URI `ATTACH` property. Sound edits preserve existing parameters and
 unrelated alarm bytes; embedded or multiple attachments remain protected.
+Leopard's `sound` field contains a system sound name; it maps to
+`file:///System/Library/Sounds/<name>.aiff`. Equivalent name/URL pairs compare
+as one selection, including during validation and acknowledgement. Conflicting
+pairs and unsafe names are refused. Mapper fixtures cover name-only selections,
+equivalent pairs, name edits and conflicts on both OS versions.
+Matching relative URL/name pairs such as NSURL `Basso` plus string `Basso`
+retain the original `ATTACH;VALUE=URI:Basso` bytes. Regression coverage includes
+unrelated event edits, import acknowledgement, replay and conflicting names.
 No sound files are read or uploaded. Invitation identifiers, sequences and
 timestamps remain native bookkeeping. Unsupported recurrence-rule changes, scheduling changes,
 and edits to retained cancelled components still fail closed.

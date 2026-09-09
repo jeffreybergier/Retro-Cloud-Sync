@@ -505,6 +505,15 @@ static void CalendarEmptyMapperTests(RCCalendarStore *store)
     CHECK(RCTwoWayGraphsEqual([imported objectForKey:@"graph"],truth));
     CHECK(RCCalendarEncodeLocal(store,imported,truth,root,&error));
   }
+  [alarm setObject:@"Glass" forKey:@"sound"];
+  desired=RCCalendarEncodeLocal(store,nil,truth,root,&error); CHECK(desired);
+  NSDictionary *namedReplay=RCCalendarEncodeLocal(store,desired,truth,root,&error); CHECK(namedReplay);
+  CHECK([[namedReplay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
+  desired=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:desired]];
+  [alarm setObject:@"" forKey:@"sound"];
+  desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); CHECK(desired);
+  CHECK([[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease] rangeOfString:@"ATTACH"].location==NSNotFound);
+  [alarm removeObjectForKey:@"sound"];
   [alarm setObject:@"Basso" forKey:@"com.apple.ical.sound"];
   CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error)); /* Nonempty wrong types remain invalid. */
   [alarm setObject:[NSURL URLWithString:@"Basso"] forKey:@"com.apple.ical.sound"];
@@ -624,6 +633,23 @@ static void CalendarMapperRegressionTests(RCCalendarStore *store)
   desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired); CHECK([[desired objectForKey:@"body"] isEqual:body]);
   NSString *alarmID=[[master objectForKey:@"audio alarms"] objectAtIndex:0];
   NSMutableDictionary *alarm=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:alarmID]];
+  [truth setObject:alarm forKey:alarmID];
+  [alarm setObject:@"Basso" forKey:@"sound"];
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  [alarm removeObjectForKey:@"com.apple.ical.sound"];
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  [alarm setObject:@"Glass" forKey:@"sound"];
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+  wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([wire rangeOfString:@"ATTACH;VALUE=URI:file:///System/Library/Sounds/Glass.aiff"].location!=NSNotFound);
+  [alarm setObject:[NSURL URLWithString:@"file:///System/Library/Sounds/Basso.aiff"] forKey:@"com.apple.ical.sound"];
+  CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  [alarm removeObjectForKey:@"com.apple.ical.sound"];
+  [alarm setObject:@"../invalid" forKey:@"sound"];
+  CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  [alarm removeObjectForKey:@"sound"];
   [alarm setObject:[NSURL URLWithString:@"file:///System/Library/Sounds/Glass.aiff"] forKey:@"com.apple.ical.sound"]; [truth setObject:alarm forKey:alarmID];
   desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
@@ -638,7 +664,35 @@ static void CalendarMapperRegressionTests(RCCalendarStore *store)
   [alarm removeObjectForKey:@"unsupported-sound-field"]; [alarm removeObjectForKey:@"com.apple.ical.sound"];
   desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   CHECK([[desired objectForKey:@"body"] isEqual:[Replace([[[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding] autorelease],@"ATTACH;VALUE=URI:file:///System/Library/Sounds/Basso.aiff\r\n",@"") dataUsingEncoding:NSUTF8StringEncoding]]);
-  puts("PASS: Invitation metadata does not generate edits; audio sound URLs round-trip through URI attachments");
+  puts("PASS: Invitation metadata does not generate edits; Tiger sound URLs and Leopard sound names round-trip through URI attachments");
+
+  /* Exact Leopard production representation, with synthetic event data. */
+  NSString *relative=Replace(audio,@"file:///System/Library/Sounds/Basso.aiff",@"Basso");
+  body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n%@%@END:VCALENDAR\r\n",relative,zone] dataUsingEncoding:NSUTF8StringEncoding];
+  resource=CalendarResource(store,23,body,@"https://fixture.invalid/calendar/relative-audio.ics",@"\"base\""); root=[resource objectForKey:@"root"];
+  truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[resource objectForKey:@"graph"]]];
+  master=[truth objectForKey:root]; alarmID=[[master objectForKey:@"audio alarms"] objectAtIndex:0]; alarm=[truth objectForKey:alarmID];
+  CHECK([[alarm objectForKey:@"com.apple.ical.sound"] isEqual:[NSURL URLWithString:@"Basso"]]);
+  [alarm setObject:@"Basso" forKey:@"sound"];
+  CHECK(RCTwoWayGraphsEqual([resource objectForKey:@"graph"],truth));
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+  CHECK([[desired objectForKey:@"body"] isEqual:body]);
+  [master setObject:@"Synthetic edited title" forKey:@"summary"];
+  desired=RCCalendarEncodeLocal(store,resource,truth,root,&error); CHECK(desired);
+  wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([wire rangeOfString:@"SUMMARY:Synthetic edited title"].location!=NSNotFound);
+  CHECK([wire rangeOfString:@"ATTACH;VALUE=URI:Basso\r\n"].location!=NSNotFound);
+  NSDictionary *relativeImported=CalendarResource(store,23,[desired objectForKey:@"body"],@"https://fixture.invalid/calendar/relative-audio.ics",@"\"next\"");
+  CHECK(RCTwoWayGraphsEqual([relativeImported objectForKey:@"graph"],truth));
+  NSDictionary *relativeReplay=RCCalendarEncodeLocal(store,relativeImported,truth,root,&error); CHECK(relativeReplay);
+  CHECK([[relativeReplay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
+  [alarm setObject:@"Glass" forKey:@"sound"];
+  CHECK(!RCCalendarEncodeLocal(store,relativeImported,truth,root,&error));
+  [alarm setObject:[NSURL URLWithString:@"Glass"] forKey:@"com.apple.ical.sound"];
+  desired=RCCalendarEncodeLocal(store,relativeImported,truth,root,&error); CHECK(desired);
+  wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([wire rangeOfString:@"ATTACH;VALUE=URI:Glass\r\n"].location!=NSNotFound);
+  puts("PASS: Leopard matching relative sound URL/name pairs preserve ATTACH bytes, permit event edits and acknowledge/replay without duplicate edits; conflicting names remain rejected");
 }
 
 static NSDictionary *CalendarGraph(NSArray *resources)
@@ -968,10 +1022,11 @@ int main(int argc,char **argv)
 {
   setvbuf(stdout,NULL,_IONBF,0);
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
-  ISyncManager *manager=[ISyncManager sharedManager];
+  ISyncManager *manager=nil;
   ISyncClient *local=nil,*server=nil; RCContactStore *store=NULL; int status=1;
   @try {
     if (argc==2 && !strcmp(argv[1],"--mappers")) { MapperTests(); status=0; goto done; }
+    manager=[ISyncManager sharedManager];
     if (argc==2 && !strcmp(argv[1],"--contact-publication")) {
       marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
       CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);

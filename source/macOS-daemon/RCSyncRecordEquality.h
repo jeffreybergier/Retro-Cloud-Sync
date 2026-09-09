@@ -12,6 +12,45 @@ static inline BOOL RCNativeEmptyValue(id value)
   return !value || ([value respondsToSelector:@selector(length)] && [value length]==0) ||
       ([value isKindOfClass:[NSArray class]] && [value count]==0);
 }
+/* Leopard exposes system sound names, Tiger exposes attachment URLs. Keep
+   this normalization shared by encoding, validation and acknowledgement. Never
+   invent a default for an absent sound or reinterpret custom attachment URLs. */
+static inline NSURL *RCNativeLocalSoundURL(NSURL *url)
+{
+  NSString *value=[url absoluteString];
+  if ([value hasPrefix:@"file://localhost/"])
+    return [NSURL URLWithString:[@"file://" stringByAppendingString:[value substringFromIndex:16]]];
+  return url;
+}
+static inline NSURL *RCNativeAlarmSound(NSDictionary *record, BOOL *valid)
+{
+  id url=[record objectForKey:@"com.apple.ical.sound"], name=[record objectForKey:@"sound"];
+  *valid=YES;
+  if (RCNativeEmptyValue(url)) url=nil;
+  if (RCNativeEmptyValue(name)) name=nil;
+  if (url && (![url isKindOfClass:[NSURL class]] ||
+      [[url absoluteString] rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"\r\n"]].location!=NSNotFound)) {
+    *valid=NO; return nil;
+  }
+  url=RCNativeLocalSoundURL(url);
+  if (name) {
+    if (![name isKindOfClass:[NSString class]] || [name isEqual:@"."] || [name isEqual:@".."] ||
+        [name rangeOfString:@"/"].location!=NSNotFound ||
+        [name rangeOfCharacterFromSet:[NSCharacterSet controlCharacterSet]].location!=NSNotFound) {
+      *valid=NO; return nil;
+    }
+    /* iCal also echoes ATTACH;VALUE=URI:Basso as an NSURL containing
+       "Basso" plus the Leopard string "Basso". Preserve that relative URI;
+       expanding it to a system path would change the wire representation and
+       incorrectly reject the matching pair during validation. */
+    if (url && ![url scheme] && ![url baseURL] && [[url absoluteString] isEqual:name]) return url;
+    NSURL *named=[NSURL fileURLWithPath:[@"/System/Library/Sounds" stringByAppendingPathComponent:[name stringByAppendingString:@".aiff"]]];
+    named=RCNativeLocalSoundURL(named);
+    if (url && ![url isEqual:named]) { *valid=NO; return nil; }
+    url=named;
+  }
+  return url;
+}
 /* Defaults belong to individual schema fields. In particular, a missing
    trigger is not a zero-second trigger, and a missing record is not empty. */
 static inline id RCNativeDefaultValue(NSString *entity, NSString *key)
@@ -68,6 +107,14 @@ static inline BOOL RCNativeRecordsEqual(NSDictionary *a, NSDictionary *b)
   NSEnumerator *it=[keys objectEnumerator]; NSString *key;
   NSString *entity=[a objectForKey:@"com.apple.syncservices.RecordEntityName"];
   if (![entity isEqual:[b objectForKey:@"com.apple.syncservices.RecordEntityName"]]) entity=nil;
+  if ([entity isEqual:@"com.apple.calendars.AudioAlarm"]) {
+    BOOL av,bv; NSURL *as=RCNativeAlarmSound(a,&av), *bs=RCNativeAlarmSound(b,&bv);
+    if (av && bv) {
+      if (!((!as && !bs) || [as isEqual:bs])) return NO;
+      [keys removeObject:@"sound"]; [keys removeObject:@"com.apple.ical.sound"];
+      it=[keys objectEnumerator];
+    }
+  }
   while ((key=[it nextObject])) {
     id x=[a objectForKey:key], y=[b objectForKey:key];
     if ([[a objectForKey:@"com.apple.syncservices.RecordEntityName"] isEqual:@"com.apple.calendars.Event"] &&
