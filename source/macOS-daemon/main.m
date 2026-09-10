@@ -1,3 +1,4 @@
+#import "RCContactPhoto.h"
 #import "RCLogger.h"
 //
 //  main.m
@@ -109,7 +110,7 @@ static NSString *RCSyncModeFromConfiguration(NSDictionary *configuration,
 }
 
 static void RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
-                               const char *password, BOOL calendars)
+                               const char *password, BOOL calendars, RCContactStore *contacts)
 {
   RCHTTPClientConfig config;
   RCError error;
@@ -123,6 +124,8 @@ static void RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
   if (!http || RCTwoWayRunWrites(journal,http,calendars ? "text/calendar; charset=utf-8" :
       "text/vcard; charset=utf-8",&error)<0)
     RCLogger(RCLogWarning, NULL, "Upload", @"Outgoing pass failed; queued changes remain pending: %s",error.message);
+  if (http && contacts && !RCContactPhotoRefreshWrites(contacts,http,&error))
+    RCLogger(RCLogWarning,"Contacts","Upload",@"Uploaded photo verification pending: %s",error.message);
   RCHTTPClientDestroy(http);
 }
 
@@ -186,7 +189,7 @@ static void *RCSyncWorkerMain(void *context)
         RCLogger(RCLogError, "Contacts", "Database", @"Could not open database; Contacts skipped this poll: %s", error.message);
       } else {
         RCWriteJournal journal=RCContactStoreWriteJournal(store);
-        if (worker->contactsTwoWay) RCRunAccountWrites(&journal,worker,password,NO);
+        if (worker->contactsTwoWay) RCRunAccountWrites(&journal,worker,password,NO,store);
         memset(&mirrorConfig, 0, sizeof(mirrorConfig));
         mirrorConfig.serviceURL = worker->serviceURL;
         mirrorConfig.username = worker->username;
@@ -206,6 +209,18 @@ static void *RCSyncWorkerMain(void *context)
             RCLogger(RCLogError, "Contacts", "Download", @"%s failed: %s", contactsFetched ? "Reading download statistics" : "Download", error.message);
           }
         }
+        if (contactsFetched) {
+          RCHTTPClientConfig photoConfig; memset(&photoConfig,0,sizeof(photoConfig));
+          photoConfig.username=worker->username; photoConfig.password=password;
+          photoConfig.certificatePath=worker->certificatePath; photoConfig.allowedHostSuffix=".icloud.com";
+          photoConfig.maximumResponseBytes=16U*1024U*1024U;
+          RCHTTPClient *photos=RCHTTPClientCreate(&photoConfig,&error);
+          if (!photos || !RCContactPhotoRefresh(store,photos,&error)) {
+            contactsFetched=NO;
+            RCLogger(RCLogWarning,"Contacts","Download",@"Contact photo download pending: %s",error.message);
+          }
+          RCHTTPClientDestroy(photos);
+        }
         /* A failed fetch (or locked Keychain) must not prevent retrying the
            last committed mirror. The bridge refuses a never-completed mirror. */
         RCErrorClear(&error);
@@ -214,7 +229,7 @@ static void *RCSyncWorkerMain(void *context)
           exported=contactsFetched && RCSyncServicesTwoWayContacts(store,
               worker->syncClientDescriptionPath,&syncRecordCount,&error);
           if (!contactsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
-          if (exported) RCRunAccountWrites(&journal,worker,password,NO);
+          if (exported) RCRunAccountWrites(&journal,worker,password,NO,store);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else {
@@ -243,7 +258,7 @@ static void *RCSyncWorkerMain(void *context)
         RCLogger(RCLogError, "Calendars", "Database", @"Could not open database; Calendars skipped this poll: %s", error.message);
       else {
         RCWriteJournal journal=RCCalendarStoreWriteJournal(calendarStore);
-        if (worker->calendarsTwoWay) RCRunAccountWrites(&journal,worker,password,YES);
+        if (worker->calendarsTwoWay) RCRunAccountWrites(&journal,worker,password,YES,NULL);
         memset(&mirrorConfig, 0, sizeof(mirrorConfig));
         mirrorConfig.serviceURL = "https://caldav.icloud.com";
         mirrorConfig.username = worker->username;
@@ -272,7 +287,7 @@ static void *RCSyncWorkerMain(void *context)
           exported=calendarsFetched && RCSyncServicesTwoWayCalendars(calendarStore,
               worker->calendarDescriptionPath,&syncRecordCount,&error);
           if (!calendarsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
-          if (exported) RCRunAccountWrites(&journal,worker,password,YES);
+          if (exported) RCRunAccountWrites(&journal,worker,password,YES,NULL);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else {

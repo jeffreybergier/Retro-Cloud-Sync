@@ -5,6 +5,7 @@
 #include "RCCalendarStore.h"
 NSDictionary *RCContactNativePaths(NSData *, NSDictionary *, NSString *, RCError *);
 NSDictionary *RCContactNativeGraphForPaths(NSData *, NSDictionary *, RCError *);
+NSDictionary *RCContactNativeGraphWithPhotoCache(RCContactStore *, NSData *, NSDictionary *, NSString *, NSString *, RCError *);
 NSDictionary *RCContactNativeGraph(RCContactStore *, long long, const char *, NSData *, RCError *);
 NSDictionary *RCCalendarNativeGraph(RCCalendarStore *, long long, NSString *, NSData *, RCError *);
 NSDictionary *RCCalendarProjectVerified(void *, NSDictionary *, NSData *, RCError *);

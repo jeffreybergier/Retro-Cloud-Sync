@@ -10,14 +10,26 @@ sessions and SQLite transactions. Credentials remain in Keychain.
 ## Supported changes
 
 Contacts support native creation, names, organization/department, notes,
-job title, nickname, birthday, company display, and phone/email/address/URL
+job title, nickname, birthday, company display, embedded photos, and phone/email/address/URL
 values, including adding/removing those multivalue entries. Existing labels,
-parameters, photos, unknown fields and unedited structured components survive
+parameters, unedited photos, unknown fields and unedited structured components survive
 updates. Changing the label/type or preferred status of an existing entry is
 left pending without blocking supported value or text edits. Standard types,
 custom labels, and the native URL `home page` type are supported on creation.
 New contacts require
 exactly one discovered address book; ambiguous destinations are deferred.
+
+Embedded vCard `PHOTO;ENCODING=b` data maps to the native `image` field.
+Creation, replacement and removal are supported without image transcoding;
+untouched photo bytes and unrelated properties remain intact. The writer folds
+base64 lines and identifies JPEG, PNG, GIF and TIFF when possible. URI photos on
+the account’s HTTPS iCloud hosts are fetched with the account HTTP client before
+native sessions. Images are cached by account, contact href,
+ETag and photo URI; a card GET after the image download confirms that version.
+Successful upload versions are cached before later downloads can supersede them.
+Unavailable images remain pending rather than being interpreted as removals.
+Malformed or repeated photos remain opaque during unrelated edits; replacing an ambiguous repeated photo stays pending. Image data must be
+binary (`NSData`).
 
 Calendars support edits to event summary, description, location, URL, status,
 classification, and start/end dates in the existing date representation.
@@ -32,14 +44,14 @@ are deferred. Calendar moves and tasks are also outside this first coordinator.
 The coordinator projects local changes onto each encoder's supported fields,
 then validates the resulting resource through the production forward mapper.
 Existing raw bodies are patched, preserving unknown properties, parameters,
-photos and components. Unknown native fields are not placed in the represented
+unedited photos and components. Unknown native fields are not placed in the represented
 upload graph and are not treated as synchronized. Their field names are stored
 in `two_way_pending_fields` and reported in the daemon log when that set changes;
 the actual values remain in Sync Services. Previously observed opaque fields
 that become absent retain a pending deletion marker until a mapper can
 represent them; absence alone does not prove their remote data was deleted.
 
-A contact photo or an unfamiliar event field therefore does not block a note,
+An unsupported contact field or an unfamiliar event field does not block a note,
 phone value or event text edit. Unsupported existing labels and alarm or
 participant changes remain pending while independent edits proceed. Changes to
 recurrence structure or all-day representation also defer dependent date and
@@ -52,8 +64,7 @@ ambiguous destinations still fail safely.
 
 New contacts and ordinary events may be created with supported fields while
 other fields remain pending locally. This is partial creation, not an assertion
-that every field uploaded: a contact image, for example, is not uploaded by this
-mapper. New recurring/scheduled events still require a richer mapper; they are
+that every field uploaded. New recurring/scheduled events still require a richer mapper; they are
 never silently simplified to ordinary events.
 
 Each outgoing operation atomically saves its represented graph and immutable
@@ -65,6 +76,9 @@ accepts whole records, so records with any additional local differences are
 left unaccepted there even after the verified server operation completes.
 Unrelated native fields are never accepted using a fabricated full receipt.
 Older journal entries without scopes retain exact whole-record acceptance.
+Server verification of pre-photo receipts excludes newly mapped images that
+were absent from both the saved graph and scope. Photos represented by an
+upload still require exact verification.
 
 **Deleting a contact or event locally propagates to iCloud in 2-way mode.**
 The coordinator requires an explicit Sync Services deletion change for a known
@@ -238,8 +252,8 @@ values and require all successors to complete without duplicate mutations.
 `TWO_WAY_TEST_MODE=edit-delete` isolates the contact edit/delete case.
 
 `TWO_WAY_TEST_MODE=fields` exercises field-scoped uploads against real Sync
-Services using synthetic contacts: image-plus-note edits, partial creation with
-address/homepage children, unsupported field removal,
-persistent pending fields, journal reopen, newer supported edits and replay
+Services using synthetic contacts: image-plus-note edits, creation with
+photos and address/homepage children, iCloud-style URI photo conversion, removal,
+versioned photo caches, journal reopen, newer supported edits and replay
 without duplicate PUTs. Mapper fixtures also cover unknown fields and calendar
 date dependencies while checking preservation of untouched wire properties.

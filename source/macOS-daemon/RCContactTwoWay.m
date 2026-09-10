@@ -1,3 +1,4 @@
+#import "RCContactPhoto.h"
 #import "RCTwoWayNative.h"
 #import "RCContactSyncClient.h"
 #import "RCSyncRecordEquality.h"
@@ -70,7 +71,6 @@ NSDictionary *RCContactNativePaths(NSData *body, NSDictionary *graph, NSString *
 }
 NSDictionary *RCContactProjectVerified(void *opaque,NSDictionary *current,NSData *body,RCError *error)
 {
-  (void)opaque;
   RCVCardDocument old,new;
   RCVCardDocumentInit(&old); RCVCardDocumentInit(&new);
   NSData *latest=[current objectForKey:@"body"];
@@ -83,7 +83,7 @@ NSDictionary *RCContactProjectVerified(void *opaque,NSDictionary *current,NSData
   RCVCardDocumentClear(&old); RCVCardDocumentClear(&new);
   if (!valid) return nil;
   NSString *root=[current objectForKey:@"root"];
-  NSDictionary *mapped=RCContactNativeGraphForPaths(body,[current objectForKey:@"paths"],error);
+  NSDictionary *mapped=RCContactNativeGraphWithPhotoCache(opaque,body,[current objectForKey:@"paths"],[current objectForKey:@"href"],[current objectForKey:@"verifiedETag"] ?: [current objectForKey:@"etag"],error);
   if (!mapped || !root) return nil;
   mapped=RCTwoWayRemap(mapped,[NSDictionary dictionaryWithObject:root forKey:@"contact-validation"]);
   /* Root-field edits (such as a newer note) preserve the contact identity.
@@ -95,6 +95,7 @@ NSDictionary *RCContactProjectVerified(void *opaque,NSDictionary *current,NSData
   if (!RCTwoWayGraphsEqual(oldChildren,newChildren)) return nil;
   NSMutableDictionary *result=[NSMutableDictionary dictionaryWithDictionary:current];
   [result setObject:body forKey:@"body"]; [result setObject:mapped forKey:@"graph"];
+  if ([current objectForKey:@"verifiedETag"]) [result setObject:[current objectForKey:@"verifiedETag"] forKey:@"etag"];
   return result;
 }
 static BOOL AddEdit(RCVCardDocument *doc, NSString *name, int wanted,
@@ -145,14 +146,48 @@ static void AppendProperty(NSMutableArray *edits,NSString *name,NSString *group,
   [edits addObject:[NSDictionary dictionaryWithObjectsAndKeys:name,@"name",group,@"group",value,@"value",
       [NSNumber numberWithInt:-1],@"occurrence",parameters ?: @"",@"parameters",nil]];
 }
+/* Replace the PHOTO property explicitly so ENCODING/VALUE/TYPE describe the
+   new bytes, even when replacing a URI or changing image format. Preserve its
+   group and all unrelated parameters; the patcher rejects unsafe parameters. */
+static BOOL PhotoEdit(RCVCardDocument *doc, id image, NSMutableArray *edits, RCError *error)
+{
+  NSString *value=RCNativeEmptyValue(image) ? nil : RCPhotoEncode(image);
+  if (!RCNativeEmptyValue(image) && !value) { RCErrorSet(error,1,"Contact image must be binary data"); return NO; }
+  RCVCardProperty *photo=NULL; size_t i;
+  for(i=0;i<doc->propertyCount;i++) if (!strcasecmp(doc->properties[i].name,"PHOTO")) {
+    if (photo) { RCErrorSet(error,1,"Ambiguous repeated contact photo"); return NO; }
+    photo=&doc->properties[i];
+  }
+  if (photo && !AddEdit(doc,@"PHOTO",0,nil,edits,error)) return NO;
+  if (value) {
+    NSMutableString *parameters=[NSMutableString stringWithString:@"ENCODING=b"];
+    NSString *type=RCPhotoType(image);
+    if (type) [parameters appendFormat:@";TYPE=%@",type];
+    if (photo) for(i=0;i<photo->parameterCount;i++) {
+      RCVCardParameter *p=&photo->parameters[i];
+      if (strcasecmp(p->name,"ENCODING") && strcasecmp(p->name,"VALUE") && strcasecmp(p->name,"TYPE")) {
+        /* Parsed quoted values cannot be interpolated as raw parameters:
+           delimiters would change their meaning. Leave that image pending. */
+        const char *v=p->value;
+        for (; *v; v++) if (!((*v>='a' && *v<='z') || (*v>='A' && *v<='Z') ||
+            (*v>='0' && *v<='9') || strchr(",-_./",*v))) {
+          RCErrorSet(error,1,"Contact photo has an uneditable extension parameter"); return NO;
+        }
+        [parameters appendFormat:@";%@=%@",S(p->name),S(p->value)];
+      }
+    }
+    AppendProperty(edits,@"PHOTO",photo ? S(photo->group) : @"",value,parameters);
+  }
+  return YES;
+}
 static NSString *Birthday(id date)
 {
   return [date isKindOfClass:[NSDate class]] ? [date descriptionWithCalendarFormat:@"%Y-%m-%d"
       timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil] : nil;
 }
-static BOOL Validate(NSData *body, NSDictionary *paths, NSDictionary *truth, RCError *error)
+static BOOL Validate(RCContactStore *store, NSDictionary *resource, NSData *body, NSDictionary *paths, NSDictionary *truth, RCError *error)
 {
-  NSDictionary *mapped=RCContactNativeGraphForPaths(body,paths,error);
+  NSDictionary *mapped=RCContactNativeGraphWithPhotoCache(store,body,paths,[resource objectForKey:@"href"],[resource objectForKey:@"etag"],error);
   if (!mapped) return NO;
   mapped=RCTwoWayRemap(mapped,[NSDictionary dictionaryWithObject:[paths objectForKey:@"root"] forKey:@"contact-validation"]);
   if (!RCTwoWayGraphsEqual(mapped,RCTwoWaySubgraph(truth,[paths allValues]))) {
@@ -206,9 +241,22 @@ static NSMutableDictionary *Create(RCContactStore *store,NSDictionary *truth,NSS
     }
   }
   [body appendString:@"END:VCARD\r\n"];
+  /* Use the same folded binary property writer for creation and updates. */
+  if (!RCNativeEmptyValue([record objectForKey:@"image"])) {
+    NSData *raw=[body dataUsingEncoding:NSUTF8StringEncoding];
+    RCVCardDocument empty; RCVCardDocumentInit(&empty);
+    NSMutableArray *edits=[NSMutableArray array];
+    if (!PhotoEdit(&empty,[record objectForKey:@"image"],edits,error)) return nil;
+    NSDictionary *edit=[edits objectAtIndex:0];
+    RCResourceEdit patch={0,"PHOTO",NULL,-1,[[edit objectForKey:@"value"] UTF8String],[[edit objectForKey:@"parameters"] UTF8String]};
+    unsigned char *bytes=NULL; size_t length=0;
+    if (!RCResourcePatch(RCResourceVCard,[raw bytes],[raw length],&patch,1,&bytes,&length,error)) return nil;
+    body=[[[NSMutableString alloc] initWithBytes:bytes length:length encoding:NSUTF8StringEncoding] autorelease];
+    free(bytes);
+  }
   NSData *data=[body dataUsingEncoding:NSUTF8StringEncoding]; RCVCardDocument doc;
   BOOL valid=RCVCardParse([data bytes],[data length],&doc,error); RCVCardDocumentClear(&doc);
-  if (!valid || !Validate(data,paths,truth,error)) return nil;
+  if (!valid || !Validate(store,nil,data,paths,truth,error)) return nil;
   return [NSMutableDictionary dictionaryWithObjectsAndKeys:root,@"root",[@"native-" stringByAppendingString:uid],@"key",href,@"href",data,@"body",
       paths,@"paths",RCTwoWaySubgraph(truth,[paths allValues]),@"graph",nil];
 }
@@ -238,7 +286,8 @@ NSMutableDictionary *RCContactEncodeLocal(void *opaque,NSDictionary *resource,NS
     NSString *value=k==3 ? Birthday(v) : k==4 ? ([v isEqual:@"company"] ? @"COMPANY" : nil) : v ? RCTwoWayEscape(v) : nil;
     if (!AddEdit(&doc,names[k],0,value,edits,error)) goto done;
   }
-  NSArray *allowed=[NSArray arrayWithObjects:@"last name",@"first name",@"middle name",@"title",@"suffix",@"company name",@"department",@"notes",@"job title",@"nickname",@"birthday",@"display as company",nil];
+  if (Changed(base,record,@"image") && !PhotoEdit(&doc,[record objectForKey:@"image"],edits,error)) goto done;
+  NSArray *allowed=[NSArray arrayWithObjects:@"image",@"last name",@"first name",@"middle name",@"title",@"suffix",@"company name",@"department",@"notes",@"job title",@"nickname",@"birthday",@"display as company",nil];
   NSEnumerator *it=[allowed objectEnumerator]; NSString *key;
   while ((key=[it nextObject])) { if ([record objectForKey:key]) [expected setObject:[record objectForKey:key] forKey:key]; else [expected removeObjectForKey:key]; }
   for(k=0;k<4;k++) {
@@ -312,7 +361,7 @@ NSMutableDictionary *RCContactEncodeLocal(void *opaque,NSDictionary *resource,NS
       [result setObject:desiredPaths forKey:@"paths"];
       [result setObject:RCTwoWaySubgraph(truth,[desiredPaths allValues]) forKey:@"graph"];
       free(bytes); RCVCardDocumentClear(&doc);
-      return Validate([result objectForKey:@"body"],[result objectForKey:@"paths"],truth,error) ? result : nil;
+      return Validate(opaque,resource,[result objectForKey:@"body"],[result objectForKey:@"paths"],truth,error) ? result : nil;
     }
     free(bytes);
   }

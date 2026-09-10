@@ -19,7 +19,7 @@
       <string>nickname</string><string>company name</string>
       <string>display as company</string>
       <string>department</string><string>job title</string>
-      <string>birthday</string><string>notes</string>
+      <string>birthday</string><string>notes</string><string>image</string>
       <string>phone numbers</string><string>primary phone number</string>
       <string>email addresses</string><string>primary email address</string>
       <string>street addresses</string><string>primary street address</string>

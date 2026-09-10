@@ -260,12 +260,14 @@ or deletion verification, exact acceptance and replay.
 ### Field-level two-way sync
 
 `make test-mac-two-way TEST_HOST=x4-vm TWO_WAY_TEST_MODE=fields` runs the
-production field projection, journal scopes and acknowledgement path against
-real Sync Services with synthetic HTTP. It checks partial contact creation and
-updates with a local image and address/homepage children, unsupported field
-removal, pending field persistence, restart recovery, newer
+production field projection, photo mapping, journal scopes and acknowledgement path against
+real Sync Services with synthetic HTTP. It checks contact creation and
+updates with uploaded images and address/homepage children, image
+removal, iCloud-style embedded-to-URI conversion, versioned photo-cache recovery, newer
 supported edits and replay without extra PUTs. The mapper phase additionally
-checks homepage labels, unknown contact/calendar fields, preserved raw photos
+checks binary photo import/create/replace/delete and replay, missing URI images,
+owner-ETag races, historical photo versions, malformed/repeated
+photo preservation, homepage labels, unknown contact/calendar fields, preserved raw photos
 and private properties, and coupled all-day/date edits. As with the full native
 suite, stop the daemon first; cleanup verifies the Address Book baseline.
 

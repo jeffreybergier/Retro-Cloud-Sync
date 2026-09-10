@@ -35,7 +35,7 @@ static NSArray *Writable(NSDictionary *old, NSDictionary *record, BOOL freezeDat
   NSString *entity=[record objectForKey:ISyncRecordEntityNameKey] ?: [old objectForKey:ISyncRecordEntityNameKey];
   NSString *names=nil;
   if ([entity isEqual:@"com.apple.contacts.Contact"])
-    names=@"first name|last name|middle name|title|suffix|nickname|company name|department|job title|birthday|notes|display as company|phone numbers|email addresses|street addresses|URLs";
+    names=@"first name|last name|middle name|title|suffix|nickname|company name|department|job title|birthday|notes|image|display as company|phone numbers|email addresses|street addresses|URLs";
   else if ([entity hasPrefix:@"com.apple.contacts."]) {
     if ([entity isEqual:@"com.apple.contacts.Street Address"])
       names=old ? @"contact|street|city|state|postal code|country" : @"contact|street|city|state|postal code|country|country code|type|label";
@@ -86,7 +86,7 @@ static NSArray *IndependentGroups(NSDictionary *record)
   NSString *entity=[record objectForKey:ISyncRecordEntityNameKey];
   if ([entity isEqual:@"com.apple.contacts.Contact"])
     return [NSArray arrayWithObjects:Fields(@"first name|last name|middle name|title|suffix"),Fields(@"company name|department"),
-        Fields(@"notes"),Fields(@"job title"),Fields(@"nickname"),Fields(@"birthday"),Fields(@"display as company"),nil];
+        Fields(@"notes"),Fields(@"image"),Fields(@"job title"),Fields(@"nickname"),Fields(@"birthday"),Fields(@"display as company"),nil];
   if ([entity isEqual:@"com.apple.contacts.Street Address"])
     return [NSArray arrayWithObject:Fields(@"street|city|state|postal code|country")];
   if ([entity isEqual:@"com.apple.contacts.Phone Number"] || [entity isEqual:@"com.apple.contacts.Email Address"] || [entity isEqual:@"com.apple.contacts.URL"])

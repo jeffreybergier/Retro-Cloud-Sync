@@ -1,14 +1,21 @@
+#import "../../../macOS-daemon/RCContactPhoto.h"
 #import "../../../macOS-daemon/RCSyncFieldScope.h"
 #import <Foundation/Foundation.h>
 #import <SyncServices/SyncServices.h>
 #import "../../../macOS-daemon/RCTwoWayNative.h"
 #import "../../../macOS-daemon/RCSyncConflictSession.h"
+#include "../../../shared/RCResourcePatch.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static RCError error;
 static NSMutableDictionary *remoteBodies, *remoteETags;
+static NSMutableDictionary *remotePhotos;
+static RCContactStore *photoStore=NULL;
+static BOOL normalizePhotos=NO;
+static int photoGETs=0;
+static const char *photoResponseType="image/jpeg";
 static int mutations=0;
 static BOOL loseResponse=NO;
 static NSString *marker;
@@ -26,9 +33,10 @@ static int Response(const char *url,RCHTTPResponse *r)
   if (strncmp(url,"https://fixture.invalid/",24)) return 0;
   RCHTTPResponseClear(r); r->effectiveURL=strdup(url);
   NSString *href=[NSString stringWithUTF8String:url]; NSData *body=[remoteBodies objectForKey:href];
+  if (!body && [remotePhotos objectForKey:href]) { body=[remotePhotos objectForKey:href]; r->contentType=strdup(photoResponseType); photoGETs++; }
   r->statusCode=body ? 200 : 404;
   if (body) {
-    r->etag=strdup([[remoteETags objectForKey:href] UTF8String]); r->bodyLength=[body length];
+    r->etag=strdup([[remoteETags objectForKey:href] UTF8String] ?: "\"photo\""); r->bodyLength=[body length];
     r->body=malloc(r->bodyLength+1); memcpy(r->body,[body bytes],r->bodyLength); r->body[r->bodyLength]=0;
   }
   return 1;
@@ -54,7 +62,23 @@ int RCHTTPClientConditionalRequest(RCHTTPClient *c,const char *method,const char
   if (!strcmp(method,"DELETE")) {
     [remoteBodies removeObjectForKey:href]; [remoteETags removeObjectForKey:href];
   } else {
-    [remoteBodies setObject:[NSData dataWithBytes:body length:length] forKey:href];
+    NSData *canonical=[NSData dataWithBytes:body length:length];
+    if (normalizePhotos && strstr(type,"text/vcard")) {
+      RCVCardDocument doc; CHECK(RCVCardParse(body,length,&doc,&error));
+      NSData *image=RCContactPhoto(&doc);
+      if (image) {
+        NSString *uri=[href stringByAppendingString:@"/photo"];
+        [remotePhotos setObject:image forKey:uri];
+        const char *group=NULL; size_t i;
+        for(i=0;i<doc.propertyCount;i++) if (!strcasecmp(doc.properties[i].name,"PHOTO")) group=doc.properties[i].group;
+        RCResourceEdit edits[2]={{0,"PHOTO",group,0,NULL,NULL},{0,"PHOTO",group,-1,[uri UTF8String],"TYPE=JPEG;VALUE=uri"}};
+        unsigned char *bytes=NULL; size_t count=0;
+        CHECK(RCResourcePatch(RCResourceVCard,body,length,edits,2,&bytes,&count,&error));
+        canonical=[NSData dataWithBytes:bytes length:count]; free(bytes);
+      }
+      RCVCardDocumentClear(&doc);
+    }
+    [remoteBodies setObject:canonical forKey:href];
     [remoteETags setObject:[NSString stringWithFormat:@"\"write-%d\"",mutations] forKey:href];
   }
   Response(url,r); r->statusCode=create ? 201 : 204;
@@ -88,8 +112,14 @@ static NSDictionary *ContactGraph(NSData *body,NSString *root)
 }
 static NSDictionary *ContactResource(NSData *body,NSString *root,NSString *href,NSString *etag)
 {
+  NSDictionary *graph=ContactGraph(body,root);
+  if (photoStore) {
+    CHECK(RCContactPhotoFetch(photoStore,(RCHTTPClient *)1,href,etag,body,&error));
+    NSDictionary *mapped=RCContactNativeGraphWithPhotoCache(photoStore,body,ContactPaths(body,root),href,etag,&error); CHECK(mapped);
+    graph=RCTwoWayRemap(mapped,[NSDictionary dictionaryWithObject:root forKey:@"contact-validation"]);
+  }
   return [NSDictionary dictionaryWithObjectsAndKeys:root,@"key",root,@"root",href,@"href",etag,@"etag",body,@"body",
-      ContactGraph(body,root),@"graph",RCContactNativePaths(body,ContactGraph(body,root),root,&error),@"paths",[NSNumber numberWithInt:1],@"revision",nil];
+      graph,@"graph",RCContactNativePaths(body,graph,root,&error),@"paths",[NSNumber numberWithInt:1],@"revision",nil];
 }
 static void LocalSessionAs(ISyncClient *client,NSDictionary *push,BOOL remove,NSString *eventName)
 {
@@ -335,7 +365,7 @@ static void FieldMapperTests(RCContactStore *contacts)
   NSDictionary *base=ContactResource([wire dataUsingEncoding:NSUTF8StringEncoding],@"fields",@"https://fixture.invalid/book/fields.vcf",@"\"base\"");
   NSMutableDictionary *truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[base objectForKey:@"graph"]]];
   NSMutableDictionary *card=[truth objectForKey:@"fields"], *phone=[truth objectForKey:@"fields-TEL-0"];
-  [card setObject:[@"local-photo" dataUsingEncoding:NSUTF8StringEncoding] forKey:@"image"];
+  [card setObject:[@"local-photo" dataUsingEncoding:NSUTF8StringEncoding] forKey:@"future contact field"];
   [card setObject:@"new note" forKey:@"notes"];
   [phone setObject:@"work" forKey:@"type"]; [phone setObject:@"456" forKey:@"value"];
   [phone setObject:@"future value" forKey:@"future field"];
@@ -345,7 +375,7 @@ static void FieldMapperTests(RCContactStore *contacts)
   CHECK([encoded rangeOfString:@"TEL;TYPE=HOME:456\r\n"].location!=NSNotFound);
   CHECK([encoded rangeOfString:@"PHOTO;ENCODING=b:YWJj\r\n"].location!=NSNotFound);
   CHECK([encoded rangeOfString:@"X-FUTURE;X-PARAM=keep:opaque\r\n"].location!=NSNotFound);
-  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields"] containsObject:@"image"]);
+  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields"] containsObject:@"future contact field"]);
   CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields-TEL-0"] containsObject:@"type"]);
   CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields-TEL-0"] containsObject:@"future field"]);
   CHECK(RCNativeScopeMatches(truth,[desired objectForKey:@"graph"],[desired objectForKey:@"fieldScopes"]));
@@ -367,7 +397,7 @@ static void FieldMapperTests(RCContactStore *contacts)
   desired=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,nil,truth,@"fields",&error); CHECK(desired);
   CHECK([[[desired objectForKey:@"graph"] objectForKey:@"website"] objectForKey:@"type"]);
   CHECK([[[[desired objectForKey:@"graph"] objectForKey:@"website"] objectForKey:@"type"] isEqual:@"home page"]);
-  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields"] containsObject:@"image"]);
+  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields"] containsObject:@"future contact field"]);
   replay=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,desired,truth,@"fields",&error); CHECK(replay);
   CHECK([[replay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
   NSMutableDictionary *website=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"website"]];
@@ -377,7 +407,7 @@ static void FieldMapperTests(RCContactStore *contacts)
   CHECK([[[[desired objectForKey:@"graph"] objectForKey:@"website"] objectForKey:@"type"] isEqual:@"other"]);
   replay=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,desired,truth,@"fields",&error); CHECK(replay);
   CHECK([[replay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
-  NSDictionary *opaqueOnly=[NSDictionary dictionaryWithObject:[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Contact",ISyncRecordEntityNameKey,[@"photo" dataUsingEncoding:NSUTF8StringEncoding],@"image",nil] forKey:@"opaque"];
+  NSDictionary *opaqueOnly=[NSDictionary dictionaryWithObject:[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Contact",ISyncRecordEntityNameKey,[@"photo" dataUsingEncoding:NSUTF8StringEncoding],@"future contact field",nil] forKey:@"opaque"];
   CHECK(!RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,nil,opaqueOnly,@"opaque",&error));
   NSString *legacyWire=@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:legacy-fields\r\nN:Fixture;Legacy;;;\r\nFN:Legacy Fixture\r\nNOTE;CHARSET=ISO-8859-1:old\r\nTEL;TYPE=HOME:123\r\nX-FUTURE:keep\r\nEND:VCARD\r\n";
   NSDictionary *legacy=ContactResource([legacyWire dataUsingEncoding:NSUTF8StringEncoding],@"legacy",@"https://fixture.invalid/book/legacy.vcf",@"\"base\"");
@@ -395,7 +425,152 @@ static void FieldMapperTests(RCContactStore *contacts)
   NSDictionary *legacyReplay=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,legacyResult,legacyTruth,@"legacy",&error); CHECK(legacyReplay);
   CHECK([[legacyReplay objectForKey:@"body"] isEqual:[legacyResult objectForKey:@"body"]]);
   puts("PASS: An uneditable legacy NOTE remains pending while an independent phone edit validates and replays without rewriting legacy/private bytes");
-  puts("PASS: Field-scoped contact edits and partial creation preserve raw data, retain image/label/future fields, detect newer edits and replay without duplicate writes");
+  puts("PASS: Field-scoped contact edits and partial creation preserve raw data, retain unsupported contact/label fields, detect newer edits and replay without duplicate writes");
+}
+static void PhotoMapperTests(RCContactStore *store)
+{
+  /* Includes every byte, embedded NULs, all padding lengths, and folded lines. */
+  unsigned char bytes[257]; NSUInteger n;
+  for(n=0;n<sizeof(bytes);n++) bytes[n]=(unsigned char)n;
+  for(n=1;n<=sizeof(bytes);n++) {
+    NSData *data=[NSData dataWithBytes:bytes length:n];
+    CHECK([RCPhotoDecode([RCPhotoEncode(data) UTF8String]) isEqual:data]);
+  }
+  CHECK(!RCPhotoDecode("a")); CHECK(!RCPhotoDecode("YWJj!"));
+  CHECK(!RCPhotoDecode("=AAA")); CHECK(!RCPhotoDecode("YQ=A"));
+  CHECK(!RCPhotoDecode("YR==")); CHECK(!RCPhotoDecode("YQ==YQ=="));
+  CHECK(!RCPhotoDecode("YWJ=")); CHECK(!RCPhotoEncode(@"not binary"));
+  NSString *wire=@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:photo\r\nN:Fixture;Photo;;;\r\nFN:Photo Fixture\r\nNOTE:old\r\nitem1.PHOTO;ENCODING=b;TYPE=JPEG;X-KEEP=yes:YWJj\r\nX-PRIVATE:keep\r\nEND:VCARD\r\n";
+  NSDictionary *base=ContactResource([wire dataUsingEncoding:NSUTF8StringEncoding],@"photo",@"https://fixture.invalid/book/photo.vcf",@"\"base\"");
+  CHECK([[[[base objectForKey:@"graph"] objectForKey:@"photo"] objectForKey:@"image"] isEqual:[@"abc" dataUsingEncoding:NSUTF8StringEncoding]]);
+  NSMutableDictionary *oldReceipt=[NSMutableDictionary dictionaryWithDictionary:[[base objectForKey:@"graph"] objectForKey:@"photo"]];
+  [oldReceipt removeObjectForKey:@"image"];
+  NSDictionary *legacyGraph=[NSDictionary dictionaryWithObject:oldReceipt forKey:@"photo"];
+  NSDictionary *legacyScope=[NSDictionary dictionaryWithObject:[oldReceipt allKeys] forKey:@"photo"];
+  CHECK(RCNativeUploadedGraphMatches([base objectForKey:@"graph"],legacyGraph,legacyScope));
+  CHECK(RCNativeUploadedGraphMatches([base objectForKey:@"graph"],legacyGraph,nil));
+  NSDictionary *imageScope=[NSDictionary dictionaryWithObject:[NSArray arrayWithObject:@"image"] forKey:@"photo"];
+  CHECK(!RCNativeUploadedGraphMatches([base objectForKey:@"graph"],legacyGraph,imageScope));
+  [oldReceipt setObject:@"wrong note" forKey:@"notes"];
+  CHECK(!RCNativeUploadedGraphMatches([base objectForKey:@"graph"],legacyGraph,legacyScope));
+  [oldReceipt setObject:@"old" forKey:@"notes"];
+  [oldReceipt setObject:[@"different" dataUsingEncoding:NSUTF8StringEncoding] forKey:@"image"];
+  CHECK(!RCNativeUploadedGraphMatches([base objectForKey:@"graph"],legacyGraph,legacyScope));
+  NSMutableDictionary *truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[base objectForKey:@"graph"]]];
+  NSMutableDictionary *card=[truth objectForKey:@"photo"];
+  NSData *image=[NSData dataWithBytes:bytes length:sizeof(bytes)];
+  [card setObject:image forKey:@"image"];
+  NSDictionary *desired=RCTwoWayEncodeFields(RCContactEncodeLocal,store,base,truth,@"photo",&error); CHECK(desired);
+  CHECK(![[desired objectForKey:@"pendingFields"] count]);
+  CHECK(RCNativeScopeMatches(truth,[desired objectForKey:@"graph"],[desired objectForKey:@"fieldScopes"]));
+  NSString *encoded=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([encoded rangeOfString:@"item1.PHOTO;ENCODING=b;X-KEEP=yes:"].location!=NSNotFound);
+  CHECK([encoded rangeOfString:@"X-PRIVATE:keep\r\n"].location!=NSNotFound);
+  CHECK([encoded rangeOfString:@"\r\n "].location!=NSNotFound);
+  NSDictionary *imported=ContactResource([desired objectForKey:@"body"],@"photo",[base objectForKey:@"href"],@"\"next\"");
+  CHECK([[[[imported objectForKey:@"graph"] objectForKey:@"photo"] objectForKey:@"image"] isEqual:image]);
+  NSDictionary *replay=RCTwoWayEncodeFields(RCContactEncodeLocal,store,imported,truth,@"photo",&error); CHECK(replay);
+  CHECK([[replay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
+  [card removeObjectForKey:@"image"];
+  NSDictionary *removed=RCTwoWayEncodeFields(RCContactEncodeLocal,store,imported,truth,@"photo",&error); CHECK(removed);
+  CHECK(![[removed objectForKey:@"pendingFields"] count]);
+  encoded=[[[NSString alloc] initWithData:[removed objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([encoded rangeOfString:@"PHOTO"].location==NSNotFound);
+  [card setObject:image forKey:@"image"];
+  desired=RCTwoWayEncodeFields(RCContactEncodeLocal,store,nil,truth,@"photo",&error); CHECK(desired);
+  CHECK(![[desired objectForKey:@"pendingFields"] count]);
+  CHECK([[[RCContactNativeGraphForPaths([desired objectForKey:@"body"],[desired objectForKey:@"paths"],&error) objectForKey:@"contact-validation"] objectForKey:@"image"] isEqual:image]);
+  NSArray *opaque=[NSArray arrayWithObjects:@"PHOTO;VALUE=uri:https://fixture.invalid/photo.jpg",@"PHOTO;ENCODING=b:bad!",@"PHOTO;ENCODING=b:YQ==\r\nPHOTO;ENCODING=b:Yg==",nil];
+  NSEnumerator *it=[opaque objectEnumerator]; NSString *photo;
+  while ((photo=[it nextObject])) {
+    NSString *raw=Replace(wire,@"item1.PHOTO;ENCODING=b;TYPE=JPEG;X-KEEP=yes:YWJj",photo);
+    NSDictionary *resource=ContactResource([raw dataUsingEncoding:NSUTF8StringEncoding],@"photo",[base objectForKey:@"href"],@"\"opaque\"");
+    CHECK(![[[resource objectForKey:@"graph"] objectForKey:@"photo"] objectForKey:@"image"]);
+    NSMutableDictionary *graph=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[resource objectForKey:@"graph"]]];
+    [[graph objectForKey:@"photo"] setObject:@"independent note" forKey:@"notes"];
+    desired=RCTwoWayEncodeFields(RCContactEncodeLocal,store,resource,graph,@"photo",&error);
+    if ([photo rangeOfString:@"VALUE=uri"].location!=NSNotFound) CHECK(!desired);
+    else {
+      CHECK(desired);
+      encoded=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+      CHECK([encoded rangeOfString:photo].location!=NSNotFound);
+    }
+    [[graph objectForKey:@"photo"] setObject:image forKey:@"image"];
+    desired=RCTwoWayEncodeFields(RCContactEncodeLocal,store,resource,graph,@"photo",&error); CHECK(desired);
+    if ([photo rangeOfString:@"\r\n"].location!=NSNotFound)
+      CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"photo"] containsObject:@"image"]);
+    else CHECK(![[desired objectForKey:@"pendingFields"] count]);
+  }
+  NSDictionary *imageOnly=[NSDictionary dictionaryWithObject:[NSDictionary dictionaryWithObjectsAndKeys:
+      @"com.apple.contacts.Contact",ISyncRecordEntityNameKey,image,@"image",nil] forKey:@"photo"];
+  CHECK(RCTwoWayEncodeFields(RCContactEncodeLocal,store,nil,imageOnly,@"photo",&error));
+  [card setObject:@"not binary" forKey:@"image"]; [card setObject:@"safe note" forKey:@"notes"];
+  desired=RCTwoWayEncodeFields(RCContactEncodeLocal,store,base,truth,@"photo",&error); CHECK(desired);
+  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"photo"] containsObject:@"image"]);
+  CHECK([[[[desired objectForKey:@"graph"] objectForKey:@"photo"] objectForKey:@"notes"] isEqual:@"safe note"]);
+  NSString *quoted=Replace(wire,@"X-KEEP=yes",@"X-KEEP=\"a;b\"");
+  NSDictionary *quotedBase=ContactResource([quoted dataUsingEncoding:NSUTF8StringEncoding],@"photo",[base objectForKey:@"href"],@"\"quoted\"");
+  [card setObject:image forKey:@"image"];
+  desired=RCTwoWayEncodeFields(RCContactEncodeLocal,store,quotedBase,truth,@"photo",&error); CHECK(desired);
+  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"photo"] containsObject:@"image"]);
+  encoded=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([encoded rangeOfString:@"X-KEEP=\"a;b\""].location!=NSNotFound);
+  puts("PASS: Binary photos import, create, replace, delete, fold and replay exactly; opaque photos survive independent edits");
+}
+static void URIPhotoTests(RCContactStore *store)
+{
+  NSMutableDictionary *savedBodies=remoteBodies, *savedETags=remoteETags, *savedPhotos=remotePhotos;
+  remoteBodies=[NSMutableDictionary dictionary]; remoteETags=[NSMutableDictionary dictionary]; remotePhotos=[NSMutableDictionary dictionary];
+  NSString *href=@"https://fixture.invalid/book/uri.vcf", *uri=@"https://fixture.invalid/book/uri.vcf/photo", *etag=@"\"uri-1\"";
+  NSString *wire=[NSString stringWithFormat:@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:uri\r\nN:Fixture;URI;;;\r\nFN:URI Fixture\r\nNOTE:old\r\nPHOTO;TYPE=JPEG;VALUE=uri:%@\r\nEND:VCARD\r\n",uri];
+  NSData *body=[wire dataUsingEncoding:NSUTF8StringEncoding], *image=[@"first photo" dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *paths=ContactPaths(body,@"uri");
+  [remoteBodies setObject:body forKey:href]; [remoteETags setObject:etag forKey:href];
+  CHECK(!RCContactNativeGraphWithPhotoCache(store,body,paths,href,etag,&error));
+  CHECK(!RCContactPhotoFetch(store,(RCHTTPClient *)1,href,etag,body,&error)); /* 404 must not clear image */
+  [remotePhotos setObject:image forKey:uri];
+  photoResponseType="text/html";
+  CHECK(!RCContactPhotoFetch(store,(RCHTTPClient *)1,href,etag,body,&error));
+  photoResponseType="image/jpeg";
+  CHECK(!RCContactPhotoFetch(store,(RCHTTPClient *)1,href,@"\"wrong-version\"",body,&error));
+  CHECK(RCContactPhotoFetch(store,(RCHTTPClient *)1,href,etag,body,&error));
+  int before=photoGETs;
+  CHECK(RCContactPhotoFetch(store,(RCHTTPClient *)1,href,etag,body,&error)); CHECK(photoGETs==before);
+  NSDictionary *mapped=RCContactNativeGraphWithPhotoCache(store,body,paths,href,etag,&error); CHECK(mapped);
+  CHECK([[[mapped objectForKey:@"contact-validation"] objectForKey:@"image"] isEqual:image]);
+  NSDictionary *graph=RCTwoWayRemap(mapped,[NSDictionary dictionaryWithObject:@"uri" forKey:@"contact-validation"]);
+  NSDictionary *resource=[NSDictionary dictionaryWithObjectsAndKeys:body,@"body",graph,@"graph",paths,@"paths",href,@"href",etag,@"etag",@"uri",@"root",nil];
+  NSMutableDictionary *truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:graph]];
+  [[truth objectForKey:@"uri"] setObject:@"new note" forKey:@"notes"];
+  NSDictionary *desired=RCTwoWayEncodeFields(RCContactEncodeLocal,store,resource,truth,@"uri",&error); CHECK(desired);
+  CHECK(![[desired objectForKey:@"pendingFields"] count]);
+  NSString *encoded=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([encoded rangeOfString:uri].location!=NSNotFound); /* preserve URI on unrelated edits */
+  NSData *newImage=[@"second photo" dataUsingEncoding:NSUTF8StringEncoding];
+  [remoteETags setObject:@"\"uri-2\"" forKey:href]; [remotePhotos setObject:newImage forKey:uri];
+  CHECK(RCContactPhotoFetch(store,(RCHTTPClient *)1,href,@"\"uri-2\"",body,&error));
+  mapped=RCContactNativeGraphWithPhotoCache(store,body,paths,href,etag,&error); CHECK(mapped);
+  CHECK([[[mapped objectForKey:@"contact-validation"] objectForKey:@"image"] isEqual:image]);
+  mapped=RCContactNativeGraphWithPhotoCache(store,body,paths,href,@"\"uri-2\"",&error); CHECK(mapped);
+  CHECK([[[mapped objectForKey:@"contact-validation"] objectForKey:@"image"] isEqual:newImage]);
+  NSMutableDictionary *newer=[NSMutableDictionary dictionaryWithDictionary:resource];
+  [newer setObject:@"\"uri-2\"" forKey:@"etag"]; [newer setObject:etag forKey:@"verifiedETag"];
+  CHECK([[[[RCContactProjectVerified(store,newer,body,&error) objectForKey:@"graph"] objectForKey:@"uri"] objectForKey:@"image"] isEqual:image]);
+  NSString *unsafe=Replace(wire,uri,@"http://fixture.invalid/photo");
+  CHECK(!RCContactPhotoFetch(store,(RCHTTPClient *)1,href,etag,[unsafe dataUsingEncoding:NSUTF8StringEncoding],&error));
+  /* Exercise the post-writer path without requiring the mirror to catch up. */
+  RCWriteJournal j=RCContactStoreWriteJournal(store); long long operation=0;
+  CHECK(RCWriteJournalSetBase(&j,"uri-cache-test",[href UTF8String],"\"uri-2\"",[body bytes],[body length],1,&error));
+  CHECK(RCWriteJournalEnqueue(&j,"uri-cache-write","uri-cache-test",[href UTF8String],"update",1,[body bytes],[body length],&operation,&error));
+  CHECK(RCWriteJournalBeginAttempt(&j,operation,1,&error));
+  CHECK(RCWriteJournalRecordResult(&j,operation,"applied",200,"\"uri-3\"",[body bytes],[body length],&error));
+  [remoteETags setObject:@"\"uri-3\"" forKey:href];
+  CHECK(RCContactPhotoRefreshWrites(store,(RCHTTPClient *)1,&error));
+  mapped=RCContactNativeGraphWithPhotoCache(store,body,paths,href,@"\"uri-3\"",&error); CHECK(mapped);
+  CHECK([[[mapped objectForKey:@"contact-validation"] objectForKey:@"image"] isEqual:newImage]);
+  CHECK(RCWriteJournalAcknowledge(&j,operation,&error));
+  remoteBodies=savedBodies; remoteETags=savedETags; remotePhotos=savedPhotos;
+  puts("PASS: URI photo cache verifies owning ETags, preserves historical bytes, retries missing photos and maps without network inside native sessions");
 }
 static void MapperTests(void)
 {
@@ -461,6 +636,8 @@ static void MapperTests(void)
   CHECK([[[desired objectForKey:@"paths"] objectForKey:@"TEL:1"] isEqual:@"added-phone"]);
   puts("PASS: Empty raw contact fields preserve occurrence identities through note edits, value edits, removal and addition");
   FieldMapperTests(contacts);
+  PhotoMapperTests(contacts);
+  URIPhotoTests(contacts);
   ContactEmptyMapperTests(contacts);
   RCContactStoreClose(contacts);
 
@@ -1193,12 +1370,6 @@ int main(int argc,char **argv)
     NSString *description=[[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:@"SyncClient.plist"];
     NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description]; CHECK(desc);
     [desc setObject:@"Retro Cloud Two Way Tests" forKey:@"DisplayName"]; [desc removeObjectForKey:@"PushOnlyEntities"];
-    if (fieldsOnly) {
-      NSMutableDictionary *entities=[NSMutableDictionary dictionaryWithDictionary:[desc objectForKey:@"Entities"]];
-      NSMutableArray *properties=[NSMutableArray arrayWithArray:[entities objectForKey:@"com.apple.contacts.Contact"]];
-      [properties addObject:@"image"]; [entities setObject:properties forKey:@"com.apple.contacts.Contact"];
-      [desc setObject:entities forKey:@"Entities"];
-    }
     CHECK([desc writeToFile:description atomically:YES]);
     local=[manager registerClientWithIdentifier:@"com.retrocloudsync.tw.test.local" descriptionFilePath:description]; CHECK(local);
     [local setEnabled:YES forEntityNames:[[desc objectForKey:@"Entities"] allKeys]];
@@ -1216,6 +1387,19 @@ int main(int argc,char **argv)
         [resource objectForKey:@"graph"],EncodeFixtureContact,store,NO,RCContactProjectVerified,NO};
     server=LegacyClient(c.clientIdentifier,description,c.graph);
     CHECK(![server canPullChangesForEntityName:c.rootEntity]);
+    if (fieldsOnly) {
+      /* These cases only own marked fixtures. Exclude the existing desktop
+         contacts once instead of repeatedly refusing each one every exchange. */
+      CHECK(RCTwoWayInitialize(&j,&error));
+      NSDictionary *baseline=[[manager snapshotOfRecordsInTruthWithEntityNames:[server enabledEntityNames]
+          usingIdentifiersForClient:server] recordsWithMatchingAttributes:
+          [NSDictionary dictionaryWithObject:c.rootEntity forKey:ISyncRecordEntityNameKey]];
+      CHECK(RCTwoWaySQL(&j,&error,"BEGIN IMMEDIATE"));
+      NSEnumerator *baselineIDs=[baseline keyEnumerator]; NSString *baselineID;
+      while ((baselineID=[baselineIDs nextObject])) if (![[[baseline objectForKey:baselineID] objectForKey:@"first name"] hasPrefix:marker])
+        CHECK(RCTwoWaySQL(&j,&error,"INSERT OR IGNORE INTO two_way_excluded VALUES(%lld,%Q)",j.account,[baselineID UTF8String]));
+      CHECK(RCTwoWaySQL(&j,&error,"COMMIT"));
+    }
     fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
     CHECK(RCTwoWayExchange(&c,&error));
     server=[manager clientWithIdentifier:c.clientIdentifier]; CHECK(server);
@@ -1241,6 +1425,7 @@ int main(int argc,char **argv)
     CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==-1);
     CHECK(mutations==1);
     RCContactStoreClose(store); store=RCContactStoreOpen("TwoWay.sqlite","synthetic",&error); CHECK(store);
+      if (normalizePhotos) photoStore=store;
     j=RCContactStoreWriteJournal(store); c.journal=j; c.context=store;
     CHECK(RCTwoWaySQL(&j,&error,"UPDATE write_operations SET retry_at=0 WHERE state='uncertain'"));
     CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==1);
@@ -1251,6 +1436,7 @@ int main(int argc,char **argv)
     CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==1);
     fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
+    if (fieldsOnly) { normalizePhotos=YES; remotePhotos=[NSMutableDictionary dictionary]; photoStore=store; }
     [card setObject:[marker stringByAppendingString:@"-new"] forKey:@"first name"];
     if (fieldsOnly) {
       NSMutableDictionary *newCard=[NSMutableDictionary dictionaryWithDictionary:card];
@@ -1276,15 +1462,20 @@ int main(int argc,char **argv)
     fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(mutations==2);
     if (fieldsOnly) {
-      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==2);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==0);
       CHECK(Scalar(&j,"SELECT count(*) FROM two_way_field_scopes")==2);
       CHECK([[created objectForKey:@"graph"] count]==3);
+      CHECK([[[[created objectForKey:@"graph"] objectForKey:@"contact-downloaded-create"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
+      CHECK([[[[resource objectForKey:@"graph"] objectForKey:@"contact-fixture"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
       CHECK(Scalar(&j,"SELECT count(*) FROM two_way_aliases WHERE imported_id LIKE 'contact-downloaded-create%'")==3);
       ISyncRecordSnapshot *snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
       NSDictionary *native=[snapshot recordsWithIdentifiers:[NSArray arrayWithObjects:@"fixture",@"new-fixture",nil]];
       CHECK([[[native objectForKey:@"fixture"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
       CHECK([[[native objectForKey:@"new-fixture"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
       [card setObject:marker forKey:@"first name"]; [card setObject:@"second supported edit" forKey:@"notes"];
+      NSMutableData *updatedPhoto=[NSMutableData dataWithData:[card objectForKey:@"image"]];
+      ((unsigned char *)[updatedPhoto mutableBytes])[13]=127;
+      [card setObject:updatedPhoto forKey:@"image"];
       LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
       CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==3);
       resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
@@ -1293,6 +1484,7 @@ int main(int argc,char **argv)
       [card setObject:@"newer supported edit" forKey:@"notes"];
       LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
       RCContactStoreClose(store); store=RCContactStoreOpen("TwoWay.sqlite","synthetic",&error); CHECK(store);
+      if (normalizePhotos) photoStore=store;
       j=RCContactStoreWriteJournal(store); c.journal=j; c.context=store;
       CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='queued'")==1);
       CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==4);
@@ -1303,7 +1495,7 @@ int main(int argc,char **argv)
       CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayExchange(&c,&error));
       CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
       CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==4);
-      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==2);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==0);
       snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
       CHECK([[[[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
       NSString *remoteText=[[[NSString alloc] initWithData:[remoteBodies objectForKey:href] encoding:NSUTF8StringEncoding] autorelease];
@@ -1320,25 +1512,30 @@ int main(int argc,char **argv)
       CHECK([[remoteApplied objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
       card=[NSMutableDictionary dictionaryWithDictionary:remoteApplied]; [card removeObjectForKey:@"image"];
       LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
-      CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
-      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==2);
-      CHECK(mutations==4);
+      CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==0);
+      CHECK(mutations==5);
+      resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+      CHECK(![[[resource objectForKey:@"graph"] objectForKey:@"contact-fixture"] objectForKey:@"image"]);
+      full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]]; [full addEntriesFromDictionary:[created objectForKey:@"graph"]];
+      c.graph=full; c.resources=[NSArray arrayWithObjects:resource,created,nil];
+      CHECK(RCTwoWayExchange(&c,&error));
       [card setObject:@"supported edit after image removal" forKey:@"notes"];
       LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
       CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
-      CHECK(mutations==5);
+      CHECK(mutations==6);
       resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
       full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]]; [full addEntriesFromDictionary:[created objectForKey:@"graph"]];
       c.graph=full; c.resources=[NSArray arrayWithObjects:resource,created,nil];
       CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayExchange(&c,&error));
-      CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0); CHECK(mutations==5);
-      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==2);
+      CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0); CHECK(mutations==6);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==0);
       snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
       remoteApplied=[[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"];
       CHECK(![remoteApplied objectForKey:@"image"]);
       CHECK([[remoteApplied objectForKey:@"notes"] isEqual:@"supported edit after image removal"]);
-      puts("PASS: Incoming remote edits preserve pending images; clearing an unsupported field retains a pending tombstone while later supported edits still complete");
-      puts("PASS: Real Sync Services partial update/create retain images, complete verified fields, recover after restart, queue newer supported edits and avoid duplicate PUTs");
+      puts("PASS: Incoming remote edits preserve uploaded images; image removal uploads and later notes still complete");
+      puts("PASS: Real Sync Services completes iCloud-style PHOTO URI creation/update, cache recovery, removal and replay without duplicate PUTs");
       Cleanup(local); Cleanup(server); [manager unregisterClient:local]; [manager unregisterClient:server];
       local=nil; server=nil; status=0; goto done;
     }
@@ -1445,6 +1642,7 @@ int main(int argc,char **argv)
     CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==-1);
     CHECK(![remoteBodies objectForKey:newHref]); CHECK(mutations==beforeDelete+1);
     RCContactStoreClose(store); store=RCContactStoreOpen("TwoWay.sqlite","synthetic",&error); CHECK(store);
+      if (normalizePhotos) photoStore=store;
     j=RCContactStoreWriteJournal(store); c.journal=j; c.context=store;
     CHECK(RCTwoWaySQL(&j,&error,"UPDATE write_operations SET retry_at=0 WHERE state='uncertain'"));
     CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);

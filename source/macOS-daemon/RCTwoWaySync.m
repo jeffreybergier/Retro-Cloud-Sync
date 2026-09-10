@@ -2,6 +2,7 @@
 #import "RCTwoWaySync.h"
 #import "RCSyncConflictSession.h"
 #import "RCSyncRecordEquality.h"
+#import "RCSyncFieldScope.h"
 #include "RCDAVWriter.h"
 #include <sys/stat.h>
 #include <stdarg.h>
@@ -369,6 +370,7 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
         NSDictionary *detached=[NSDictionary dictionaryWithObjectsAndKeys:root,@"root",
             [NSString stringWithUTF8String:o.resourceKey],@"key",[NSString stringWithUTF8String:o.href],@"href",
             verifiedBody,@"body",LiveReceipt(receipt),@"graph",wantedPaths,@"paths",
+            [NSString stringWithUTF8String:o.resultETag ?: ""],@"verifiedETag",
             [NSNumber numberWithBool:YES],@"detachedReceipt",nil];
         verified=c->projectVerified(c->context,detached,verifiedBody,error);
       }
@@ -381,7 +383,9 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
          acknowledge only its exact native receipt before publishing the newer
          remote graph. Never send another PUT or replace the saved receipt. */
       RCError projectionError; RCErrorClear(&projectionError);
-      verified=c->projectVerified(c->context,resource,verifiedBody,&projectionError);
+      NSMutableDictionary *projection=[NSMutableDictionary dictionaryWithDictionary:resource];
+      [projection setObject:[NSString stringWithUTF8String:o.resultETag] forKey:@"verifiedETag"];
+      verified=c->projectVerified(c->context,projection,verifiedBody,&projectionError);
       matched=verified!=nil;
     }
     if (missing) matched=verified!=nil;
@@ -391,7 +395,8 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
       if (!imported) matched=NO;
       else [newAliases setObject:[wantedPaths objectForKey:path] forKey:imported];
     }
-    if (matched) matched=RCTwoWayGraphsEqual(RCTwoWayRemap([verified objectForKey:@"graph"],newAliases),LiveReceipt(receipt));
+    NSDictionary *scopes=[item objectAtIndex:3]==[NSNull null] ? nil : [item objectAtIndex:3];
+    if (matched) matched=RCNativeUploadedGraphMatches(RCTwoWayRemap([verified objectForKey:@"graph"],newAliases),LiveReceipt(receipt),scopes);
     if (!matched) {
       if (acknowledged) { RCWriteOperationClear(&o); continue; }
       Attention(j,[[receipt allKeys] count] ? [[receipt allKeys] objectAtIndex:0] : @"unknown",
@@ -412,7 +417,6 @@ static BOOL Complete(RCTwoWayContext *c, ISyncClient *client, NSDictionary *byHr
     [aliases addEntriesFromDictionary:newAliases];
     if (acknowledged) { RCWriteOperationClear(&o); continue; }
     NSDictionary *newerTruth=nil;
-    NSDictionary *scopes=[item objectAtIndex:3]==[NSNull null] ? nil : [item objectAtIndex:3];
     if (RCSyncAcceptMappedUpload(client,receipt,scopes,&newerTruth,error)) {
       if (!RCWriteJournalAcknowledge(j,o.id,error)) { RCWriteOperationClear(&o); return NO; }
       RCLogger(RCLogInfo, NULL, "Upload", @"Verified server fields completed (operation=%lld)", o.id);

@@ -1,3 +1,5 @@
+#import "RCTwoWayNative.h"
+#import "RCContactPhoto.h"
 #import "RCLogger.h"
 #import "RCSyncServicesBridge.h"
 #import "RCContactSyncClient.h"
@@ -30,6 +32,7 @@ typedef struct {
   RCContactStore *store;
   NSMutableDictionary *records;
   long recordCount;
+  NSString *photoHref, *photoETag;
   NSDictionary *propertyIdentities; /* optional detached reverse-mapping validation */
 } RCSyncExportContext;
 
@@ -263,6 +266,23 @@ static int RCExportContact(long long contactIdentifier,
   if (!RCVCardParse(rawVCard, rawVCardLength, &document, error)) return 0;
   contact = [NSMutableDictionary dictionaryWithObject:kRCContactEntity
                                                forKey:ISyncRecordEntityNameKey];
+  NSData *image=nil;
+  NSString *photoHref=context->photoHref, *photoETag=context->photoETag;
+  if (context->store && RCContactPhotoURI(&document) && !photoHref) {
+    RCWriteJournal j=RCContactStoreWriteJournal(context->store); sqlite3_stmt *q=NULL;
+    if (sqlite3_prepare_v2(j.db,"SELECT c.href,c.usable_etag FROM contacts c JOIN collections b ON b.id=c.collection_id WHERE c.id=? AND b.account_id=?",-1,&q,NULL)==SQLITE_OK) {
+      sqlite3_bind_int64(q,1,contactIdentifier); sqlite3_bind_int64(q,2,j.account);
+      if (sqlite3_step(q)==SQLITE_ROW) {
+        photoHref=RCString((const char *)sqlite3_column_text(q,0));
+        photoETag=RCString((const char *)sqlite3_column_text(q,1));
+      }
+    }
+    sqlite3_finalize(q);
+  }
+  if (!RCContactPhotoRead(context->store,&document,photoHref,photoETag,&image,error)) {
+    RCVCardDocumentClear(&document); return 0;
+  }
+  if (image) [contact setObject:image forKey:@"image"];
   name = RCProperty(&document, "N");
   organization = RCProperty(&document, "ORG");
   {
@@ -520,6 +540,11 @@ NSDictionary *RCContactNativeGraph(RCContactStore *store, long long identifier,
 
 NSDictionary *RCContactNativeGraphForPaths(NSData *body, NSDictionary *paths, RCError *error)
 {
+  return RCContactNativeGraphWithPhotoCache(NULL,body,paths,nil,nil,error);
+}
+NSDictionary *RCContactNativeGraphWithPhotoCache(RCContactStore *store, NSData *body, NSDictionary *paths,
+    NSString *href, NSString *etag, RCError *error)
+{
   RCSyncExportContext context;
   RCVCardDocument doc;
   NSMutableDictionary *identities=[NSMutableDictionary dictionary], *counts=[NSMutableDictionary dictionary];
@@ -536,6 +561,7 @@ NSDictionary *RCContactNativeGraphForPaths(NSData *body, NSDictionary *paths, RC
   }
   RCVCardDocumentClear(&doc);
   memset(&context,0,sizeof(context)); context.records=[NSMutableDictionary dictionary]; context.propertyIdentities=identities;
+  context.store=store; context.photoHref=href; context.photoETag=etag;
   if (!RCExportContact(0,"validation",[body bytes],[body length],&context,error)) return nil;
   return context.records;
 }
