@@ -256,3 +256,24 @@ checks. The full suite includes these cases too.
 `TWO_WAY_TEST_MODE=edit-delete` isolates a contact edit racing a verified remote
 deletion. It exercises the system's canonical decision, conditional recreation
 or deletion verification, exact acceptance and replay.
+
+### Field-level two-way sync
+
+`make test-mac-two-way TEST_HOST=x4-vm TWO_WAY_TEST_MODE=fields` runs the
+production field projection, journal scopes and acknowledgement path against
+real Sync Services with synthetic HTTP. It checks partial contact creation and
+updates with a local image and address/homepage children, unsupported field
+removal, pending field persistence, restart recovery, newer
+supported edits and replay without extra PUTs. The mapper phase additionally
+checks homepage labels, unknown contact/calendar fields, preserved raw photos
+and private properties, and coupled all-day/date edits. As with the full native
+suite, stop the daemon first; cleanup verifies the Address Book baseline.
+
+`TWO_WAY_TEST_MODE=conflict-replay` isolates same-field conflict convergence and
+checks that a fresh native property edit can be collected afterward, then races
+that edit with a remote deletion. It drains any conditional successor caused by
+a later canonical decision before testing the next edit. The runner automatically
+allows fixture Sync Alerts, opens Conflict Resolver, and saves
+`conflict-review.png` for UI automation or review. The fixture waits for that
+review to finish before submitting the next user edit; a provisional snapshot
+while the chooser is open is not treated as a settled decision.

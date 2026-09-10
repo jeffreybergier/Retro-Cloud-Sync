@@ -591,6 +591,23 @@ int main(int argc, char *argv[])
           printf("%s %d\n",sqlite3_column_text(statement,0),sqlite3_column_int(statement,1));
         if (step!=SQLITE_DONE) { ok=0; RCErrorSet(&error,1,"Could not inspect native attention state"); }
       }
+      sqlite3_finalize(statement); statement=NULL;
+      if (ok && sqlite3_prepare_v2(database,"SELECT root_id,fields FROM two_way_pending_fields ORDER BY account_id,root_id",
+          -1,&statement,NULL)==SQLITE_OK) {
+        puts("Pending native fields (root/record/fields)");
+        @try {
+          while ((step=sqlite3_step(statement))==SQLITE_ROW) {
+            NSDictionary *fields=[NSKeyedUnarchiver unarchiveObjectWithData:[NSData dataWithBytes:
+                sqlite3_column_blob(statement,1) length:sqlite3_column_bytes(statement,1)]];
+            NSEnumerator *ids=[[[fields allKeys] sortedArrayUsingSelector:@selector(compare:)] objectEnumerator]; NSString *identifier;
+            while ((identifier=[ids nextObject])) printf("%s %s %s\n",sqlite3_column_text(statement,0),
+                [identifier UTF8String],[[[fields objectForKey:identifier] componentsJoinedByString:@", "] UTF8String]);
+          }
+          if (step!=SQLITE_DONE) { ok=0; RCErrorSet(&error,1,"Could not inspect pending native fields"); }
+        } @catch (NSException *exception) {
+          (void)exception; ok=0; RCErrorSet(&error,1,"Could not decode pending native fields");
+        }
+      }
     } else RCErrorSet(&error,1,"Database has no current recovery journal");
     sqlite3_finalize(statement);
     if (database) sqlite3_close(database);

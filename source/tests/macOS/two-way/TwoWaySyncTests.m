@@ -1,3 +1,4 @@
+#import "../../../macOS-daemon/RCSyncFieldScope.h"
 #import <Foundation/Foundation.h>
 #import <SyncServices/SyncServices.h>
 #import "../../../macOS-daemon/RCTwoWayNative.h"
@@ -99,6 +100,7 @@ static void LocalSessionAs(ISyncClient *client,NSDictionary *push,BOOL remove,NS
   NSEnumerator *it=[push keyEnumerator]; NSString *id;
   while ((id=[it nextObject])) {
     if (remove) [s deleteRecordWithIdentifier:id];
+    else if ([[push objectForKey:id] isKindOfClass:[ISyncChange class]]) [s pushChange:[push objectForKey:id]];
     else [s pushChangesFromRecord:[push objectForKey:id] withIdentifier:id];
   }
   CHECK([s prepareToPullChangesForEntityNames:RCSyncPullableEntities(client) beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]);
@@ -327,6 +329,74 @@ static void ContactEmptyMapperTests(RCContactStore *store)
   CHECK(!RCContactEncodeLocal(store,resource,truth,@"empty-contact",&error));
   puts("PASS: Empty contact text, birthday, labels and omitted person/other defaults round-trip without hiding label edits");
 }
+static void FieldMapperTests(RCContactStore *contacts)
+{
+  NSString *wire=@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:fields\r\nN:Fixture;Fields;;;\r\nFN:Fields Fixture\r\nNOTE:old\r\nPHOTO;ENCODING=b:YWJj\r\nTEL;TYPE=HOME:123\r\nX-FUTURE;X-PARAM=keep:opaque\r\nEND:VCARD\r\n";
+  NSDictionary *base=ContactResource([wire dataUsingEncoding:NSUTF8StringEncoding],@"fields",@"https://fixture.invalid/book/fields.vcf",@"\"base\"");
+  NSMutableDictionary *truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[base objectForKey:@"graph"]]];
+  NSMutableDictionary *card=[truth objectForKey:@"fields"], *phone=[truth objectForKey:@"fields-TEL-0"];
+  [card setObject:[@"local-photo" dataUsingEncoding:NSUTF8StringEncoding] forKey:@"image"];
+  [card setObject:@"new note" forKey:@"notes"];
+  [phone setObject:@"work" forKey:@"type"]; [phone setObject:@"456" forKey:@"value"];
+  [phone setObject:@"future value" forKey:@"future field"];
+  NSDictionary *desired=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,base,truth,@"fields",&error); CHECK(desired);
+  NSString *encoded=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([encoded rangeOfString:@"NOTE:new note\r\n"].location!=NSNotFound);
+  CHECK([encoded rangeOfString:@"TEL;TYPE=HOME:456\r\n"].location!=NSNotFound);
+  CHECK([encoded rangeOfString:@"PHOTO;ENCODING=b:YWJj\r\n"].location!=NSNotFound);
+  CHECK([encoded rangeOfString:@"X-FUTURE;X-PARAM=keep:opaque\r\n"].location!=NSNotFound);
+  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields"] containsObject:@"image"]);
+  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields-TEL-0"] containsObject:@"type"]);
+  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields-TEL-0"] containsObject:@"future field"]);
+  CHECK(RCNativeScopeMatches(truth,[desired objectForKey:@"graph"],[desired objectForKey:@"fieldScopes"]));
+  CHECK(!RCNativeScopeMatches(truth,[desired objectForKey:@"graph"],nil));
+  CHECK(![[desired objectForKey:@"graph"] isEqual:truth]);
+  NSDictionary *replay=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,desired,truth,@"fields",&error); CHECK(replay);
+  CHECK([[replay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
+  CHECK([[replay objectForKey:@"pendingFields"] isEqual:[desired objectForKey:@"pendingFields"]]);
+  [card setObject:@"newer local note" forKey:@"notes"];
+  CHECK(!RCNativeScopeMatches(truth,[desired objectForKey:@"graph"],[desired objectForKey:@"fieldScopes"]));
+  [card setObject:@"new note" forKey:@"notes"];
+  NSDictionary *saved=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:desired]];
+  CHECK(RCNativeScopeMatches(truth,[saved objectForKey:@"graph"],[saved objectForKey:@"fieldScopes"]));
+  NSMutableDictionary *deleted=[NSMutableDictionary dictionaryWithDictionary:truth]; [deleted removeObjectForKey:@"fields"];
+  CHECK(!RCNativeScopeMatches(deleted,[saved objectForKey:@"graph"],[saved objectForKey:@"fieldScopes"]));
+  CHECK(!RCNativeScopeMatches(truth,[NSDictionary dictionaryWithObject:[NSNull null] forKey:@"fields"],[saved objectForKey:@"fieldScopes"]));
+  [card setObject:[NSArray arrayWithObject:@"website"] forKey:@"URLs"];
+  [truth setObject:[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.URL",ISyncRecordEntityNameKey,@"home page",@"type",[NSURL URLWithString:@"https://fixture.invalid/"],@"value",[NSArray arrayWithObject:@"fields"],@"contact",nil] forKey:@"website"];
+  desired=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,nil,truth,@"fields",&error); CHECK(desired);
+  CHECK([[[desired objectForKey:@"graph"] objectForKey:@"website"] objectForKey:@"type"]);
+  CHECK([[[[desired objectForKey:@"graph"] objectForKey:@"website"] objectForKey:@"type"] isEqual:@"home page"]);
+  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields"] containsObject:@"image"]);
+  replay=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,desired,truth,@"fields",&error); CHECK(replay);
+  CHECK([[replay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
+  NSMutableDictionary *website=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:@"website"]];
+  [website setObject:@"future URL type" forKey:@"type"]; [truth setObject:website forKey:@"website"];
+  desired=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,nil,truth,@"fields",&error); CHECK(desired);
+  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"website"] containsObject:@"type"]);
+  CHECK([[[[desired objectForKey:@"graph"] objectForKey:@"website"] objectForKey:@"type"] isEqual:@"other"]);
+  replay=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,desired,truth,@"fields",&error); CHECK(replay);
+  CHECK([[replay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
+  NSDictionary *opaqueOnly=[NSDictionary dictionaryWithObject:[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Contact",ISyncRecordEntityNameKey,[@"photo" dataUsingEncoding:NSUTF8StringEncoding],@"image",nil] forKey:@"opaque"];
+  CHECK(!RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,nil,opaqueOnly,@"opaque",&error));
+  NSString *legacyWire=@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:legacy-fields\r\nN:Fixture;Legacy;;;\r\nFN:Legacy Fixture\r\nNOTE;CHARSET=ISO-8859-1:old\r\nTEL;TYPE=HOME:123\r\nX-FUTURE:keep\r\nEND:VCARD\r\n";
+  NSDictionary *legacy=ContactResource([legacyWire dataUsingEncoding:NSUTF8StringEncoding],@"legacy",@"https://fixture.invalid/book/legacy.vcf",@"\"base\"");
+  NSMutableDictionary *legacyTruth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[legacy objectForKey:@"graph"]]];
+  [[legacyTruth objectForKey:@"legacy"] setObject:@"unrepresentable note edit" forKey:@"notes"];
+  [[legacyTruth objectForKey:@"legacy-TEL-0"] setObject:@"456" forKey:@"value"];
+  NSDictionary *legacyResult=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,legacy,legacyTruth,@"legacy",&error); CHECK(legacyResult);
+  NSString *legacyEncoded=[[[NSString alloc] initWithData:[legacyResult objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([legacyEncoded rangeOfString:@"NOTE;CHARSET=ISO-8859-1:old\r\n"].location!=NSNotFound);
+  CHECK([legacyEncoded rangeOfString:@"TEL;TYPE=HOME:456\r\n"].location!=NSNotFound);
+  CHECK([legacyEncoded rangeOfString:@"X-FUTURE:keep\r\n"].location!=NSNotFound);
+  CHECK([[[legacyResult objectForKey:@"pendingFields"] objectForKey:@"legacy"] containsObject:@"notes"]);
+  CHECK(RCNativeScopeMatches(legacyTruth,[legacyResult objectForKey:@"graph"],[legacyResult objectForKey:@"fieldScopes"]));
+  CHECK(![[[legacyResult objectForKey:@"fieldScopes"] objectForKey:@"legacy"] containsObject:@"notes"]);
+  NSDictionary *legacyReplay=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,legacyResult,legacyTruth,@"legacy",&error); CHECK(legacyReplay);
+  CHECK([[legacyReplay objectForKey:@"body"] isEqual:[legacyResult objectForKey:@"body"]]);
+  puts("PASS: An uneditable legacy NOTE remains pending while an independent phone edit validates and replays without rewriting legacy/private bytes");
+  puts("PASS: Field-scoped contact edits and partial creation preserve raw data, retain image/label/future fields, detect newer edits and replay without duplicate writes");
+}
 static void MapperTests(void)
 {
   CHECK(RCTwoWayRecordsEqual([NSDictionary dictionary], [NSDictionary dictionaryWithObject:[NSArray array] forKey:@"phone numbers"]));
@@ -390,6 +460,7 @@ static void MapperTests(void)
   desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   CHECK([[[desired objectForKey:@"paths"] objectForKey:@"TEL:1"] isEqual:@"added-phone"]);
   puts("PASS: Empty raw contact fields preserve occurrence identities through note edits, value edits, removal and addition");
+  FieldMapperTests(contacts);
   ContactEmptyMapperTests(contacts);
   RCContactStoreClose(contacts);
 
@@ -413,6 +484,22 @@ static void MapperTests(void)
   CHECK([result rangeOfString:@"URL;VALUE=URI:\r\n"].location!=NSNotFound);
   CHECK([result rangeOfString:@"SUMMARY:Edited\r\n"].location!=NSNotFound);
   CHECK(RCCalendarEncodeLocal(cal,nil,truth,id,&error));
+  [event setObject:@"future data" forKey:@"future calendar field"];
+  NSDictionary *partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,cal,r,truth,id,&error); CHECK(partial);
+  CHECK([[[partial objectForKey:@"pendingFields"] objectForKey:id] containsObject:@"future calendar field"]);
+  CHECK(RCNativeScopeMatches(truth,[partial objectForKey:@"graph"],[partial objectForKey:@"fieldScopes"]));
+  NSDictionary *partialReplay=RCTwoWayEncodeFields(RCCalendarEncodeLocal,cal,partial,truth,id,&error); CHECK(partialReplay);
+  CHECK([[partialReplay objectForKey:@"body"] isEqual:[partial objectForKey:@"body"]]);
+  [event setObject:[NSNumber numberWithBool:YES] forKey:@"all day"];
+  [event setObject:[NSDate dateWithTimeIntervalSinceReferenceDate:[[event objectForKey:@"start date"] timeIntervalSinceReferenceDate]+3600] forKey:@"start date"];
+  partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,cal,r,truth,id,&error); CHECK(partial);
+  CHECK([[[[partial objectForKey:@"graph"] objectForKey:id] objectForKey:@"start date"] isEqual:[[mapped objectForKey:id] objectForKey:@"start date"]]);
+  CHECK([[[[partial objectForKey:@"graph"] objectForKey:id] objectForKey:@"summary"] isEqual:@"Edited"]);
+  CHECK([[[partial objectForKey:@"pendingFields"] objectForKey:id] containsObject:@"start date"]);
+  CHECK([[[partial objectForKey:@"pendingFields"] objectForKey:id] containsObject:@"all day"]);
+  [event setObject:[[mapped objectForKey:id] objectForKey:@"start date"] forKey:@"start date"];
+  [event removeObjectForKey:@"future calendar field"];
+  puts("PASS: Unknown calendar fields stay pending while text edits sync; dependent date/all-day changes remain together");
   [event removeObjectForKey:@"all day"]; [event removeObjectForKey:@"status"]; [event removeObjectForKey:@"classification"];
   [event setObject:@"synthetic-ical-uid" forKey:@"com.apple.ical.uid"];
   [event setObject:[NSNumber numberWithInt:2] forKey:@"com.apple.ical.sequence"];
@@ -541,6 +628,10 @@ static void CalendarEmptyMapperTests(RCCalendarStore *store)
   CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
   [person setObject:@"" forKey:@"status"]; [truth removeObjectForKey:personID];
   CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  NSDictionary *partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,store,resource,truth,root,&error); CHECK(partial);
+  CHECK([[[partial objectForKey:@"pendingFields"] objectForKey:personID] containsObject:@"record deletion"]);
+  CHECK([[partial objectForKey:@"graph"] objectForKey:personID]);
+  CHECK(RCNativeScopeMatches(truth,[partial objectForKey:@"graph"],[partial objectForKey:@"fieldScopes"]));
   puts("PASS: Omitted attendee defaults permit unrelated edits while real RSVP, participation and record deletions remain protected");
 }
 static void CalendarMapperRegressionTests(RCCalendarStore *store)
@@ -566,6 +657,35 @@ static void CalendarMapperRegressionTests(RCCalendarStore *store)
     NSString *expected=Replace(Replace([[[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding] autorelease],@"DTSTART:20260907T100000Z",@"DTSTART:20260907T110000Z"),@"DTEND:20260907T110000Z",@"DTEND:20260907T120000Z");
     CHECK([wire isEqual:expected]);
   }
+  NSString *seriesWithAlarm=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:owned-alarm\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nRRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Master\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:owned-alarm\r\nRECURRENCE-ID:20260908T100000Z\r\nDTSTART:20260908T120000Z\r\nDTEND:20260908T130000Z\r\nSUMMARY:Exception\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT5M\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+  NSDictionary *owned=CalendarResource(store,81,[seriesWithAlarm dataUsingEncoding:NSUTF8StringEncoding],@"https://fixture.invalid/calendar/owned.ics",@"\"base\"");
+  NSString *ownedRoot=[owned objectForKey:@"root"];
+  NSMutableDictionary *ownedTruth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[owned objectForKey:@"graph"]]];
+  NSMutableDictionary *ownedMaster=[ownedTruth objectForKey:ownedRoot];
+  NSString *removed=[[[[ownedMaster objectForKey:@"detached events"] objectAtIndex:0] copy] autorelease];
+  NSArray *ownedAlarms=[[ownedTruth objectForKey:removed] objectForKey:@"display alarms"];
+  NSString *removedAlarm=[[[ownedAlarms objectAtIndex:0] copy] autorelease];
+  [ownedTruth removeObjectsForKeys:ownedAlarms]; [ownedTruth removeObjectForKey:removed];
+  [ownedMaster setObject:[NSArray array] forKey:@"detached events"];
+  NSDictionary *removedResult=RCTwoWayEncodeFields(RCCalendarEncodeLocal,store,owned,ownedTruth,ownedRoot,&error); CHECK(removedResult);
+  CHECK(![[removedResult objectForKey:@"graph"] objectForKey:removedAlarm]);
+  CHECK(![[removedResult objectForKey:@"graph"] objectForKey:removed]);
+  CHECK(![[removedResult objectForKey:@"pendingFields"] count]);
+  NSString *durationWire=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:duration-fields\r\nDTSTART:20260907T100000Z\r\nDURATION:PT1H\r\nSUMMARY:Original\r\nX-FUTURE:keep\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+  NSDictionary *duration=CalendarResource(store,82,[durationWire dataUsingEncoding:NSUTF8StringEncoding],@"https://fixture.invalid/calendar/duration.ics",@"\"base\"");
+  NSString *durationRoot=[duration objectForKey:@"root"];
+  NSMutableDictionary *durationTruth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[duration objectForKey:@"graph"]]];
+  NSMutableDictionary *durationEvent=[durationTruth objectForKey:durationRoot];
+  [durationEvent setObject:@"Supported title" forKey:@"summary"];
+  [durationEvent setObject:[NSDate dateWithTimeIntervalSinceReferenceDate:[[durationEvent objectForKey:@"start date"] timeIntervalSinceReferenceDate]+3600] forKey:@"start date"];
+  NSDictionary *durationResult=RCTwoWayEncodeFields(RCCalendarEncodeLocal,store,duration,durationTruth,durationRoot,&error); CHECK(durationResult);
+  NSString *durationEncoded=[[[NSString alloc] initWithData:[durationResult objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([durationEncoded rangeOfString:@"DTSTART:20260907T100000Z\r\nDURATION:PT1H\r\nSUMMARY:Supported title\r\nX-FUTURE:keep\r\n"].location!=NSNotFound);
+  CHECK([[[durationResult objectForKey:@"pendingFields"] objectForKey:durationRoot] containsObject:@"start date"]);
+  CHECK(RCNativeScopeMatches(durationTruth,[durationResult objectForKey:@"graph"],[durationResult objectForKey:@"fieldScopes"]));
+  CHECK(![[[durationResult objectForKey:@"fieldScopes"] objectForKey:durationRoot] containsObject:@"start date"]);
+  puts("PASS: DURATION-based date edits stay pending while independent event text is patched and verified");
+  puts("PASS: Supported detached-event deletion removes owned alarms; unsupported standalone child deletions remain pending");
   puts("PASS: Timezones before, after and around events preserve source targeting, folded private bytes and Unicode");
   NSString *recurring=Replace(event,@"SUMMARY:Original café",@"RRULE:FREQ=DAILY;COUNT=10\r\nSUMMARY:Original café");
   NSData *body=[[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\n%@%@END:VCALENDAR\r\n",recurring,zone] dataUsingEncoding:NSUTF8StringEncoding];
@@ -996,10 +1116,16 @@ static void ContactRemoteDeleteConflict(RCTwoWayContext *c, ISyncClient *local, 
     LocalSession(local,nil,NO);
     ISyncRecordSnapshot *snapshot=[[ISyncManager sharedManager] snapshotOfRecordsInTruthWithEntityNames:
         [local enabledEntityNames] usingIdentifiersForClient:local];
-    NSMutableDictionary *sameCard=[NSMutableDictionary dictionaryWithDictionary:
-        [[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"]];
-    [sameCard setObject:@"edit racing remote delete" forKey:@"notes"];
-    LocalSession(local,[NSDictionary dictionaryWithObject:sameCard forKey:@"fixture"],NO);
+    /* A resolved conflict must permit a fresh user property edit. Check the
+       native result before asking the coordinator to collect the deletion race. */
+    ISyncChange *edit=[ISyncChange changeWithType:ISyncChangeTypeModify recordIdentifier:@"fixture"
+        changes:[NSArray arrayWithObject:[NSDictionary dictionaryWithObjectsAndKeys:
+        ISyncChangePropertySet,ISyncChangePropertyActionKey,@"notes",ISyncChangePropertyNameKey,
+        @"edit racing remote delete",ISyncChangePropertyValueKey,nil]]];
+    LocalSession(local,[NSDictionary dictionaryWithObject:edit forKey:@"fixture"],NO);
+    snapshot=[[ISyncManager sharedManager] snapshotOfRecordsInTruthWithEntityNames:
+        [local enabledEntityNames] usingIdentifiersForClient:local];
+    CHECK([[[[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"] objectForKey:@"notes"] isEqual:@"edit racing remote delete"]);
     CHECK(RCTwoWayExchange(c,&error));
     CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state='queued'")==1);
     [remoteBodies removeObjectForKey:href]; [remoteETags removeObjectForKey:href];
@@ -1054,17 +1180,25 @@ int main(int argc,char **argv)
       }
       local=nil; server=nil; status=0; goto done;
     }
+    BOOL fieldsOnly=argc==2 && !strcmp(argv[1],"--fields");
     BOOL recoveryOnly=argc==2 && !strcmp(argv[1],"--recovery");
     BOOL editDeleteOnly=argc==2 && !strcmp(argv[1],"--edit-delete");
-    CHECK(argc==1 || recoveryOnly || editDeleteOnly);
+    BOOL conflictReplayOnly=argc==2 && !strcmp(argv[1],"--conflict-replay");
+    CHECK(argc==1 || recoveryOnly || editDeleteOnly || fieldsOnly || conflictReplayOnly);
     CHECK(![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.local"] && ![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.server"]);
     marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
     CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
-    if (!recoveryOnly && !editDeleteOnly) { ContactCreationPolicyTests(0); ContactCreationPolicyTests(1); ContactCreationPolicyTests(2); ContactCreationPolicyTests(3); }
+    if (!recoveryOnly && !editDeleteOnly && !fieldsOnly && !conflictReplayOnly) { ContactCreationPolicyTests(0); ContactCreationPolicyTests(1); ContactCreationPolicyTests(2); ContactCreationPolicyTests(3); }
     mutations=0;
     NSString *description=[[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:@"SyncClient.plist"];
     NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description]; CHECK(desc);
     [desc setObject:@"Retro Cloud Two Way Tests" forKey:@"DisplayName"]; [desc removeObjectForKey:@"PushOnlyEntities"];
+    if (fieldsOnly) {
+      NSMutableDictionary *entities=[NSMutableDictionary dictionaryWithDictionary:[desc objectForKey:@"Entities"]];
+      NSMutableArray *properties=[NSMutableArray arrayWithArray:[entities objectForKey:@"com.apple.contacts.Contact"]];
+      [properties addObject:@"image"]; [entities setObject:properties forKey:@"com.apple.contacts.Contact"];
+      [desc setObject:entities forKey:@"Entities"];
+    }
     CHECK([desc writeToFile:description atomically:YES]);
     local=[manager registerClientWithIdentifier:@"com.retrocloudsync.tw.test.local" descriptionFilePath:description]; CHECK(local);
     [local setEnabled:YES forEntityNames:[[desc objectForKey:@"Entities"] allKeys]];
@@ -1086,6 +1220,7 @@ int main(int argc,char **argv)
     CHECK(RCTwoWayExchange(&c,&error));
     server=[manager clientWithIdentifier:c.clientIdentifier]; CHECK(server);
     LocalSession(local,nil,NO);
+    if (conflictReplayOnly) goto sameFieldConflict;
     if (editDeleteOnly) {
       ContactRemoteDeleteConflict(&c,local,href);
       Cleanup(local); Cleanup(server); [manager unregisterClient:local]; [manager unregisterClient:server];
@@ -1093,6 +1228,10 @@ int main(int argc,char **argv)
     }
     NSMutableDictionary *card=[NSMutableDictionary dictionaryWithDictionary:[[resource objectForKey:@"graph"] objectForKey:@"contact-fixture"]];
     [card setObject:@"local edit" forKey:@"notes"];
+    if (fieldsOnly) {
+      const unsigned char gif[]={71,73,70,56,57,97,1,0,1,0,128,0,0,0,0,0,255,255,255,33,249,4,1,0,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,59};
+      [card setObject:[NSData dataWithBytes:gif length:sizeof(gif)] forKey:@"image"];
+    }
     LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
     fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
     CHECK(RCTwoWayExchange(&c,&error));
@@ -1113,7 +1252,16 @@ int main(int argc,char **argv)
     fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
     [card setObject:[marker stringByAppendingString:@"-new"] forKey:@"first name"];
-    LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"new-fixture"],NO);
+    if (fieldsOnly) {
+      NSMutableDictionary *newCard=[NSMutableDictionary dictionaryWithDictionary:card];
+      [newCard setObject:[NSArray arrayWithObject:@"new-website"] forKey:@"URLs"];
+      [newCard setObject:[NSArray arrayWithObject:@"new-address"] forKey:@"street addresses"];
+      NSDictionary *website=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.URL",ISyncRecordEntityNameKey,
+          @"home page",@"type",[NSURL URLWithString:@"https://fixture.invalid/home"],@"value",[NSArray arrayWithObject:@"new-fixture"],@"contact",nil];
+      NSDictionary *address=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Street Address",ISyncRecordEntityNameKey,
+          @"work",@"type",@"Fixture City",@"city",[NSArray arrayWithObject:@"new-fixture"],@"contact",nil];
+      LocalSession(local,[NSDictionary dictionaryWithObjectsAndKeys:newCard,@"new-fixture",website,@"new-website",address,@"new-address",nil],NO);
+    } else LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"new-fixture"],NO);
     fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
     CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==2);
@@ -1127,6 +1275,73 @@ int main(int argc,char **argv)
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==2);
     fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(mutations==2);
+    if (fieldsOnly) {
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==2);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_field_scopes")==2);
+      CHECK([[created objectForKey:@"graph"] count]==3);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_aliases WHERE imported_id LIKE 'contact-downloaded-create%'")==3);
+      ISyncRecordSnapshot *snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
+      NSDictionary *native=[snapshot recordsWithIdentifiers:[NSArray arrayWithObjects:@"fixture",@"new-fixture",nil]];
+      CHECK([[[native objectForKey:@"fixture"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
+      CHECK([[[native objectForKey:@"new-fixture"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
+      [card setObject:marker forKey:@"first name"]; [card setObject:@"second supported edit" forKey:@"notes"];
+      LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
+      CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==3);
+      resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+      full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]]; [full addEntriesFromDictionary:[created objectForKey:@"graph"]];
+      c.graph=full; c.resources=[NSArray arrayWithObjects:resource,created,nil];
+      [card setObject:@"newer supported edit" forKey:@"notes"];
+      LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
+      RCContactStoreClose(store); store=RCContactStoreOpen("TwoWay.sqlite","synthetic",&error); CHECK(store);
+      j=RCContactStoreWriteJournal(store); c.journal=j; c.context=store;
+      CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='queued'")==1);
+      CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1); CHECK(mutations==4);
+      resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+      CHECK([[[[resource objectForKey:@"graph"] objectForKey:@"contact-fixture"] objectForKey:@"notes"] isEqual:@"newer supported edit"]);
+      full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]]; [full addEntriesFromDictionary:[created objectForKey:@"graph"]];
+      c.graph=full; c.resources=[NSArray arrayWithObjects:resource,created,nil];
+      CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayExchange(&c,&error));
+      CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
+      CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==4);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==2);
+      snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
+      CHECK([[[[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
+      NSString *remoteText=[[[NSString alloc] initWithData:[remoteBodies objectForKey:href] encoding:NSUTF8StringEncoding] autorelease];
+      remoteText=Replace(remoteText,@"NOTE:newer supported edit",@"NOTE:new remote note");
+      [remoteBodies setObject:[remoteText dataUsingEncoding:NSUTF8StringEncoding] forKey:href]; [remoteETags setObject:@"\"remote-after-partial\"" forKey:href];
+      resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+      full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]]; [full addEntriesFromDictionary:[created objectForKey:@"graph"]];
+      c.graph=full; c.resources=[NSArray arrayWithObjects:resource,created,nil];
+      CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
+      LocalSession(local,nil,NO);
+      snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
+      NSDictionary *remoteApplied=[[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"];
+      CHECK([[remoteApplied objectForKey:@"notes"] isEqual:@"new remote note"]);
+      CHECK([[remoteApplied objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
+      card=[NSMutableDictionary dictionaryWithDictionary:remoteApplied]; [card removeObjectForKey:@"image"];
+      LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
+      CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==2);
+      CHECK(mutations==4);
+      [card setObject:@"supported edit after image removal" forKey:@"notes"];
+      LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"fixture"],NO);
+      CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
+      CHECK(mutations==5);
+      resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+      full=[NSMutableDictionary dictionaryWithDictionary:[resource objectForKey:@"graph"]]; [full addEntriesFromDictionary:[created objectForKey:@"graph"]];
+      c.graph=full; c.resources=[NSArray arrayWithObjects:resource,created,nil];
+      CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayExchange(&c,&error));
+      CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0); CHECK(mutations==5);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==2);
+      snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
+      remoteApplied=[[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"];
+      CHECK(![remoteApplied objectForKey:@"image"]);
+      CHECK([[remoteApplied objectForKey:@"notes"] isEqual:@"supported edit after image removal"]);
+      puts("PASS: Incoming remote edits preserve pending images; clearing an unsupported field retains a pending tombstone while later supported edits still complete");
+      puts("PASS: Real Sync Services partial update/create retain images, complete verified fields, recover after restart, queue newer supported edits and avoid duplicate PUTs");
+      Cleanup(local); Cleanup(server); [manager unregisterClient:local]; [manager unregisterClient:server];
+      local=nil; server=nil; status=0; goto done;
+    }
     [card setObject:marker forKey:@"first name"]; [card setObject:@"local edit" forKey:@"notes"];
     [card setObject:[NSArray arrayWithObject:@"phone"] forKey:@"phone numbers"];
     NSDictionary *phone=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Phone Number",ISyncRecordEntityNameKey,
@@ -1239,6 +1454,7 @@ int main(int argc,char **argv)
     CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='delete' AND state='acknowledged'")==1);
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==0);
     puts("PASS: Native contact DELETE survives a lost response and reopened journal without duplicate mutation");
+  sameFieldConflict: ;
     /* A same-field conflict follows the system's canonical decision, without
        assuming that Tiger displays a chooser or always prefers one side. */
     ISyncRecordSnapshot *sameSnapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
@@ -1248,7 +1464,7 @@ int main(int argc,char **argv)
     LocalSession(local,[NSDictionary dictionaryWithObject:sameCard forKey:@"fixture"],NO);
     CHECK(RCTwoWayExchange(&c,&error));
     NSString *sameText=[[[NSString alloc] initWithData:[remoteBodies objectForKey:href] encoding:NSUTF8StringEncoding] autorelease];
-    sameText=Replace(sameText,@"NOTE:new local edit",@"NOTE:same-field remote");
+    sameText=Replace(sameText,conflictReplayOnly ? @"NOTE:base" : @"NOTE:new local edit",@"NOTE:same-field remote");
     [remoteBodies setObject:[sameText dataUsingEncoding:NSUTF8StringEncoding] forKey:href];
     [remoteETags setObject:@"\"same-field\"" forKey:href];
     CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
@@ -1260,6 +1476,28 @@ int main(int argc,char **argv)
     resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
     c.resources=[NSArray arrayWithObject:resource]; c.graph=[resource objectForKey:@"graph"];
     CHECK(RCTwoWayExchange(&c,&error));
+    /* Conflict Resolver is a separate native UI, not the Sync Alert permission
+       prompt. Give the test runner/operator time to resolve it before making a
+       new user edit; a provisional canonical snapshot is not a settled choice. */
+    NSTask *review=[[[NSTask alloc] init] autorelease];
+    [review setLaunchPath:@"/usr/bin/osascript"];
+    [review setArguments:[NSArray arrayWithObjects:@"-e",
+        @"tell application \"System Events\"\nrepeat 180 times\nif not (exists process \"Conflict Resolver\") then return\ndelay 1\nend repeat\nerror \"Test conflict review was not completed\"\nend tell",nil]];
+    [review launch]; [review waitUntilExit]; CHECK([review terminationStatus]==0);
+    /* The system may publish its final same-field decision in a later
+       session. Pull it into the fixture client and drain conditional successors
+       before asserting convergence or starting a new, unrelated edit/delete race. */
+    int settle;
+    for (settle=0;settle<4;settle++) {
+      LocalSession(local,nil,NO);
+      CHECK(RCTwoWayExchange(&c,&error));
+      if (Scalar(&j,"SELECT count(*) FROM write_operations WHERE state='queued'")==0) break;
+      CHECK(RCTwoWayRunWrites(&j,(RCHTTPClient *)1,"text/vcard",&error)==1);
+      resource=ContactResource([remoteBodies objectForKey:href],@"contact-fixture",href,[remoteETags objectForKey:href]);
+      c.resources=[NSArray arrayWithObject:resource]; c.graph=[resource objectForKey:@"graph"];
+      CHECK(RCTwoWayExchange(&c,&error));
+    }
+    CHECK(settle<4);
     sameSnapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
     NSDictionary *canonical=[[sameSnapshot recordsWithIdentifiers:[NSArray arrayWithObject:@"fixture"]] objectForKey:@"fixture"];
     CHECK([[[[resource objectForKey:@"graph"] objectForKey:@"contact-fixture"] objectForKey:@"notes"] isEqual:[canonical objectForKey:@"notes"]]);
@@ -1268,7 +1506,7 @@ int main(int argc,char **argv)
     ContactRemoteDeleteConflict(&c,local,href);
 
     Cleanup(local); Cleanup(server); [manager unregisterClient:local]; [manager unregisterClient:server]; local=nil;server=nil;
-    CalendarTests(NO);
+    if (!conflictReplayOnly) CalendarTests(NO);
     status=0;
   } @catch(NSException *exception) {
     fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]);

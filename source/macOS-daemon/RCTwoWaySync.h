@@ -30,6 +30,11 @@ typedef struct {
   BOOL didPublishAll; /* Partial fast publication must not checkpoint/prune the full mirror. */
 } RCTwoWayContext;
 
+/* Project supported edits through the strict mapper; return durable fieldScopes
+   and pendingFields alongside the represented body/graph. */
+NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder, void *, NSDictionary *,
+    NSDictionary *, NSString *, RCError *);
+
 BOOL RCTwoWayInitialize(RCWriteJournal *, RCError *);
 BOOL RCTwoWayExchange(RCTwoWayContext *, RCError *);
 /* Only called in TwoWay mode, with this account's credentials. No sessions or

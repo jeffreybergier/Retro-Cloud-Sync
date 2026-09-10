@@ -44,6 +44,10 @@ BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
 /* On a changed receipt, return the post-mingling truth without accepting it.
    The two-way coordinator can durably queue a successor against the verified base. */
 BOOL RCSyncAcceptUpload(ISyncClient *, NSDictionary *, NSDictionary **, RCError *);
+/* Match only the immutable represented fields. Records with additional local
+   edits are deliberately left unaccepted in Sync Services; callers may retire
+   the verified server operation while retaining field-level pending state. */
+BOOL RCSyncAcceptMappedUpload(ISyncClient *, NSDictionary *, NSDictionary *, NSDictionary **, RCError *);
 /* Production fast-session reconciliation of one resource. Missing remote
    records must be backed by an explicit writer GET 404 or mapped child removal.
    Returns canonical truth without accepting any native changes. */

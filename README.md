@@ -52,7 +52,10 @@ uploads of supported local creations and edits, including contacts already on
 the Mac when two-way sync is enabled. Previously excluded local contacts become
 eligible automatically. Local contact/event deletions propagate with conditional
 DELETE, and supported conflicts reconcile through Sync Services. See [TWO_WAY_SYNC.md](TWO_WAY_SYNC.md) for the supported fields,
-first-sync behavior, failure handling, and testing boundaries.
+first-sync behavior, failure handling, and testing boundaries. Supported fields
+can upload while other local fields remain pending; the daemon log identifies
+unsynced fields such as contact photos. New records may be partially created
+with their supported fields.
 
 The shared write-safety foundations now include durable outgoing operations,
 published base revisions, conditional DAV writes with interruption recovery,

@@ -37,22 +37,41 @@ if ps -axww -o command | grep '/Library/Application Support/RetroCloudSync/Retro
 fi
 ./RetroCloudContactsSyncServicesVerifier snapshot AddressBook-baseline.plist
 baseline=1
-/usr/bin/osascript <<'APPLESCRIPT' &
-repeat 1800 times
-  tell application "System Events"
-    if exists process "syncuid" then
-      tell process "syncuid"
-        if exists window "Sync Alert" then
-          set alertText to value of every static text of window "Sync Alert"
-          if (alertText as text) contains "Retro Cloud Two Way Tests" then
-            click button "Allow" of window "Sync Alert"
-          end if
+/usr/bin/osascript - "$PWD" <<'APPLESCRIPT' &
+on run argv
+  set artifactDirectory to item 1 of argv
+  set reviewCaptured to false
+  repeat 1800 times
+    try
+      tell application "System Events"
+        if exists process "syncuid" then
+          tell process "syncuid"
+            if exists window "Sync Alert" then
+              set alertText to value of every static text of window "Sync Alert"
+              if (alertText as text) contains "Retro Cloud Two Way Tests" then
+                click button "Allow" of window "Sync Alert"
+              end if
+            end if
+          end tell
+        end if
+        if exists process "Conflict Resolver" then
+          tell process "Conflict Resolver"
+            if exists button "Review Now" of window 1 then click button "Review Now" of window 1
+            if (exists button "Done" of group 1 of window 1) and not reviewCaptured then
+              set frontmost to true
+              do shell script "/usr/sbin/screencapture -x " & quoted form of (artifactDirectory & "/conflict-review.png")
+              log "Conflict review ready: " & artifactDirectory & "/conflict-review.png"
+              set reviewCaptured to true
+            end if
+          end tell
+        else
+          set reviewCaptured to false
         end if
       end tell
-    end if
-  end tell
-  delay 1
-end repeat
+    end try
+    delay 1
+  end repeat
+end run
 APPLESCRIPT
 helper_pid=$!
 ./TwoWaySyncTests --mappers

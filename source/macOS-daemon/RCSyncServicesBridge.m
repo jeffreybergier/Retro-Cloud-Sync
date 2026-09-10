@@ -194,6 +194,10 @@ static int RCPushChild(RCSyncExportContext *context, long long contactIdentifier
   [record setObject:([label length] != 0 ? @"other" :
                     RCPropertyType(property, entity)) forKey:@"type"];
   if ([label length] != 0) [record setObject:label forKey:@"label"];
+  if ([entity isEqualToString:kRCURLEntity] && [label isEqualToString:@"_$!<HomePage>!$_"]) {
+    [record setObject:@"home page" forKey:@"type"];
+    [record removeObjectForKey:@"label"];
+  }
   if ([entity isEqualToString:kRCAddressEntity]) {
     value = RCStreet(property);
     if ([value length] != 0) [record setObject:value forKey:@"street"];

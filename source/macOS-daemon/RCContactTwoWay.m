@@ -126,12 +126,19 @@ static BOOL AddEdit(RCVCardDocument *doc, NSString *name, int wanted,
 static NSString *NewType(NSDictionary *child, BOOL preferred)
 {
   NSDictionary *types=[NSDictionary dictionaryWithObjectsAndKeys:@"HOME",@"home",@"WORK",@"work",@"CELL",@"mobile",
-      @"PAGER",@"pager",@"HOME,FAX",@"home fax",@"WORK,FAX",@"work fax",@"",@"other",nil];
+      @"PAGER",@"pager",@"HOME,FAX",@"home fax",@"WORK,FAX",@"work fax",@"",@"other",@"",@"home page",nil];
   id labelType=[child objectForKey:@"type"];
   NSString *type=[types objectForKey:RCNativeEmptyValue(labelType) ? @"other" : labelType];
   if (!type) return nil;
   if (preferred) type=[type length] ? [type stringByAppendingString:@",PREF"] : @"PREF";
   return [type length] ? [@"TYPE=" stringByAppendingString:type] : @"";
+}
+static NSString *NewLabel(NSDictionary *child)
+{
+  if ([[child objectForKey:@"type"] isEqual:@"home page"] &&
+      [[child objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.contacts.URL"])
+    return @"_$!<HomePage>!$_";
+  return [child objectForKey:@"label"];
 }
 static void AppendProperty(NSMutableArray *edits,NSString *name,NSString *group,NSString *value,NSString *parameters)
 {
@@ -186,14 +193,14 @@ static NSMutableDictionary *Create(RCContactStore *store,NSDictionary *truth,NSS
       NSString *type=[child objectForKey:@"type"];
       if (RCNativeEmptyValue(type)) type=@"other";
       NSDictionary *types=[NSDictionary dictionaryWithObjectsAndKeys:@"HOME",@"home",@"WORK",@"work",@"CELL",@"mobile",
-          @"PAGER",@"pager",@"HOME,FAX",@"home fax",@"WORK,FAX",@"work fax",@"",@"other",nil];
+          @"PAGER",@"pager",@"HOME,FAX",@"home fax",@"WORK,FAX",@"work fax",@"",@"other",@"",@"home page",nil];
       if (![types objectForKey:type]) { RCErrorSet(error,1,"Unsupported contact label type"); return nil; }
       NSString *param=[types objectForKey:type];
       if ([[record objectForKey:primaryKeys[k]] containsObject:identifier]) param=[param length] ? [param stringByAppendingString:@",PREF"] : @"PREF";
       NSString *group=[NSString stringWithFormat:@"item%d-%d",k,n];
       NSString *value=k==2 ? [@";;" stringByAppendingString:Structured(child,[NSArray arrayWithObjects:@"street",@"city",@"state",@"postal code",@"country",nil])] : RCTwoWayEscape([child objectForKey:@"value"]);
       [body appendFormat:@"%@.%@%@:%@\r\n",group,properties[k],[param length] ? [@";TYPE=" stringByAppendingString:param] : @"",value];
-      if ([[child objectForKey:@"label"] length]) [body appendFormat:@"%@.X-ABLabel:%@\r\n",group,RCTwoWayEscape([child objectForKey:@"label"])];
+      if ([NewLabel(child) length]) [body appendFormat:@"%@.X-ABLabel:%@\r\n",group,RCTwoWayEscape(NewLabel(child))];
       if (k==2 && [[child objectForKey:@"country code"] length]) [body appendFormat:@"%@.X-ABADR:%@\r\n",group,RCTwoWayEscape([child objectForKey:@"country code"])];
       [paths setObject:identifier forKey:[NSString stringWithFormat:@"%@:%d",properties[k],n++]];
     }
@@ -280,7 +287,7 @@ NSMutableDictionary *RCContactEncodeLocal(void *opaque,NSDictionary *resource,NS
       NSString *group=[@"rc-" stringByAppendingString:RCTwoWayNewIdentifier()];
       NSString *value=k==2 ? [@";;" stringByAppendingString:Structured(child,[NSArray arrayWithObjects:@"street",@"city",@"state",@"postal code",@"country",nil])] : RCTwoWayEscape([child objectForKey:@"value"]);
       AppendProperty(edits,properties[k],group,value,params);
-      if ([[child objectForKey:@"label"] length]) AppendProperty(edits,@"X-ABLabel",group,RCTwoWayEscape([child objectForKey:@"label"]),nil);
+      if ([NewLabel(child) length]) AppendProperty(edits,@"X-ABLabel",group,RCTwoWayEscape(NewLabel(child)),nil);
       if (k==2 && [[child objectForKey:@"country code"] length]) AppendProperty(edits,@"X-ABADR",group,RCTwoWayEscape([child objectForKey:@"country code"]),nil);
       [desiredPaths setObject:identifier forKey:[NSString stringWithFormat:@"%@:%d",properties[k],outputIndex++]];
     }

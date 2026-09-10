@@ -1,5 +1,6 @@
 #import "RCSyncConflictSession.h"
 #import "RCSyncRecordEquality.h"
+#import "RCSyncFieldScope.h"
 
 static BOOL UsableClient(ISyncClient *client, NSArray *entities, RCError *error)
 {
@@ -118,6 +119,11 @@ BOOL RCSyncAcceptConflictResolution(ISyncClient *client,
 BOOL RCSyncAcceptUpload(ISyncClient *client, NSDictionary *receipt,
     NSDictionary **newerTruth, RCError *error)
 {
+  return RCSyncAcceptMappedUpload(client,receipt,nil,newerTruth,error);
+}
+BOOL RCSyncAcceptMappedUpload(ISyncClient *client, NSDictionary *receipt, NSDictionary *scopes,
+    NSDictionary **newerTruth, RCError *error)
+{
   ISyncSession *session = nil;
   NSArray *entities = RCSyncPullableEntities(client);
   NSEnumerator *it;
@@ -144,12 +150,7 @@ BOOL RCSyncAcceptUpload(ISyncClient *client, NSDictionary *receipt,
     }
     NSDictionary *current = [[session snapshotOfRecordsInTruth]
         recordsWithIdentifiers:[receipt allKeys]];
-    NSMutableDictionary *live=[NSMutableDictionary dictionaryWithDictionary:receipt];
-    NSEnumerator *receiptIDs=[receipt keyEnumerator]; NSString *receiptID;
-    while ((receiptID=[receiptIDs nextObject])) if ([receipt objectForKey:receiptID]==[NSNull null]) {
-      [live removeObjectForKey:receiptID];
-    }
-    if (!RCNativeGraphsEqual(current,live)) {
+    if (!RCNativeScopeMatches(current,receipt,scopes)) {
       if (newerTruth) {
         NSMutableDictionary *truth=[NSMutableDictionary dictionary];
         NSEnumerator *names=[entities objectEnumerator]; NSString *name;
@@ -165,6 +166,17 @@ BOOL RCSyncAcceptUpload(ISyncClient *client, NSDictionary *receipt,
     while ((change = [it nextObject])) {
       id expected = [receipt objectForKey:[change recordIdentifier]];
       if (expected) {
+        /* Sync Services accepts whole records. Never accept an unsupported
+           field just to acknowledge a supported one on that same record. */
+        NSArray *fields=[scopes objectForKey:[change recordIdentifier]];
+        if (fields && (![fields count] || (expected!=[NSNull null] &&
+            !RCNativeRecordsEqual([current objectForKey:[change recordIdentifier]],expected)))) continue;
+        if (fields && expected!=[NSNull null]) {
+          BOOL outsideScope=NO;
+          NSEnumerator *properties=[[change changes] objectEnumerator]; NSDictionary *property;
+          while ((property=[properties nextObject])) if (![fields containsObject:[property objectForKey:ISyncChangePropertyNameKey]]) outsideScope=YES;
+          if (outsideScope) continue; /* Includes unsupported property clears. */
+        }
         if ((expected==[NSNull null] && [change type]!=ISyncChangeTypeDelete) ||
             (expected!=[NSNull null] && ([change type]==ISyncChangeTypeDelete || !RCNativeRecordsEqual([change record],expected)))) {
           RCErrorSet(error,1,"Resolution changed during acceptance"); goto done;

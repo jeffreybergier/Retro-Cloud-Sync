@@ -14,7 +14,9 @@ job title, nickname, birthday, company display, and phone/email/address/URL
 values, including adding/removing those multivalue entries. Existing labels,
 parameters, photos, unknown fields and unedited structured components survive
 updates. Changing the label/type or preferred status of an existing entry is
-currently deferred when it cannot round-trip exactly. New contacts require
+left pending without blocking supported value or text edits. Standard types,
+custom labels, and the native URL `home page` type are supported on creation.
+New contacts require
 exactly one discovered address book; ambiguous destinations are deferred.
 
 Calendars support edits to event summary, description, location, URL, status,
@@ -27,10 +29,42 @@ scheduled events, recurrence/attendee/alarm structure changes, date-type
 conversions, and edits to duration-based events that require date restructuring
 are deferred. Calendar moves and tasks are also outside this first coordinator.
 
-Every proposed resource is passed through the production forward mapper and
-compared to the intended native graph before it can enter the outgoing queue.
-A proposal that would silently lose mapped data is rejected, leaving the local
-change pending. Raw remote bodies are patched rather than regenerated for edits.
+The coordinator projects local changes onto each encoder's supported fields,
+then validates the resulting resource through the production forward mapper.
+Existing raw bodies are patched, preserving unknown properties, parameters,
+photos and components. Unknown native fields are not placed in the represented
+upload graph and are not treated as synchronized. Their field names are stored
+in `two_way_pending_fields` and reported in the daemon log when that set changes;
+the actual values remain in Sync Services. Previously observed opaque fields
+that become absent retain a pending deletion marker until a mapper can
+represent them; absence alone does not prove their remote data was deleted.
+
+A contact photo or an unfamiliar event field therefore does not block a note,
+phone value or event text edit. Unsupported existing labels and alarm or
+participant changes remain pending while independent edits proceed. Changes to
+recurrence structure or all-day representation also defer dependent date and
+exception edits, preventing a partial update from mixing incompatible temporal
+representations. If the wire format prevents an otherwise supported edit (for
+example, a legacy-encoded note or DURATION-based dates), independent field groups
+are retried against the original raw resource. Only groups that pass the strict
+mapper enter the receipt; the failed group stays pending. Identity changes and
+ambiguous destinations still fail safely.
+
+New contacts and ordinary events may be created with supported fields while
+other fields remain pending locally. This is partial creation, not an assertion
+that every field uploaded: a contact image, for example, is not uploaded by this
+mapper. New recurring/scheduled events still require a richer mapper; they are
+never silently simplified to ordinary events.
+
+Each outgoing operation atomically saves its represented graph and immutable
+field scope in `two_way_field_scopes`. Verification still checks the complete
+represented graph against the server result. Completion compares native truth
+only within that saved scope, so a newer supported edit queues a conditional
+successor but an unsupported edit does not cause duplicate PUTs. Sync Services
+accepts whole records, so records with any additional local differences are
+left unaccepted there even after the verified server operation completes.
+Unrelated native fields are never accepted using a fabricated full receipt.
+Older journal entries without scopes retain exact whole-record acceptance.
 
 **Deleting a contact or event locally propagates to iCloud in 2-way mode.**
 The coordinator requires an explicit Sync Services deletion change for a known
@@ -116,7 +150,8 @@ A resource replaced with a different UID at the same href remains isolated,
 as do contact revisions whose child identities cannot be reconciled safely.
 
 Use the daemon's existing `--inspect-recovery DATABASE` command to inspect
-operation states and deferred-reason counts without exposing record bodies, and
+operation states, deferred-reason counts and pending field names without exposing
+record bodies, and
 `--export-recovery DATABASE NEW-SNAPSHOT` to create a consistent private backup.
 These commands do not execute writes or resolve conflicts. There is no automatic
 fallback to one-way and no blind overwrite/retry with a replacement ETag.
@@ -201,3 +236,10 @@ and a remote event edit racing local deletion. They compare canonical native
 values and require all successors to complete without duplicate mutations.
 `TWO_WAY_TEST_MODE=recovery` runs these with the existing upload-recovery cases;
 `TWO_WAY_TEST_MODE=edit-delete` isolates the contact edit/delete case.
+
+`TWO_WAY_TEST_MODE=fields` exercises field-scoped uploads against real Sync
+Services using synthetic contacts: image-plus-note edits, partial creation with
+address/homepage children, unsupported field removal,
+persistent pending fields, journal reopen, newer supported edits and replay
+without duplicate PUTs. Mapper fixtures also cover unknown fields and calendar
+date dependencies while checking preservation of untouched wire properties.
