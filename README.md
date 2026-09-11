@@ -56,7 +56,11 @@ first-sync behavior, failure handling, and testing boundaries. Supported fields
 can upload while other local fields remain pending; the daemon log identifies
 unsynced fields. Embedded contact photos now sync in both directions, including
 replacement and removal. New records may be partially created
-with their supported fields.
+with their supported fields. Contact labels, preferred entries, phonetic names,
+extra dates, related names and IM accounts are supported. Calendars support
+reminder edits, recurrence rules, all-day conversion, participants/RSVP, new
+local calendar creation and conditional event moves; see the two-way guide for
+representation and destination limits.
 
 The shared write-safety foundations now include durable outgoing operations,
 published base revisions, conditional DAV writes with interruption recovery,

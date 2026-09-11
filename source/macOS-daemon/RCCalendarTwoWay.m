@@ -157,7 +157,8 @@ NSDictionary *RCCalendarProjectVerified(void *opaque,NSDictionary *current,NSDat
 static NSString *CalendarURL(RCCalendarStore *store,NSString *nativeID,RCError *error)
 {
   RCWriteJournal j=RCCalendarStoreWriteJournal(store); sqlite3_stmt *q=NULL; NSString *url=nil;
-  if (sqlite3_prepare_v2(j.db,"SELECT url FROM calendars WHERE account_id=? AND remote_missing=0 AND 'calendar-'||sync_id=?",-1,&q,NULL)==SQLITE_OK) {
+  if(!RCTwoWayInitialize(&j,error)) return nil;
+  if (sqlite3_prepare_v2(j.db,"SELECT c.url FROM calendars c LEFT JOIN two_way_aliases a ON a.account_id=c.account_id AND a.imported_id='calendar-'||c.sync_id WHERE c.account_id=? AND c.remote_missing=0 AND COALESCE(a.native_id,'calendar-'||c.sync_id)=?",-1,&q,NULL)==SQLITE_OK) {
     sqlite3_bind_int64(q,1,j.account); sqlite3_bind_text(q,2,[nativeID UTF8String],-1,SQLITE_TRANSIENT);
     if (sqlite3_step(q)==SQLITE_ROW) url=S((const char *)sqlite3_column_text(q,0));
   }
@@ -195,6 +196,7 @@ static BOOL Validate(RCCalendarStore *store, NSData *body, NSDictionary *paths,
   } else if (!ok && (!error || !error->code)) RCErrorSet(error,1,"Calendar edit could not be projected into the native schema");
   return ok;
 }
+#import "RCCalendarStructure.h"
 static NSMutableDictionary *Create(RCCalendarStore *store,NSDictionary *truth,NSString *root,RCError *error)
 {
   NSDictionary *record=[truth objectForKey:root]; NSArray *calendars=[record objectForKey:@"calendar"];
@@ -203,8 +205,8 @@ static NSMutableDictionary *Create(RCCalendarStore *store,NSDictionary *truth,NS
   if (!collection) return nil;
   /* Scheduling and recurrence structure need their own verified reverse mapper.
      Never silently create a simplified event from a richer native graph. */
-  NSString *unsupported[]={@"main event",@"detached events",@"exception dates",@"recurrences",@"attendees",@"organizer",@"mail alarms"};
-  int k; for(k=0;k<7;k++) if ([[record objectForKey:unsupported[k]] count]) {
+  NSString *unsupported[]={@"main event",@"detached events",@"exception dates",@"mail alarms"};
+  int k; for(k=0;k<4;k++) if ([[record objectForKey:unsupported[k]] count]) {
     RCErrorSet(error,1,"New event field '%s' requires a richer mapper",[unsupported[k] UTF8String]); return nil;
   }
   BOOL allDay=[[record objectForKey:@"all day"] boolValue];
@@ -223,35 +225,16 @@ static NSMutableDictionary *Create(RCCalendarStore *store,NSDictionary *truth,NS
   if ([status length] && ![status isEqual:@"none"]) [body appendFormat:@"STATUS:%@\r\n",[status uppercaseString]];
   if ([[record objectForKey:@"classification"] length]) [body appendFormat:@"CLASS:%@\r\n",[[record objectForKey:@"classification"] uppercaseString]];
   NSMutableDictionary *paths=[NSMutableDictionary dictionaryWithObject:root forKey:@"event:"];
-  for(k=1;k<=2;k++) {
-    NSArray *ids=[record objectForKey:childLinks[k]]; NSUInteger n;
-    for(n=0;n<[ids count];n++) {
-      NSString *id=[ids objectAtIndex:n]; NSDictionary *alarm=[truth objectForKey:id];
-      if (!alarm || !RCNativeEmptyValue([alarm objectForKey:@"triggerdate"]) || ![alarm objectForKey:@"triggerduration"] ||
-          [alarm objectForKey:@"repeat count"] || [alarm objectForKey:@"repeat interval"]) {
-        RCErrorSet(error,1,"New alarm requires a simple relative trigger"); return nil;
-      }
-      char *duration=icaldurationtype_as_ical_string_r(icaldurationtype_from_int([[alarm objectForKey:@"triggerduration"] intValue]));
-      if (!duration) return nil;
-      [body appendFormat:@"BEGIN:VALARM\r\nACTION:%@\r\nTRIGGER:%s\r\n",k==1 ? @"DISPLAY" : @"AUDIO",duration];
-      free(duration);
-      if ([RCTwoWayString([alarm objectForKey:@"description"]) length]) [body appendFormat:@"DESCRIPTION:%@\r\n",RCTwoWayEscape([alarm objectForKey:@"description"])];
-      if (k==2) {
-        BOOL valid; NSURL *url=RCNativeAlarmSound(alarm,&valid);
-        NSString *sound=SoundValue(url);
-        if (!valid) { RCErrorSet(error,1,"Invalid iCal sound URL"); return nil; }
-        if (sound) [body appendFormat:@"ATTACH:%@\r\n",sound];
-      }
-      [body appendString:@"END:VALARM\r\n"];
-      [paths setObject:id forKey:[NSString stringWithFormat:@"event:/%@:%lu",childLinks[k],(unsigned long)n]];
-    }
-  }
   [body appendString:@"END:VEVENT\r\nEND:VCALENDAR\r\n"];
   NSData *data=[body dataUsingEncoding:NSUTF8StringEncoding];
   icalcomponent *check=RCICalendarParse([data bytes],[data length],error);
   if (!check) return nil;
+  icalcomponent *newEvent=icalcomponent_get_first_component(check,ICAL_VEVENT_COMPONENT);
+  if(!ApplyStructure(newEvent,nil,record,nil,truth,@"event:",paths,error)) { icalcomponent_free(check); return nil; }
+  char *encoded=icalcomponent_as_ical_string_r(check);
+  data=encoded ? [NSData dataWithBytes:encoded length:strlen(encoded)] : nil; free(encoded);
   icalcomponent_free(check);
-  if (!Validate(store,data,paths,truth,root,error)) return nil;
+  if (!data || !Validate(store,data,paths,truth,root,error)) return nil;
   return [NSMutableDictionary dictionaryWithObjectsAndKeys:root,@"root",[@"native-" stringByAppendingString:uid],@"key",
       [NSString stringWithFormat:@"%@%@%@.ics",collection,[collection hasSuffix:@"/"] ? @"" : @"/",uid],@"href",data,@"body",
       paths,@"paths",RCTwoWaySubgraph(truth,[paths allValues]),@"graph",nil];
@@ -426,6 +409,8 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
   if (!resource) return Create(opaque,truth,root,error);
   resource=PrepareExceptions(opaque,resource,truth,root,error);
   if (!resource) return nil;
+  resource=PrepareStructure(resource,truth,error);
+  if(!resource) return nil;
   NSData *raw=[resource objectForKey:@"body"];
   icalcomponent *calendar=RCICalendarParse([raw bytes],[raw length],error), *event;
   if (!calendar) return nil;
@@ -549,7 +534,7 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
   while ((step=sqlite3_step(q))==SQLITE_ROW) {
     NSString *id=[@"calendar-" stringByAppendingString:S((const char *)sqlite3_column_text(q,1))];
     NSMutableDictionary *record=[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",ISyncRecordEntityNameKey,
-        [NSString stringWithFormat:@"%@ (iCloud %@)",S((const char *)sqlite3_column_text(q,2)),[id substringFromIndex:[id length]-6]],@"title",
+        RCCalendarNativeTitle(j,id,S((const char *)sqlite3_column_text(q,2))),@"title",
         [NSNumber numberWithBool:NO],@"read only",[NSMutableArray array],@"events",[NSArray array],@"tasks",nil];
     if (sqlite3_column_type(q,3)!=SQLITE_NULL) [record setObject:S((const char *)sqlite3_column_text(q,3)) forKey:@"notes"];
     [graph setObject:record forKey:id]; [calendarIDs setObject:id forKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q,0)]];

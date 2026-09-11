@@ -282,7 +282,7 @@ static int RCRequest(RCHTTPClient *client, const char *method,
                         const char *url, const char *depth,
                         const char *contentType, const void *body,
                         size_t bodyLength, RCHTTPResponse *response,
-                        RCError *error, const char *ifMatch, int ifNoneMatch)
+                        RCError *error, const char *ifMatch, int ifNoneMatch, const char *destination)
 {
   char *currentURL = RCCopyString(url);
   int redirectCount;
@@ -321,6 +321,13 @@ static int RCRequest(RCHTTPClient *client, const char *method,
     if (depth != NULL) {
       snprintf(depthHeader, sizeof(depthHeader), "Depth: %s", depth);
       headers = curl_slist_append(headers, depthHeader);
+    }
+    if (destination) {
+      size_t size=strlen(destination)+14; char *header=malloc(size);
+      if(!header) { curl_slist_free_all(headers); curl_easy_cleanup(curl); free(currentURL); RCErrorSet(error,1,"Out of memory setting MOVE destination"); return 0; }
+      snprintf(header,size,"Destination: %s",destination);
+      headers=curl_slist_append(headers,header); free(header);
+      headers=curl_slist_append(headers,"Overwrite: F");
     }
     if (contentType != NULL) {
       snprintf(contentTypeHeader, sizeof(contentTypeHeader),
@@ -447,11 +454,11 @@ int RCHTTPClientRequest(RCHTTPClient *client, const char *method, const char *ur
     RCHTTPResponse *response, RCError *error)
 {
   /* Do not allow a future caller to accidentally bypass conditional writes. */
-  if (strcasecmp(method, "PUT") == 0 || strcasecmp(method, "DELETE") == 0) {
+  if (strcasecmp(method, "PUT") == 0 || strcasecmp(method, "DELETE") == 0 || strcasecmp(method,"MOVE") == 0 || strcasecmp(method,"MKCALENDAR") == 0) {
     RCErrorSet(error, 1, "DAV mutations require a conditional request"); return 0;
   }
   return RCRequest(client, method, url, depth, contentType, body, length,
-                   response, error, NULL, 0);
+                   response, error, NULL, 0, NULL);
 }
 
 int RCHTTPClientConditionalRequest(RCHTTPClient *client, const char *method,
@@ -459,12 +466,20 @@ int RCHTTPClientConditionalRequest(RCHTTPClient *client, const char *method,
     const char *ifMatch, int ifNoneMatch, RCHTTPResponse *response, RCError *error)
 {
   if (method == NULL || length > LONG_MAX ||
-      (strcmp(method,"PUT") && strcmp(method,"DELETE")) ||
+      (strcmp(method,"PUT") && strcmp(method,"DELETE") && strcmp(method,"MKCALENDAR")) ||
       (ifMatch ? (!RCWriteETagIsStrong(ifMatch) || ifNoneMatch) : !ifNoneMatch) ||
+      (!strcmp(method,"MKCALENDAR") && (ifMatch || !ifNoneMatch)) ||
       (!strcmp(method,"DELETE") && (!ifMatch || body || length)) ||
-      (!strcmp(method,"PUT") && (!body || !length))) {
+      ((!strcmp(method,"PUT") || !strcmp(method,"MKCALENDAR")) && (!body || !length))) {
     RCErrorSet(error, 1, "Invalid conditional DAV mutation"); return 0;
   }
   return RCRequest(client, method, url, NULL, type, body, length,
-                   response, error, ifMatch, ifNoneMatch);
+                   response, error, ifMatch, ifNoneMatch, NULL);
+}
+
+int RCHTTPClientMove(RCHTTPClient *client,const char *source,const char *destination,const char *etag,RCHTTPResponse *response,RCError *error)
+{
+  if(!RCWriteETagIsStrong(etag) || !source || !destination || strchr(destination,'\r') || strchr(destination,'\n') ||
+      !RCValidateDestination(destination,client->allowedHostSuffix,error)) { RCErrorSet(error,1,"Invalid conditional MOVE"); return 0; }
+  return RCRequest(client,"MOVE",source,NULL,NULL,NULL,0,response,error,etag,0,destination);
 }

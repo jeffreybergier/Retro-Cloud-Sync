@@ -30,39 +30,29 @@ static BOOL RemovedOwner(NSDictionary *old, NSDictionary *base, NSDictionary *tr
    Unknown fields stay in native truth; unknown wire data stays in the raw body.
    Identity/ownership fields remain strict so projections cannot move a child
    into another contact, calendar or recurring series. */
-static NSArray *Writable(NSDictionary *old, NSDictionary *record, BOOL freezeDates)
+static NSArray *Writable(NSDictionary *old, NSDictionary *record)
 {
   NSString *entity=[record objectForKey:ISyncRecordEntityNameKey] ?: [old objectForKey:ISyncRecordEntityNameKey];
   NSString *names=nil;
   if ([entity isEqual:@"com.apple.contacts.Contact"])
-    names=@"first name|last name|middle name|title|suffix|nickname|company name|department|job title|birthday|notes|image|display as company|phone numbers|email addresses|street addresses|URLs";
+    names=@"first name|last name|middle name|title|suffix|nickname|company name|department|job title|birthday|notes|image|first name yomi|middle name yomi|last name yomi|company name yomi|dates|related names|IMs|primary phone number|primary email address|primary street address|primary URL|display as company|phone numbers|email addresses|street addresses|URLs";
   else if ([entity hasPrefix:@"com.apple.contacts."]) {
     if ([entity isEqual:@"com.apple.contacts.Street Address"])
-      names=old ? @"contact|street|city|state|postal code|country" : @"contact|street|city|state|postal code|country|country code|type|label";
+      names= @"contact|street|city|state|postal code|country|country code|type|label";
     else if ([entity isEqual:@"com.apple.contacts.Phone Number"] || [entity isEqual:@"com.apple.contacts.Email Address"] || [entity isEqual:@"com.apple.contacts.URL"])
-      names=old ? @"contact|value" : @"contact|value|type|label";
+      names= @"contact|value|type|label";
+    else if ([entity isEqual:@"com.apple.contacts.Date"] || [entity isEqual:@"com.apple.contacts.Related Name"]) names=@"contact|value|type|label";
+    else if ([entity isEqual:@"com.apple.contacts.IM"]) names=@"contact|user|service|type|label";
   } else if ([entity isEqual:@"com.apple.calendars.Event"]) {
-    names=@"summary|description|location|url|status|classification|calendar|main event|original date";
-    if (!old) names=[names stringByAppendingString:@"|start date|end date|all day|exception dates|detached events|recurrences|attendees|organizer|mail alarms|audio alarms|display alarms"];
-    else if (!freezeDates) names=[names stringByAppendingString:@"|start date|end date|exception dates|detached events"];
-  } else if ([entity isEqual:@"com.apple.calendars.AudioAlarm"]) {
-    if (!old) names=@"owner|description|triggerdate|triggerduration|repeat count|repeat interval|sound|com.apple.ical.sound";
-    else if (record && !ChangedFields(old,record,@"owner|description|triggerdate|triggerduration|repeat count|repeat interval")) {
-      BOOL oldValid,valid; RCNativeAlarmSound(old,&oldValid); RCNativeAlarmSound(record,&valid);
-      if (oldValid && valid) names=@"owner|sound|com.apple.ical.sound";
-    }
-  } else if ([entity isEqual:@"com.apple.calendars.DisplayAlarm"] && !old)
-    names=@"owner|description|triggerdate|triggerduration|repeat count|repeat interval";
+    names=@"summary|description|location|url|status|classification|calendar|main event|original date|start date|end date|all day|exception dates|detached events|recurrences|attendees|organizer|display alarms|audio alarms";
+  } else if ([entity isEqual:@"com.apple.calendars.Recurrence"])
+    names=@"owner|frequency|interval|count|until|bymonth|bymonthday|byyearday|byweeknumber|bysetpos|bydaydays|bydayfreq|weekstartday";
+  else if ([entity isEqual:@"com.apple.calendars.Attendee"] || [entity isEqual:@"com.apple.calendars.Organizer"])
+    names=@"owner|email|common name|role|status|user type|rsvp";
+  else if ([entity isEqual:@"com.apple.calendars.AudioAlarm"] || [entity isEqual:@"com.apple.calendars.DisplayAlarm"])
+    names=@"owner|description|triggerdate|triggerduration|repeat count|repeat interval|sound|com.apple.ical.sound";
   NSMutableArray *result=[NSMutableArray arrayWithArray:Fields(names)];
   if (names) [result addObject:ISyncRecordEntityNameKey];
-  if (!old && [entity isEqual:@"com.apple.contacts.Contact"])
-    [result addObjectsFromArray:Fields(@"primary phone number|primary email address|primary street address|primary URL")];
-  if (old && [entity isEqual:@"com.apple.contacts.Contact"]) {
-    NSArray *relations=Fields(@"phone numbers|email addresses|street addresses|URLs");
-    NSArray *primary=Fields(@"primary phone number|primary email address|primary street address|primary URL");
-    NSUInteger n; for(n=0;n<[relations count];n++)
-      if (!FieldEqual(old,record,[relations objectAtIndex:n])) [result addObject:[primary objectAtIndex:n]];
-  }
   return result;
 }
 
@@ -72,7 +62,7 @@ static NSArray *Writable(NSDictionary *old, NSDictionary *record, BOOL freezeDat
 static NSArray *KnownFields(NSDictionary *record)
 {
   NSString *entity=[record objectForKey:ISyncRecordEntityNameKey];
-  NSMutableSet *fields=[NSMutableSet setWithArray:Writable(nil,record,NO)];
+  NSMutableSet *fields=[NSMutableSet setWithArray:Writable(nil,record)];
   [fields addObjectsFromArray:[record allKeys]];
   if ([entity isEqual:@"com.apple.calendars.Recurrence"])
     [fields addObjectsFromArray:Fields(@"owner|frequency|interval|count|until|bymonth|bymonthday|byyearday|byweeknumber|bysetpos|bydaydays|bydayfreq|weekstartday")];
@@ -86,7 +76,7 @@ static NSArray *IndependentGroups(NSDictionary *record)
   NSString *entity=[record objectForKey:ISyncRecordEntityNameKey];
   if ([entity isEqual:@"com.apple.contacts.Contact"])
     return [NSArray arrayWithObjects:Fields(@"first name|last name|middle name|title|suffix"),Fields(@"company name|department"),
-        Fields(@"notes"),Fields(@"image"),Fields(@"job title"),Fields(@"nickname"),Fields(@"birthday"),Fields(@"display as company"),nil];
+        Fields(@"first name yomi"),Fields(@"middle name yomi"),Fields(@"last name yomi"),Fields(@"company name yomi"),Fields(@"notes"),Fields(@"image"),Fields(@"job title"),Fields(@"nickname"),Fields(@"birthday"),Fields(@"display as company"),nil];
   if ([entity isEqual:@"com.apple.contacts.Street Address"])
     return [NSArray arrayWithObject:Fields(@"street|city|state|postal code|country")];
   if ([entity isEqual:@"com.apple.contacts.Phone Number"] || [entity isEqual:@"com.apple.contacts.Email Address"] || [entity isEqual:@"com.apple.contacts.URL"])
@@ -203,22 +193,14 @@ NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder encoder, void *context
       }
     }
   }
-  BOOL freezeDates=NO;
-  NSEnumerator *it=[base keyEnumerator]; NSString *identifier;
-  while ((identifier=[it nextObject])) {
-    NSDictionary *old=[base objectForKey:identifier], *record=[truth objectForKey:identifier];
-    NSString *entity=[old objectForKey:ISyncRecordEntityNameKey];
-    if ([entity isEqual:@"com.apple.calendars.Recurrence"] && !RemovedOwner(old,base,truth) && !RCNativeRecordsEqual(old,record)) freezeDates=YES;
-    if ([entity isEqual:@"com.apple.calendars.Event"] && record && ChangedFields(old,record,@"all day|recurrences")) freezeDates=YES;
-  }
+  NSEnumerator *it; NSString *identifier;
   NSMutableDictionary *projected=[NSMutableDictionary dictionaryWithDictionary:truth];
   NSMutableDictionary *scopes=[NSMutableDictionary dictionary];
   it=[ids objectEnumerator];
   while ((identifier=[it nextObject])) {
     NSDictionary *old=[base objectForKey:identifier], *record=[truth objectForKey:identifier];
-    NSMutableArray *fields=[NSMutableArray arrayWithArray:Writable(old,record,freezeDates)];
-    /* Unsupported alarm/participant/recurrence deletion stays pending. Root,
-       contact child and detached-event deletion still uses the strict mapper. */
+    NSMutableArray *fields=[NSMutableArray arrayWithArray:Writable(old,record)];
+    /* Deletion must still pass the strict mapper and relationship validation. */
     if (!record && ([fields count] || !old || RemovedOwner(old,base,truth))) { [scopes setObject:fields forKey:identifier]; continue; }
     NSMutableDictionary *selected=[NSMutableDictionary dictionaryWithDictionary:old ?: [NSDictionary dictionary]];
     NSEnumerator *keys=[fields objectEnumerator]; NSString *key;
@@ -232,6 +214,8 @@ NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder encoder, void *context
       NSMutableArray *types=[NSMutableArray arrayWithArray:Fields(@"home|work|other")];
       if ([entity isEqual:@"com.apple.contacts.Phone Number"]) [types addObjectsFromArray:Fields(@"mobile|pager|home fax|work fax")];
       if ([entity isEqual:@"com.apple.contacts.URL"]) [types addObject:@"home page"];
+      if ([entity isEqual:@"com.apple.contacts.Date"]) [types addObject:@"anniversary"];
+      if ([entity isEqual:@"com.apple.contacts.Related Name"]) [types addObjectsFromArray:Fields(@"father|mother|parent|child|brother|sister|friend|spouse|partner|assistant|manager")];
       if ([type isKindOfClass:[NSString class]] && [type length] && ![types containsObject:type]) {
         /* An unfamiliar schema type is not a custom label whose meaning we
            can invent. Create the supported value as 'other'; keep type pending. */

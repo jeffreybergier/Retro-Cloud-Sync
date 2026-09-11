@@ -61,6 +61,10 @@ static inline id RCNativeDefaultValue(NSString *entity, NSString *key)
     if ([key isEqual:@"all day"]) return [NSNumber numberWithBool:NO];
     if ([key isEqual:@"status"]) return @"none";
     if ([key isEqual:@"classification"]) return @"public";
+  } else if ([entity isEqual:@"com.apple.calendars.Recurrence"]) {
+    if ([key isEqual:@"interval"]) return [NSNumber numberWithInt:1];
+    if ([key isEqual:@"count"]) return [NSNumber numberWithInt:0];
+    if ([key isEqual:@"weekstartday"]) return @"monday";
   } else if ([entity isEqual:@"com.apple.calendars.Attendee"]) {
     if ([key isEqual:@"rsvp"]) return [NSNumber numberWithBool:NO];
     if ([key isEqual:@"role"]) return @"requiredparticipant";
@@ -71,7 +75,10 @@ static inline id RCNativeDefaultValue(NSString *entity, NSString *key)
   } else if ([entity isEqual:@"com.apple.contacts.Phone Number"] ||
       [entity isEqual:@"com.apple.contacts.Email Address"] ||
       [entity isEqual:@"com.apple.contacts.Street Address"] ||
-      [entity isEqual:@"com.apple.contacts.URL"]) {
+      [entity isEqual:@"com.apple.contacts.URL"] ||
+      [entity isEqual:@"com.apple.contacts.Date"] ||
+      [entity isEqual:@"com.apple.contacts.Related Name"] ||
+      [entity isEqual:@"com.apple.contacts.IM"]) {
     if ([key isEqual:@"type"]) return @"other";
   }
   return nil;

@@ -6,9 +6,11 @@
 #include <string.h>
 #include <stdlib.h>
 
-static NSString *relations[]={@"phone numbers",@"email addresses",@"street addresses",@"URLs"};
-static NSString *properties[]={@"TEL",@"EMAIL",@"ADR",@"URL"};
-static NSString *primaryKeys[]={@"primary phone number",@"primary email address",@"primary street address",@"primary URL"};
+#import "RCContactIM.h"
+
+static NSString *relations[]={@"phone numbers",@"email addresses",@"street addresses",@"URLs",@"dates",@"related names",@"IMs"};
+static NSString *properties[]={@"TEL",@"EMAIL",@"ADR",@"URL",@"X-ABDATE",@"X-ABRELATEDNAMES",@"IMPP"};
+static NSString *primaryKeys[]={@"primary phone number",@"primary email address",@"primary street address",@"primary URL",@"primary date",@"primary related name",@"primary IM"};
 static NSString *entity=@"com.apple.contacts.Contact";
 static NSString *S(const char *s) { return s ? [NSString stringWithUTF8String:s] : @""; }
 static BOOL Changed(NSDictionary *a,NSDictionary *b,NSString *key)
@@ -54,11 +56,10 @@ NSDictionary *RCContactNativePaths(NSData *body, NSDictionary *graph, NSString *
   if (!RCVCardParse([body bytes],[body length],&doc,error)) return nil;
   NSMutableDictionary *paths=[NSMutableDictionary dictionaryWithObject:root forKey:@"root"];
   NSDictionary *contact=[graph objectForKey:root]; int k;
-  for (k=0;k<4;k++) {
+  for (k=0;k<7;k++) {
     NSArray *ids=[contact objectForKey:relations[k]]; NSUInteger n=0; size_t p; int occurrence=0;
-    for (p=0;p<doc.propertyCount;p++) if (!strcasecmp(doc.properties[p].name,[properties[k] UTF8String])) {
-      NSString *value=S(doc.properties[p].decodedValue);
-      BOOL visible=k==2 || ([value length] && (k!=3 || [NSURL URLWithString:value]));
+    for (p=0;p<doc.propertyCount;p++) if ([RCContactPathName(doc.properties[p].name) isEqual:properties[k]]) {
+      BOOL visible=RCContactPropertyVisible(&doc.properties[p]);
       if (visible) {
         if (n>=[ids count]) { RCVCardDocumentClear(&doc); RCErrorSet(error,1,"Contact paths do not match the native graph"); return nil; }
         [paths setObject:[ids objectAtIndex:n++] forKey:[NSString stringWithFormat:@"%@:%d",properties[k],occurrence]];
@@ -106,7 +107,7 @@ static BOOL AddEdit(RCVCardDocument *doc, NSString *name, int wanted,
     if (occurrence++==wanted) p=&doc->properties[i];
   }
   if (wanted==0 && occurrence>1 && ![properties[0] isEqual:name] && ![properties[1] isEqual:name] &&
-      ![properties[2] isEqual:name] && ![properties[3] isEqual:name]) {
+      ![properties[2] isEqual:name] && ![properties[3] isEqual:name] && ![properties[4] isEqual:name] && ![properties[5] isEqual:name] && ![RCContactPathName([name UTF8String]) isEqual:@"IMPP"] && ![name isEqual:@"X-ABLabel"] && ![name isEqual:@"X-ABADR"]) {
     RCErrorSet(error,1,"Ambiguous repeated contact property"); return NO;
   }
   if (!p && !value) return YES;
@@ -129,6 +130,8 @@ static NSString *NewType(NSDictionary *child, BOOL preferred)
   NSDictionary *types=[NSDictionary dictionaryWithObjectsAndKeys:@"HOME",@"home",@"WORK",@"work",@"CELL",@"mobile",
       @"PAGER",@"pager",@"HOME,FAX",@"home fax",@"WORK,FAX",@"work fax",@"",@"other",@"",@"home page",nil];
   id labelType=[child objectForKey:@"type"];
+  NSString *kind=[child objectForKey:ISyncRecordEntityNameKey];
+  if ([kind isEqual:@"com.apple.contacts.Date"] || [kind isEqual:@"com.apple.contacts.Related Name"]) labelType=@"other";
   NSString *type=[types objectForKey:RCNativeEmptyValue(labelType) ? @"other" : labelType];
   if (!type) return nil;
   if (preferred) type=[type length] ? [type stringByAppendingString:@",PREF"] : @"PREF";
@@ -139,6 +142,9 @@ static NSString *NewLabel(NSDictionary *child)
   if ([[child objectForKey:@"type"] isEqual:@"home page"] &&
       [[child objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.contacts.URL"])
     return @"_$!<HomePage>!$_";
+  NSString *kind=[child objectForKey:ISyncRecordEntityNameKey], *type=[child objectForKey:@"type"];
+  if (([kind isEqual:@"com.apple.contacts.Date"] || [kind isEqual:@"com.apple.contacts.Related Name"]) && [type length] && ![type isEqual:@"other"])
+    return [NSString stringWithFormat:@"_$!<%@>!$_",[type capitalizedString]];
   return [child objectForKey:@"label"];
 }
 static void AppendProperty(NSMutableArray *edits,NSString *name,NSString *group,NSString *value,NSString *parameters)
@@ -185,6 +191,57 @@ static NSString *Birthday(id date)
   return [date isKindOfClass:[NSDate class]] ? [date descriptionWithCalendarFormat:@"%Y-%m-%d"
       timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil] : nil;
 }
+static NSString *ChildValue(NSDictionary *child,int kind)
+{
+  if(kind==4) return Birthday([child objectForKey:@"value"]);
+  if(kind==6) {
+    NSString *service=[child objectForKey:@"service"], *user=[child objectForKey:@"user"];
+    if (![[@"aim|jabber|msn|yahoo|icq" componentsSeparatedByString:@"|"] containsObject:service] || ![user length]) return nil;
+    return [NSString stringWithFormat:@"%@:%@",[service isEqual:@"jabber"] ? @"xmpp" : service,
+        [user stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
+  }
+  return RCTwoWayEscape([child objectForKey:@"value"]);
+}
+static BOOL MetadataEdit(RCVCardDocument *doc,RCVCardProperty *property,int occurrence,
+    NSDictionary *child,BOOL preferred,NSString *value,NSMutableArray *edits,RCError *error)
+{
+  NSString *type=NewType(child,preferred);
+  if (!type || !value) return NO;
+  NSMutableString *params=[NSMutableString stringWithString:type]; size_t i;
+  NSArray *mappedTypes=[@"HOME|WORK|CELL|PAGER|FAX|PREF" componentsSeparatedByString:@"|"];
+  NSMutableArray *extraTypes=[NSMutableArray array];
+  for(i=0;i<property->parameterCount;i++) if(!strcasecmp(property->parameters[i].name,"TYPE")) {
+    NSEnumerator *tokens=[[S(property->parameters[i].value) componentsSeparatedByString:@","] objectEnumerator]; NSString *token;
+    while((token=[tokens nextObject])) if([token length] && ![mappedTypes containsObject:[token uppercaseString]]) [extraTypes addObject:token];
+  }
+  if([extraTypes count]) [params appendFormat:@"%@%@",[params length] ? @"," : @"TYPE=",[extraTypes componentsJoinedByString:@","]];
+  for(i=0;i<property->parameterCount;i++) {
+    RCVCardParameter *p=&property->parameters[i];
+    if (!strcasecmp(p->name,"TYPE")) continue;
+    if (!strcasecmp(p->name,"X-SERVICE-TYPE") && [child objectForKey:@"service"]) { if([params length]) [params appendString:@";"]; [params appendFormat:@"X-SERVICE-TYPE=%@",[[child objectForKey:@"service"] uppercaseString]]; continue; }
+    if ([params length]) [params appendString:@";"];
+    [params appendFormat:@"%@=%@",S(p->name),S(p->value)];
+  }
+  if(!AddEdit(doc,S(property->name),occurrence,value,edits,error)) return NO;
+  NSMutableDictionary *edit=[NSMutableDictionary dictionaryWithDictionary:[edits lastObject]];
+  [edit setObject:params forKey:@"parameters"]; [edits replaceObjectAtIndex:[edits count]-1 withObject:edit];
+  return YES;
+}
+static BOOL GroupEdit(RCVCardDocument *doc,RCVCardProperty *owner,NSString *name,NSString *value,NSMutableArray *edits,RCError *error)
+{
+  size_t i; int n=0; RCVCardProperty *found=NULL;
+  for(i=0;i<doc->propertyCount;i++) if (!strcasecmp(doc->properties[i].name,[name UTF8String])) {
+    RCVCardProperty *p=&doc->properties[i];
+    if ([S(p->group) isEqual:S(owner->group)]) {
+      if(found) { RCErrorSet(error,1,"Ambiguous grouped contact metadata"); return NO; }
+      found=p;
+      if(!AddEdit(doc,name,n,value,edits,error)) return NO;
+    }
+    n++;
+  }
+  if(!found && value) AppendProperty(edits,name,S(owner->group),value,nil);
+  return YES;
+}
 static BOOL Validate(RCContactStore *store, NSDictionary *resource, NSData *body, NSDictionary *paths, NSDictionary *truth, RCError *error)
 {
   NSDictionary *mapped=RCContactNativeGraphWithPhotoCache(store,body,paths,[resource objectForKey:@"href"],[resource objectForKey:@"etag"],error);
@@ -215,26 +272,21 @@ static NSMutableDictionary *Create(RCContactStore *store,NSDictionary *truth,NSS
       RCTwoWayString([record objectForKey:@"last name"]),nil] componentsJoinedByString:@" "];
   if (![[fn stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]] length]) fn=RCTwoWayString([record objectForKey:@"company name"]);
   [body appendFormat:@"FN:%@\r\nORG:%@\r\n",RCTwoWayEscape(fn),Structured(record,[NSArray arrayWithObjects:@"company name",@"department",nil])];
-  NSString *keys[]={@"notes",@"job title",@"nickname"}, *names[]={@"NOTE",@"TITLE",@"NICKNAME"}; int k;
-  for(k=0;k<3;k++) if ([[record objectForKey:keys[k]] length]) [body appendFormat:@"%@:%@\r\n",names[k],RCTwoWayEscape([record objectForKey:keys[k]])];
+  NSString *keys[]={@"notes",@"job title",@"nickname",@"first name yomi",@"middle name yomi",@"last name yomi",@"company name yomi"}, *names[]={@"NOTE",@"TITLE",@"NICKNAME",@"X-PHONETIC-FIRST-NAME",@"X-PHONETIC-MIDDLE-NAME",@"X-PHONETIC-LAST-NAME",@"X-PHONETIC-ORG"}; int k;
+  for(k=0;k<7;k++) if ([[record objectForKey:keys[k]] length]) [body appendFormat:@"%@:%@\r\n",names[k],RCTwoWayEscape([record objectForKey:keys[k]])];
   if (!RCNativeEmptyValue([record objectForKey:@"birthday"])) [body appendFormat:@"BDAY:%@\r\n",Birthday([record objectForKey:@"birthday"])];
   if ([[record objectForKey:@"display as company"] isEqual:@"company"]) [body appendString:@"X-ABShowAs:COMPANY\r\n"];
   NSMutableDictionary *paths=[NSMutableDictionary dictionaryWithObject:root forKey:@"root"];
-  for(k=0;k<4;k++) {
+  for(k=0;k<7;k++) {
     NSEnumerator *ids=[[record objectForKey:relations[k]] objectEnumerator]; NSString *identifier; int n=0;
     while ((identifier=[ids nextObject])) {
       NSDictionary *child=[truth objectForKey:identifier];
       if (!child) { RCErrorSet(error,1,"New contact has an incomplete child graph"); return nil; }
-      NSString *type=[child objectForKey:@"type"];
-      if (RCNativeEmptyValue(type)) type=@"other";
-      NSDictionary *types=[NSDictionary dictionaryWithObjectsAndKeys:@"HOME",@"home",@"WORK",@"work",@"CELL",@"mobile",
-          @"PAGER",@"pager",@"HOME,FAX",@"home fax",@"WORK,FAX",@"work fax",@"",@"other",@"",@"home page",nil];
-      if (![types objectForKey:type]) { RCErrorSet(error,1,"Unsupported contact label type"); return nil; }
-      NSString *param=[types objectForKey:type];
-      if ([[record objectForKey:primaryKeys[k]] containsObject:identifier]) param=[param length] ? [param stringByAppendingString:@",PREF"] : @"PREF";
+      NSString *param=NewType(child,[[record objectForKey:primaryKeys[k]] containsObject:identifier]);
+      if (!param) { RCErrorSet(error,1,"Unsupported contact label type"); return nil; }
       NSString *group=[NSString stringWithFormat:@"item%d-%d",k,n];
-      NSString *value=k==2 ? [@";;" stringByAppendingString:Structured(child,[NSArray arrayWithObjects:@"street",@"city",@"state",@"postal code",@"country",nil])] : RCTwoWayEscape([child objectForKey:@"value"]);
-      [body appendFormat:@"%@.%@%@:%@\r\n",group,properties[k],[param length] ? [@";TYPE=" stringByAppendingString:param] : @"",value];
+      NSString *value=k==2 ? [@";;" stringByAppendingString:Structured(child,[NSArray arrayWithObjects:@"street",@"city",@"state",@"postal code",@"country",nil])] : ChildValue(child,k);
+      [body appendFormat:@"%@.%@%@:%@\r\n",group,properties[k],[param length] ? [@";" stringByAppendingString:param] : @"",value];
       if ([NewLabel(child) length]) [body appendFormat:@"%@.X-ABLabel:%@\r\n",group,RCTwoWayEscape(NewLabel(child))];
       if (k==2 && [[child objectForKey:@"country code"] length]) [body appendFormat:@"%@.X-ABADR:%@\r\n",group,RCTwoWayEscape([child objectForKey:@"country code"])];
       [paths setObject:identifier forKey:[NSString stringWithFormat:@"%@:%d",properties[k],n++]];
@@ -248,7 +300,7 @@ static NSMutableDictionary *Create(RCContactStore *store,NSDictionary *truth,NSS
     NSMutableArray *edits=[NSMutableArray array];
     if (!PhotoEdit(&empty,[record objectForKey:@"image"],edits,error)) return nil;
     NSDictionary *edit=[edits objectAtIndex:0];
-    RCResourceEdit patch={0,"PHOTO",NULL,-1,[[edit objectForKey:@"value"] UTF8String],[[edit objectForKey:@"parameters"] UTF8String]};
+    RCResourceEdit patch={0,"PHOTO",NULL,-1,[[edit objectForKey:@"value"] UTF8String],[[edit objectForKey:@"parameters"] UTF8String],NULL,NULL};
     unsigned char *bytes=NULL; size_t length=0;
     if (!RCResourcePatch(RCResourceVCard,[raw bytes],[raw length],&patch,1,&bytes,&length,error)) return nil;
     body=[[[NSMutableString alloc] initWithBytes:bytes length:length encoding:NSUTF8StringEncoding] autorelease];
@@ -279,30 +331,32 @@ NSMutableDictionary *RCContactEncodeLocal(void *opaque,NSDictionary *resource,NS
   if (Changed(base,record,@"company name") || Changed(base,record,@"department")) {
     if (!AddEdit(&doc,@"ORG",0,StructuredEdit(&doc,@"ORG",0,[NSArray arrayWithObjects:@"company name",@"department",nil],base,record,NO),edits,error)) goto done;
   }
-  NSString *keys[]={@"notes",@"job title",@"nickname",@"birthday",@"display as company"};
-  NSString *names[]={@"NOTE",@"TITLE",@"NICKNAME",@"BDAY",@"X-ABShowAs"};
-  for(k=0;k<5;k++) if (Changed(base,record,keys[k])) {
+  NSString *keys[]={@"notes",@"job title",@"nickname",@"birthday",@"display as company",@"first name yomi",@"middle name yomi",@"last name yomi",@"company name yomi"};
+  NSString *names[]={@"NOTE",@"TITLE",@"NICKNAME",@"BDAY",@"X-ABShowAs",@"X-PHONETIC-FIRST-NAME",@"X-PHONETIC-MIDDLE-NAME",@"X-PHONETIC-LAST-NAME",@"X-PHONETIC-ORG"};
+  for(k=0;k<9;k++) if (Changed(base,record,keys[k])) {
     id v=[record objectForKey:keys[k]];
     NSString *value=k==3 ? Birthday(v) : k==4 ? ([v isEqual:@"company"] ? @"COMPANY" : nil) : v ? RCTwoWayEscape(v) : nil;
     if (!AddEdit(&doc,names[k],0,value,edits,error)) goto done;
   }
   if (Changed(base,record,@"image") && !PhotoEdit(&doc,[record objectForKey:@"image"],edits,error)) goto done;
-  NSArray *allowed=[NSArray arrayWithObjects:@"image",@"last name",@"first name",@"middle name",@"title",@"suffix",@"company name",@"department",@"notes",@"job title",@"nickname",@"birthday",@"display as company",nil];
+  NSArray *allowed=[NSArray arrayWithObjects:@"image",@"last name",@"first name",@"middle name",@"title",@"suffix",@"company name",@"department",@"notes",@"job title",@"nickname",@"birthday",@"display as company",@"first name yomi",@"middle name yomi",@"last name yomi",@"company name yomi",nil];
   NSEnumerator *it=[allowed objectEnumerator]; NSString *key;
   while ((key=[it nextObject])) { if ([record objectForKey:key]) [expected setObject:[record objectForKey:key] forKey:key]; else [expected removeObjectForKey:key]; }
-  for(k=0;k<4;k++) {
+  for(k=0;k<7;k++) {
     if ([record objectForKey:relations[k]]) [expected setObject:[record objectForKey:relations[k]] forKey:relations[k]];
     else [expected removeObjectForKey:relations[k]];
-    if ([record objectForKey:primaryKeys[k]]) [expected setObject:[record objectForKey:primaryKeys[k]] forKey:primaryKeys[k]];
+    if (k<4 && [record objectForKey:primaryKeys[k]]) [expected setObject:[record objectForKey:primaryKeys[k]] forKey:primaryKeys[k]];
     else [expected removeObjectForKey:primaryKeys[k]];
   }
   if (!RCTwoWayRecordsEqual(expected,record)) goto unsupported;
   NSMutableDictionary *desiredPaths=[NSMutableDictionary dictionaryWithObject:root forKey:@"root"];
-  for(k=0;k<4;k++) {
+  for(k=0;k<7;k++) {
     NSArray *ids=[base objectForKey:relations[k]], *currentIDs=[record objectForKey:relations[k]];
     int n=0, outputIndex=0; size_t propertyIndex;
     for(propertyIndex=0;propertyIndex<doc.propertyCount;propertyIndex++) {
-      if (strcasecmp(doc.properties[propertyIndex].name,[properties[k] UTF8String])) continue;
+      if (![RCContactPathName(doc.properties[propertyIndex].name) isEqual:properties[k]]) continue;
+      NSString *wireName=S(doc.properties[propertyIndex].name); int wireOccurrence=0; size_t wi;
+      for(wi=0;wi<propertyIndex;wi++) if(!strcasecmp(doc.properties[wi].name,[wireName UTF8String])) wireOccurrence++;
       int occurrence=n++;
       NSString *identifier=[[resource objectForKey:@"paths"] objectForKey:
           [NSString stringWithFormat:@"%@:%d",properties[k],occurrence]];
@@ -310,22 +364,49 @@ NSMutableDictionary *RCContactEncodeLocal(void *opaque,NSDictionary *resource,NS
       if (!identifier) { outputIndex++; continue; }
       NSDictionary *old=[baseGraph objectForKey:identifier], *child=[truth objectForKey:identifier];
       if (![currentIDs containsObject:identifier]) {
-        if (!AddEdit(&doc,properties[k],occurrence,nil,edits,error)) goto done;
+        if (!AddEdit(&doc,wireName,wireOccurrence,nil,edits,error)) goto done;
         continue;
       }
       if (!child) goto unsupported;
       [desiredPaths setObject:identifier forKey:[NSString stringWithFormat:@"%@:%d",properties[k],outputIndex++]];
       NSMutableDictionary *check=[NSMutableDictionary dictionaryWithDictionary:old];
-      NSArray *fields=k==2 ? [NSArray arrayWithObjects:@"street",@"city",@"state",@"postal code",@"country",nil] : [NSArray arrayWithObject:@"value"];
+      NSArray *fields=k==2 ? [NSArray arrayWithObjects:@"street",@"city",@"state",@"postal code",@"country",@"country code",@"type",@"label",nil] :
+          k==6 ? [NSArray arrayWithObjects:@"user",@"service",@"type",@"label",nil] : [NSArray arrayWithObjects:@"value",@"type",@"label",nil];
       it=[fields objectEnumerator]; BOOL changed=NO;
       while ((key=[it nextObject])) {
         if (Changed(old,child,key)) changed=YES;
         if ([child objectForKey:key]) [check setObject:[child objectForKey:key] forKey:key]; else [check removeObjectForKey:key];
       }
       if (!RCTwoWayRecordsEqual(check,child)) goto unsupported;
-      if (changed) {
-        NSString *value=k==2 ? StructuredEdit(&doc,@"ADR",occurrence,[NSArray arrayWithObjects:@"",@"",@"street",@"city",@"state",@"postal code",@"country",nil],old,child,YES) : RCTwoWayEscape([child objectForKey:@"value"]);
-        if (!AddEdit(&doc,properties[k],occurrence,value,edits,error)) goto done;
+      BOOL preferred=[[record objectForKey:primaryKeys[k]] containsObject:identifier];
+      BOOL metadata=Changed(old,child,@"type") || Changed(old,child,@"label") || (k==6 && Changed(old,child,@"service")) || (k<4 && Changed(base,record,primaryKeys[k])) ||
+          (preferred != [[base objectForKey:primaryKeys[k]] containsObject:identifier]);
+      if (changed || metadata) {
+        NSString *value=k==2 ? StructuredEdit(&doc,@"ADR",occurrence,[NSArray arrayWithObjects:@"",@"",@"street",@"city",@"state",@"postal code",@"country",nil],old,child,YES) : ChildValue(child,k);
+        NSString *legacy=RCLegacyIMService(doc.properties[propertyIndex].name);
+        BOOL renameIM=legacy && ![legacy isEqual:[child objectForKey:@"service"]];
+        if(legacy && !renameIM) value=RCTwoWayEscape([child objectForKey:@"user"]);
+        NSString *newGroup=nil;
+        if(!doc.properties[propertyIndex].group && (metadata || (k==2 && Changed(old,child,@"country code"))))
+          newGroup=[@"rc-" stringByAppendingString:RCTwoWayNewIdentifier()];
+        if (metadata) {
+          if(!MetadataEdit(&doc,&doc.properties[propertyIndex],wireOccurrence,child,preferred,value,edits,error)) goto done;
+        } else if (!AddEdit(&doc,wireName,wireOccurrence,value,edits,error)) goto done;
+        if(renameIM) {
+          NSMutableDictionary *edit=[NSMutableDictionary dictionaryWithDictionary:[edits lastObject]];
+          [edit setObject:@"IMPP" forKey:@"replacementProperty"]; [edits replaceObjectAtIndex:[edits count]-1 withObject:edit];
+        }
+        if(newGroup) {
+          NSMutableDictionary *edit=[NSMutableDictionary dictionaryWithDictionary:[edits lastObject]];
+          [edit setObject:newGroup forKey:@"replacementGroup"]; [edits replaceObjectAtIndex:[edits count]-1 withObject:edit];
+          if([NewLabel(child) length]) AppendProperty(edits,@"X-ABLabel",newGroup,RCTwoWayEscape(NewLabel(child)),nil);
+          if(k==2 && [[child objectForKey:@"country code"] length]) AppendProperty(edits,@"X-ABADR",newGroup,RCTwoWayEscape([child objectForKey:@"country code"]),nil);
+        } else {
+          if(Changed(old,child,@"label") || Changed(old,child,@"type"))
+            if(!GroupEdit(&doc,&doc.properties[propertyIndex],@"X-ABLabel",[NewLabel(child) length] ? RCTwoWayEscape(NewLabel(child)) : nil,edits,error)) goto done;
+          if(k==2 && Changed(old,child,@"country code"))
+            if(!GroupEdit(&doc,&doc.properties[propertyIndex],@"X-ABADR",[[child objectForKey:@"country code"] length] ? RCTwoWayEscape([child objectForKey:@"country code"]) : nil,edits,error)) goto done;
+        }
       }
     }
     NSEnumerator *newIDs=[currentIDs objectEnumerator]; NSString *identifier;
@@ -334,7 +415,7 @@ NSMutableDictionary *RCContactEncodeLocal(void *opaque,NSDictionary *resource,NS
       NSString *params=NewType(child,[[record objectForKey:primaryKeys[k]] containsObject:identifier]);
       if (!child || !params) goto unsupported;
       NSString *group=[@"rc-" stringByAppendingString:RCTwoWayNewIdentifier()];
-      NSString *value=k==2 ? [@";;" stringByAppendingString:Structured(child,[NSArray arrayWithObjects:@"street",@"city",@"state",@"postal code",@"country",nil])] : RCTwoWayEscape([child objectForKey:@"value"]);
+      NSString *value=k==2 ? [@";;" stringByAppendingString:Structured(child,[NSArray arrayWithObjects:@"street",@"city",@"state",@"postal code",@"country",nil])] : ChildValue(child,k);
       AppendProperty(edits,properties[k],group,value,params);
       if ([NewLabel(child) length]) AppendProperty(edits,@"X-ABLabel",group,RCTwoWayEscape(NewLabel(child)),nil);
       if (k==2 && [[child objectForKey:@"country code"] length]) AppendProperty(edits,@"X-ABADR",group,RCTwoWayEscape([child objectForKey:@"country code"]),nil);
@@ -350,7 +431,9 @@ NSMutableDictionary *RCContactEncodeLocal(void *opaque,NSDictionary *resource,NS
       patch[n].property=[[edit objectForKey:@"name"] UTF8String];
       patch[n].group=[[edit objectForKey:@"group"] length] ? [[edit objectForKey:@"group"] UTF8String] : NULL;
       patch[n].occurrence=[[edit objectForKey:@"occurrence"] intValue];
-      patch[n].parameters=[[edit objectForKey:@"parameters"] length] ? [[edit objectForKey:@"parameters"] UTF8String] : NULL;
+      patch[n].replacementProperty=[[edit objectForKey:@"replacementProperty"] UTF8String];
+      patch[n].replacementGroup=[[edit objectForKey:@"replacementGroup"] UTF8String];
+      patch[n].parameters=[edit objectForKey:@"parameters"] ? [[edit objectForKey:@"parameters"] UTF8String] : NULL;
       patch[n].value=[edit objectForKey:@"value"]==[NSNull null] ? NULL : [[edit objectForKey:@"value"] UTF8String];
     }
     ok=RCResourcePatch(RCResourceVCard,[raw bytes],[raw length],patch,[edits count],&bytes,&length,error);

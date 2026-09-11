@@ -1,3 +1,4 @@
+#import "../../../macOS-daemon/RCCalendarOperations.h"
 #import "../../../macOS-daemon/RCContactPhoto.h"
 #import "../../../macOS-daemon/RCSyncFieldScope.h"
 #import <Foundation/Foundation.h>
@@ -9,6 +10,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#import "../../../macOS-daemon/RCContactIM.h"
+
 static RCError error;
 static NSMutableDictionary *remoteBodies, *remoteETags;
 static NSMutableDictionary *remotePhotos;
@@ -18,6 +21,7 @@ static int photoGETs=0;
 static const char *photoResponseType="image/jpeg";
 static int mutations=0;
 static BOOL loseResponse=NO;
+static NSMutableDictionary *remoteCollections;
 static NSString *marker;
 #define CHECK(x) do { RCErrorClear(&error); if (!(x)) [NSException raise:@"TestFailure" format:@"line %d: %s: %s",__LINE__,#x,error.message]; } while(0)
 
@@ -41,10 +45,32 @@ static int Response(const char *url,RCHTTPResponse *r)
   }
   return 1;
 }
+int RCHTTPClientMove(RCHTTPClient *c,const char *source,const char *target,const char *etag,RCHTTPResponse *r,RCError *e)
+{
+  (void)c;
+  if(strncmp(target,"https://fixture.invalid/",24) || !Response(source,r)) { RCErrorSet(e,1,"Non-fixture MOVE rejected"); return 0; }
+  NSString *from=[NSString stringWithUTF8String:source], *to=[NSString stringWithUTF8String:target];
+  if([remoteBodies objectForKey:to] || ![[remoteETags objectForKey:from] isEqual:[NSString stringWithUTF8String:etag]]) { r->statusCode=412; return 1; }
+  [remoteBodies setObject:[remoteBodies objectForKey:from] forKey:to]; [remoteBodies removeObjectForKey:from];
+  [remoteETags setObject:@"\"moved\"" forKey:to]; [remoteETags removeObjectForKey:from]; mutations++;
+  if(loseResponse) { loseResponse=NO; RCErrorSet(e,1,"Lost MOVE response"); return 0; }
+  r->statusCode=201; return 1;
+}
 int RCHTTPClientRequest(RCHTTPClient *c,const char *method,const char *url,const char *depth,
     const char *type,const void *body,size_t length,RCHTTPResponse *r,RCError *e)
 {
   (void)c;(void)depth;(void)type;(void)body;(void)length;
+  if(!strcmp(method,"PROPFIND")) {
+    if(strncmp(url,"https://fixture.invalid/",24)) return 0;
+    RCHTTPResponseClear(r); r->effectiveURL=strdup(url);
+    NSString *marker=[remoteCollections objectForKey:[NSString stringWithUTF8String:url]];
+    r->statusCode=marker ? 207 : 404;
+    if(marker) {
+      NSData *xml=[[NSString stringWithFormat:@"<d:multistatus xmlns:d='DAV:' xmlns:c='urn:ietf:params:xml:ns:caldav' xmlns:r='urn:retrocloudsync'><d:response><d:href>%s</d:href><d:propstat><d:prop><d:resourcetype><d:collection/><c:calendar/></d:resourcetype><r:creation-id>%@</r:creation-id></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>",url,marker] dataUsingEncoding:NSUTF8StringEncoding];
+      r->bodyLength=[xml length];r->body=malloc(r->bodyLength);memcpy(r->body,[xml bytes],r->bodyLength);
+    }
+    return 1;
+  }
   if (strcmp(method,"GET") || !Response(url,r)) { RCErrorSet(e,1,"Non-fixture request rejected"); return 0; }
   return 1;
 }
@@ -52,6 +78,18 @@ int RCHTTPClientConditionalRequest(RCHTTPClient *c,const char *method,const char
     const void *body,size_t length,const char *etag,int create,RCHTTPResponse *r,RCError *e)
 {
   (void)c;(void)type;
+  if(!strcmp(method,"MKCALENDAR")) {
+    if(strncmp(url,"https://fixture.invalid/",24)) return 0;
+    NSString *href=[NSString stringWithUTF8String:url];
+    if(!remoteCollections) remoteCollections=[[NSMutableDictionary alloc] init];
+    if([remoteCollections objectForKey:href]) { r->statusCode=412; return 1; }
+    NSXMLDocument *doc=[[[NSXMLDocument alloc] initWithData:[NSData dataWithBytes:body length:length] options:0 error:NULL] autorelease];
+    NSArray *nodes=[doc nodesForXPath:@"//*[local-name()='creation-id']" error:NULL];
+    if([nodes count]!=1) return 0;
+    [remoteCollections setObject:[[nodes objectAtIndex:0] stringValue] forKey:href]; mutations++;
+    if(loseResponse) { loseResponse=NO; RCErrorSet(e,1,"Lost MKCALENDAR response"); return 0; }
+    r->statusCode=201; return 1;
+  }
   if ((strcmp(method,"PUT") && strcmp(method,"DELETE")) || !Response(url,r)) { RCErrorSet(e,1,"Non-fixture mutation rejected"); return 0; }
   NSString *href=[NSString stringWithUTF8String:url];
   BOOL exists=[remoteBodies objectForKey:href]!=nil;
@@ -71,7 +109,7 @@ int RCHTTPClientConditionalRequest(RCHTTPClient *c,const char *method,const char
         [remotePhotos setObject:image forKey:uri];
         const char *group=NULL; size_t i;
         for(i=0;i<doc.propertyCount;i++) if (!strcasecmp(doc.properties[i].name,"PHOTO")) group=doc.properties[i].group;
-        RCResourceEdit edits[2]={{0,"PHOTO",group,0,NULL,NULL},{0,"PHOTO",group,-1,[uri UTF8String],"TYPE=JPEG;VALUE=uri"}};
+        RCResourceEdit edits[2]={{0,"PHOTO",group,0,NULL,NULL,NULL,NULL},{0,"PHOTO",group,-1,[uri UTF8String],"TYPE=JPEG;VALUE=uri",NULL,NULL}};
         unsigned char *bytes=NULL; size_t count=0;
         CHECK(RCResourcePatch(RCResourceVCard,body,length,edits,2,&bytes,&count,&error));
         canonical=[NSData dataWithBytes:bytes length:count]; free(bytes);
@@ -97,9 +135,10 @@ static NSDictionary *ContactPaths(NSData *body,NSString *root)
   NSMutableDictionary *paths=[NSMutableDictionary dictionaryWithObject:root forKey:@"root"], *counts=[NSMutableDictionary dictionary];
   size_t p;
   for(p=0;p<doc.propertyCount;p++) {
-    NSString *name=[[NSString stringWithUTF8String:doc.properties[p].name] uppercaseString];
-    if ([name isEqual:@"TEL"] || [name isEqual:@"EMAIL"] || [name isEqual:@"ADR"] || [name isEqual:@"URL"]) {
+    NSString *name=RCContactPathName(doc.properties[p].name);
+    if ([name isEqual:@"TEL"] || [name isEqual:@"EMAIL"] || [name isEqual:@"ADR"] || [name isEqual:@"URL"] || [name isEqual:@"X-ABDATE"] || [name isEqual:@"X-ABRELATEDNAMES"] || [name isEqual:@"IMPP"]) {
       int n=[[counts objectForKey:name] intValue]; [counts setObject:[NSNumber numberWithInt:n+1] forKey:name];
+      if(!RCContactPropertyVisible(&doc.properties[p])) continue;
       [paths setObject:[NSString stringWithFormat:@"%@-%@-%d",root,name,n] forKey:[NSString stringWithFormat:@"%@:%d",name,n]];
     }
   }
@@ -333,6 +372,8 @@ static void ContactCreationPolicyTests(int scenario)
   }
 }
 static void CalendarMapperRegressionTests(RCCalendarStore *);
+static void ExpandedCalendarTests(RCCalendarStore *);
+static void CalendarOperationTests(RCCalendarStore *);
 static void ContactEmptyMapperTests(RCContactStore *store)
 {
   NSData *body=[@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:empty-contact\r\nN:Fixture;Empty;;;\r\nFN:Empty Fixture\r\nNOTE:old\r\nTEL:123\r\nX-PRIVATE:keep\r\nEND:VCARD\r\n" dataUsingEncoding:NSUTF8StringEncoding];
@@ -356,7 +397,7 @@ static void ContactEmptyMapperTests(RCContactStore *store)
   CHECK([wire rangeOfString:@"X-PRIVATE:keep\r\n"].location!=NSNotFound);
   CHECK(RCContactEncodeLocal(store,nil,truth,@"empty-contact",&error));
   [phone setObject:@"work" forKey:@"type"];
-  CHECK(!RCContactEncodeLocal(store,resource,truth,@"empty-contact",&error));
+  CHECK(RCContactEncodeLocal(store,resource,truth,@"empty-contact",&error));
   puts("PASS: Empty contact text, birthday, labels and omitted person/other defaults round-trip without hiding label edits");
 }
 static void FieldMapperTests(RCContactStore *contacts)
@@ -372,11 +413,11 @@ static void FieldMapperTests(RCContactStore *contacts)
   NSDictionary *desired=RCTwoWayEncodeFields(RCContactEncodeLocal,contacts,base,truth,@"fields",&error); CHECK(desired);
   NSString *encoded=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
   CHECK([encoded rangeOfString:@"NOTE:new note\r\n"].location!=NSNotFound);
-  CHECK([encoded rangeOfString:@"TEL;TYPE=HOME:456\r\n"].location!=NSNotFound);
+  CHECK([encoded rangeOfString:@"TEL;TYPE=WORK:456\r\n"].location!=NSNotFound);
   CHECK([encoded rangeOfString:@"PHOTO;ENCODING=b:YWJj\r\n"].location!=NSNotFound);
   CHECK([encoded rangeOfString:@"X-FUTURE;X-PARAM=keep:opaque\r\n"].location!=NSNotFound);
   CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields"] containsObject:@"future contact field"]);
-  CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields-TEL-0"] containsObject:@"type"]);
+  CHECK(![[[desired objectForKey:@"pendingFields"] objectForKey:@"fields-TEL-0"] containsObject:@"type"]);
   CHECK([[[desired objectForKey:@"pendingFields"] objectForKey:@"fields-TEL-0"] containsObject:@"future field"]);
   CHECK(RCNativeScopeMatches(truth,[desired objectForKey:@"graph"],[desired objectForKey:@"fieldScopes"]));
   CHECK(!RCNativeScopeMatches(truth,[desired objectForKey:@"graph"],nil));
@@ -572,6 +613,37 @@ static void URIPhotoTests(RCContactStore *store)
   remoteBodies=savedBodies; remoteETags=savedETags; remotePhotos=savedPhotos;
   puts("PASS: URI photo cache verifies owning ETags, preserves historical bytes, retries missing photos and maps without network inside native sessions");
 }
+static void ExpandedContactTests(RCContactStore *store)
+{
+  NSData *body=[@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:expanded\r\nN:Fixture;Expanded;;;\r\nFN:Expanded Fixture\r\nitem1.TEL;TYPE=HOME,PREF;X-KEEP=yes:123\r\nitem2.EMAIL;TYPE=WORK:one@example.invalid\r\nitem3.EMAIL;TYPE=HOME,PREF:two@example.invalid\r\nitem4.X-ABDATE:2000-01-02\r\nitem4.X-ABLabel:_$!<Anniversary>!$_\r\nitem5.X-ABRELATEDNAMES:Someone\r\nitem5.X-ABLabel:_$!<Spouse>!$_\r\nitem6.IMPP;TYPE=HOME:xmpp:someone@example.invalid\r\nX-AIM:oldaim\r\nTEL:789\r\nX-PHONETIC-FIRST-NAME:Old\r\nX-PRIVATE:keep\r\nEND:VCARD\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *r=ContactResource(body,@"expanded",@"https://fixture.invalid/book/expanded.vcf",@"\"base\"");
+  NSMutableDictionary *truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[r objectForKey:@"graph"]]];
+  NSMutableDictionary *card=[truth objectForKey:@"expanded"];
+  CHECK([[card objectForKey:@"dates"] count]==1 && [[card objectForKey:@"related names"] count]==1 && [[card objectForKey:@"IMs"] count]==2);
+  CHECK([[[truth objectForKey:@"expanded-X-ABDATE-0"] objectForKey:@"type"] isEqual:@"anniversary"]);
+  [[truth objectForKey:@"expanded-TEL-0"] setObject:@"other" forKey:@"type"];
+  [[truth objectForKey:@"expanded-TEL-0"] setObject:@"Desk" forKey:@"label"];
+  [[truth objectForKey:@"expanded-TEL-1"] setObject:@"Personal line" forKey:@"label"];
+  [[truth objectForKey:@"expanded-IMPP-1"] setObject:@"newaim" forKey:@"user"];
+  [[truth objectForKey:@"expanded-IMPP-1"] setObject:@"yahoo" forKey:@"service"];
+  [card setObject:[NSArray arrayWithObject:@"expanded-EMAIL-0"] forKey:@"primary email address"];
+  [card setObject:@"New phonetic" forKey:@"first name yomi"];
+  [[truth objectForKey:@"expanded-X-ABRELATEDNAMES-0"] setObject:@"partner" forKey:@"type"];
+  [[truth objectForKey:@"expanded-IMPP-0"] setObject:@"new@example.invalid" forKey:@"user"];
+  NSDictionary *desired=RCTwoWayEncodeFields(RCContactEncodeLocal,store,r,truth,@"expanded",&error); CHECK(desired);
+  CHECK(![[desired objectForKey:@"pendingFields"] count]);
+  NSString *wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([wire rangeOfString:@"X-KEEP=yes"].location!=NSNotFound && [wire rangeOfString:@"X-PRIVATE:keep"].location!=NSNotFound);
+  CHECK([wire rangeOfString:@"_$!<Partner>!$_"].location!=NSNotFound && [wire rangeOfString:@"X-ABLabel:Desk"].location!=NSNotFound);
+  CHECK(RCContactEncodeLocal(store,nil,truth,@"expanded",&error));
+  NSDictionary *replay=RCContactEncodeLocal(store,desired,truth,@"expanded",&error); CHECK(replay);
+  CHECK([[replay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
+  [card removeObjectForKey:@"dates"]; [truth removeObjectForKey:@"expanded-X-ABDATE-0"];
+  [card removeObjectForKey:@"IMs"]; [truth removeObjectForKey:@"expanded-IMPP-0"]; [truth removeObjectForKey:@"expanded-IMPP-1"];
+  CHECK(RCContactEncodeLocal(store,desired,truth,@"expanded",&error));
+  puts("PASS: Labels, preferred email, phonetic names, anniversaries, related names and IM accounts import, edit, create, remove and replay");
+}
+
 static void MapperTests(void)
 {
   CHECK(RCTwoWayRecordsEqual([NSDictionary dictionary], [NSDictionary dictionaryWithObject:[NSArray array] forKey:@"phone numbers"]));
@@ -635,6 +707,7 @@ static void MapperTests(void)
   desired=RCContactEncodeLocal(contacts,r,truth,@"fixture",&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   CHECK([[[desired objectForKey:@"paths"] objectForKey:@"TEL:1"] isEqual:@"added-phone"]);
   puts("PASS: Empty raw contact fields preserve occurrence identities through note edits, value edits, removal and addition");
+  ExpandedContactTests(contacts);
   FieldMapperTests(contacts);
   PhotoMapperTests(contacts);
   URIPhotoTests(contacts);
@@ -687,10 +760,12 @@ static void MapperTests(void)
   CHECK(!RCCalendarEncodeLocal(cal,nil,truth,id,&error));
   [event removeObjectForKey:@"unknown-editable-property"];
   [event setObject:[NSNumber numberWithBool:YES] forKey:@"all day"];
-  CHECK(!RCCalendarEncodeLocal(cal,r,truth,id,&error) && strstr(error.message,"field 'all day'"));
+  CHECK(!RCCalendarEncodeLocal(cal,r,truth,id,&error));
   [event removeObjectForKey:@"all day"];
   [event setObject:[NSArray arrayWithObject:@"private-organizer-id"] forKey:@"organizer"];
-  CHECK(!RCCalendarEncodeLocal(cal,nil,truth,id,&error) && strstr(error.message,"field 'organizer'") && !strstr(error.message,"private-organizer-id"));
+  CHECK(!RCCalendarEncodeLocal(cal,nil,truth,id,&error) && !strstr(error.message,"private-organizer-id"));
+  ExpandedCalendarTests(cal);
+  CalendarOperationTests(cal);
   CalendarMapperRegressionTests(cal);
   RCCalendarStoreClose(cal);
   puts("PASS: Production contact/calendar reverse mappers preserve private fields and reject unsupported changes");
@@ -720,6 +795,97 @@ static NSDictionary *CalendarResource(RCCalendarStore *store, long long identifi
   return [NSDictionary dictionaryWithObjectsAndKeys:[NSString stringWithFormat:@"resource-%lld",identifier],@"key",root,@"root",href,@"href",etag,@"etag",body,@"body",
       mapped,@"graph",paths,@"paths",[NSNumber numberWithInt:1],@"revision",nil];
 }
+static void CalendarOperationTests(RCCalendarStore *store)
+{
+  remoteBodies=[NSMutableDictionary dictionary]; remoteETags=[NSMutableDictionary dictionary];
+  RCWriteJournal j=RCCalendarStoreWriteJournal(store); CHECK(RCTwoWayInitialize(&j,&error));
+  NSMutableDictionary *truth=[NSMutableDictionary dictionary], *graph=[NSMutableDictionary dictionary];
+  NSMutableSet *busy=[NSMutableSet set];
+  [truth setObject:[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",ISyncRecordEntityNameKey,@"Existing local",@"title",nil] forKey:@"existing-calendar"];
+  CHECK(RCCalendarCollectOperations(&j,truth,graph,[NSArray array],busy,&error));
+  CHECK(Scalar(&j,"SELECT count(*) FROM calendar_actions")==0);
+  [truth setObject:[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",ISyncRecordEntityNameKey,@"New & Local",@"title",nil] forKey:@"new-calendar"];
+  CHECK(RCCalendarCollectOperations(&j,truth,graph,[NSArray array],busy,&error));
+  CHECK(Scalar(&j,"SELECT count(*) FROM calendar_actions WHERE kind='create'")==1);
+  int before=mutations; loseResponse=YES;
+  CHECK(RCCalendarRunOperations(&j,(RCHTTPClient *)1,&error)); CHECK(mutations==before+1);
+  CHECK(RCCalendarRunOperations(&j,(RCHTTPClient *)1,&error)); CHECK(mutations==before+1);
+  CHECK(Scalar(&j,"SELECT count(*) FROM calendar_actions WHERE state='done'")==1);
+  CHECK(Scalar(&j,"SELECT count(*) FROM two_way_aliases WHERE native_id='new-calendar'")==1);
+  NSData *body=[@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:move-fixture\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:Move\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *r=CalendarResource(store,71,body,@"https://fixture.invalid/calendar/move%20fixture.ics",@"\"move-base\"");
+  NSString *root=[r objectForKey:@"root"];
+  [truth addEntriesFromDictionary:[r objectForKey:@"graph"]];
+  NSMutableDictionary *event=[NSMutableDictionary dictionaryWithDictionary:[truth objectForKey:root]];
+  [event setObject:[NSArray arrayWithObject:@"new-calendar"] forKey:@"calendar"]; [truth setObject:event forKey:root];
+  CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO calendar_resources(id,calendar_id,href,raw_ical,etag) VALUES(71,(SELECT id FROM calendars WHERE sync_id='fixture'),'https://fixture.invalid/calendar/move%%20fixture.ics',X'00','\"move-base\"')"));
+  [remoteBodies setObject:body forKey:[r objectForKey:@"href"]]; [remoteETags setObject:@"\"move-base\"" forKey:[r objectForKey:@"href"]];
+  CHECK(RCCalendarCollectOperations(&j,truth,graph,[NSArray arrayWithObject:r],busy,&error)); CHECK([busy containsObject:root]);
+  loseResponse=YES; before=mutations;
+  CHECK(RCCalendarRunOperations(&j,(RCHTTPClient *)1,&error)); CHECK(mutations==before+1);
+  CHECK(RCCalendarRunOperations(&j,(RCHTTPClient *)1,&error)); CHECK(mutations==before+1);
+  CHECK(![remoteBodies objectForKey:[r objectForKey:@"href"]]);
+  CHECK(Scalar(&j,"SELECT count(*) FROM calendar_actions WHERE kind='move'")==0);
+  CHECK(Scalar(&j,"SELECT count(*) FROM calendar_resources WHERE id=71 AND href='https://fixture.invalid/calendar/move%20fixture.ics'")==0);
+  [remoteBodies setObject:body forKey:[r objectForKey:@"href"]]; [remoteETags setObject:@"\"move-base\"" forKey:[r objectForKey:@"href"]];
+  [busy removeAllObjects];
+  CHECK(RCCalendarCollectOperations(&j,truth,graph,[NSArray arrayWithObject:r],busy,&error));
+  before=mutations; CHECK(!RCCalendarRunOperations(&j,(RCHTTPClient *)1,&error)); CHECK(mutations==before);
+  CHECK([remoteBodies objectForKey:[r objectForKey:@"href"]]);
+  CHECK(Scalar(&j,"SELECT count(*) FROM calendar_actions WHERE kind='move' AND state='conflict'")==1);
+  [busy removeAllObjects]; CHECK(RCCalendarProtectOperations(&j,[NSArray arrayWithObject:r],graph,busy,&error)); CHECK([busy containsObject:root]);
+  [event setObject:[NSArray arrayWithObject:@"calendar-fixture"] forKey:@"calendar"];
+  CHECK(RCCalendarCollectOperations(&j,truth,graph,[NSArray arrayWithObject:r],busy,&error));
+  CHECK(Scalar(&j,"SELECT count(*) FROM calendar_actions WHERE kind='move'")==0);
+  CHECK(Scalar(&j,"SELECT count(*) FROM two_way_attention WHERE reason='calendar-move-conflict'")==0);
+  puts("PASS: Calendar creation/MOVE recover lost responses without duplicates, refuse occupied destinations, and protect pending native edits; pre-existing calendars stay local");
+}
+
+static void ExpandedCalendarTests(RCCalendarStore *store)
+{
+  NSData *body=[@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:expanded-calendar\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:Expanded\r\nX-PRIVATE:keep\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT10M\r\nDESCRIPTION:Reminder\r\nX-ALARM:keep\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" dataUsingEncoding:NSUTF8StringEncoding];
+  NSDictionary *r=CalendarResource(store,70,body,@"https://fixture.invalid/calendar/expanded.ics",@"\"base\"");
+  NSString *root=[r objectForKey:@"root"];
+  NSMutableDictionary *truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:[r objectForKey:@"graph"]]];
+  NSMutableDictionary *event=[truth objectForKey:root];
+  NSString *alarm=[[event objectForKey:@"display alarms"] objectAtIndex:0];
+  [[truth objectForKey:alarm] setObject:[NSNumber numberWithInt:-1800] forKey:@"triggerduration"];
+  [event setObject:[NSArray arrayWithObject:@"rule"] forKey:@"recurrences"];
+  [truth setObject:[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Recurrence",ISyncRecordEntityNameKey,[NSArray arrayWithObject:root],@"owner",@"weekly",@"frequency",[NSNumber numberWithInt:2],@"interval",[NSNumber numberWithInt:5],@"count",@"monday",@"weekstartday",nil] forKey:@"rule"];
+  [event setObject:[NSArray arrayWithObject:@"attendee"] forKey:@"attendees"];
+  [truth setObject:[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Attendee",ISyncRecordEntityNameKey,[NSArray arrayWithObject:root],@"owner",@"guest@example.invalid",@"email",@"Guest, Test",@"common name",@"requiredparticipant",@"role",@"accepted",@"status",@"individual",@"user type",[NSNumber numberWithBool:YES],@"rsvp",nil] forKey:@"attendee"];
+  [event setObject:[NSArray arrayWithObject:@"organizer"] forKey:@"organizer"];
+  [truth setObject:[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Organizer",ISyncRecordEntityNameKey,[NSArray arrayWithObject:root],@"owner",@"host@example.invalid",@"email",nil] forKey:@"organizer"];
+  NSDictionary *strict=RCCalendarEncodeLocal(store,r,truth,root,&error); if(!strict) fprintf(stderr,"Expanded strict: %s\n",error.message); CHECK(strict);
+  NSDictionary *desired=RCTwoWayEncodeFields(RCCalendarEncodeLocal,store,r,truth,root,&error); CHECK(desired);
+  if([[desired objectForKey:@"pendingFields"] count]) NSLog(@"Expanded calendar pending: %@",[desired objectForKey:@"pendingFields"]);
+  CHECK(![[desired objectForKey:@"pendingFields"] count]);
+  NSString *wire=[[[NSString alloc] initWithData:[desired objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([wire rangeOfString:@"X-PRIVATE:keep"].location!=NSNotFound && [wire rangeOfString:@"X-ALARM:keep"].location!=NSNotFound);
+  CHECK(RCCalendarEncodeLocal(store,nil,truth,root,&error));
+  NSMutableDictionary *defaults=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:truth]];
+  [[defaults objectForKey:@"rule"] removeObjectForKey:@"interval"]; [[defaults objectForKey:@"rule"] removeObjectForKey:@"weekstartday"];
+  [[defaults objectForKey:@"rule"] setObject:[NSNumber numberWithInt:0] forKey:@"count"];
+  CHECK(RCCalendarEncodeLocal(store,nil,defaults,root,&error));
+  NSDictionary *replay=RCCalendarEncodeLocal(store,desired,truth,root,&error); CHECK(replay);
+  CHECK([[replay objectForKey:@"body"] isEqual:[desired objectForKey:@"body"]]);
+  desired=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:desired]];
+  [[truth objectForKey:@"rule"] setObject:[NSNumber numberWithInt:3] forKey:@"interval"];
+  [[truth objectForKey:@"attendee"] setObject:@"declined" forKey:@"status"];
+  [event setObject:[NSArray array] forKey:@"display alarms"]; [truth removeObjectForKey:alarm];
+  NSDictionary *updated=RCCalendarEncodeLocal(store,desired,truth,root,&error); CHECK(updated);
+  updated=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:updated]];
+  [event setObject:[NSArray array] forKey:@"recurrences"]; [truth removeObjectForKey:@"rule"];
+  [event setObject:[NSNumber numberWithBool:YES] forKey:@"all day"];
+  [event setObject:[NSCalendarDate dateWithYear:2026 month:9 day:7 hour:12 minute:0 second:0 timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]] forKey:@"start date"];
+  [event setObject:[NSCalendarDate dateWithYear:2026 month:9 day:8 hour:12 minute:0 second:0 timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]] forKey:@"end date"];
+  desired=RCCalendarEncodeLocal(store,updated,truth,root,&error); CHECK(desired);
+  desired=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:desired]];
+  [event setObject:[NSNumber numberWithBool:NO] forKey:@"all day"];
+  CHECK(RCCalendarEncodeLocal(store,desired,truth,root,&error));
+  puts("PASS: Reminder timing/removal, recurring creation/rule edits, attendees/RSVP, organizer and all-day conversion round-trip with extensions intact");
+}
+
 static void CalendarEmptyMapperTests(RCCalendarStore *store)
 {
   NSString *event=@"BEGIN:VEVENT\r\nUID:empty-calendar\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:Empty fixture\r\nURL;VALUE=URI:\r\nBEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT15M\r\nATTACH;VALUE=URI:Basso\r\nX-PRIVATE:keep\r\nEND:VALARM\r\nEND:VEVENT\r\n";
@@ -800,16 +966,16 @@ static void CalendarEmptyMapperTests(RCCalendarStore *store)
   [record setObject:@"Edited with omitted RSVP" forKey:@"summary"];
   CHECK(RCCalendarEncodeLocal(store,resource,truth,root,&error));
   [person setObject:[NSNumber numberWithBool:YES] forKey:@"rsvp"];
-  CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  CHECK(RCCalendarEncodeLocal(store,resource,truth,root,&error));
   [person removeObjectForKey:@"rsvp"]; [person setObject:@"accepted" forKey:@"status"];
-  CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
+  CHECK(RCCalendarEncodeLocal(store,resource,truth,root,&error));
   [person setObject:@"" forKey:@"status"]; [truth removeObjectForKey:personID];
   CHECK(!RCCalendarEncodeLocal(store,resource,truth,root,&error));
   NSDictionary *partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,store,resource,truth,root,&error); CHECK(partial);
   CHECK([[[partial objectForKey:@"pendingFields"] objectForKey:personID] containsObject:@"record deletion"]);
   CHECK([[partial objectForKey:@"graph"] objectForKey:personID]);
   CHECK(RCNativeScopeMatches(truth,[partial objectForKey:@"graph"],[partial objectForKey:@"fieldScopes"]));
-  puts("PASS: Omitted attendee defaults permit unrelated edits while real RSVP, participation and record deletions remain protected");
+  puts("PASS: Omitted attendee defaults permit unrelated edits while RSVP and participation edits round-trip; incomplete child deletions remain protected");
 }
 static void CalendarMapperRegressionTests(RCCalendarStore *store)
 {
@@ -1101,6 +1267,25 @@ static void CalendarExceptionIntegration(RCTwoWayContext *c,ISyncClient *local,R
   CHECK(RCTwoWayExchange(c,&error)); CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state IN ('queued','applied','conflict')")==0);
   CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==0);
   puts("PASS: Tiger audio sound survives native collection, verified upload and replay");
+  CalendarFixtureSession(local,nil,nil);
+  events=CalendarFixtureEvents(local); soundRoot=EventWithTitle(events,soundTitle); CHECK(soundRoot);
+  soundEvent=[NSMutableDictionary dictionaryWithDictionary:[events objectForKey:soundRoot]];
+  alarmID=[[soundEvent objectForKey:@"audio alarms"] objectAtIndex:0];
+  snapshot=[[ISyncManager sharedManager] snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
+  alarm=[NSMutableDictionary dictionaryWithDictionary:[[snapshot recordsWithIdentifiers:[NSArray arrayWithObject:alarmID]] objectForKey:alarmID]];
+  [alarm setObject:[NSNumber numberWithInt:-1800] forKey:@"triggerduration"];
+  [soundEvent setObject:[NSArray arrayWithObject:@"expanded-native-rule"] forKey:@"recurrences"];
+  NSDictionary *rule=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Recurrence",ISyncRecordEntityNameKey,[NSArray arrayWithObject:soundRoot],@"owner",@"weekly",@"frequency",[NSNumber numberWithInt:2],@"interval",[NSNumber numberWithInt:4],@"count",@"monday",@"weekstartday",nil];
+  [soundEvent setObject:[NSArray arrayWithObject:@"expanded-native-attendee"] forKey:@"attendees"];
+  NSDictionary *person=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Attendee",ISyncRecordEntityNameKey,[NSArray arrayWithObject:soundRoot],@"owner",@"synthetic@example.invalid",@"email",@"requiredparticipant",@"role",@"accepted",@"status",@"individual",@"user type",[NSNumber numberWithBool:YES],@"rsvp",nil];
+  CalendarFixtureSession(local,[NSDictionary dictionaryWithObjectsAndKeys:soundEvent,soundRoot,alarm,alarmID,rule,@"expanded-native-rule",person,@"expanded-native-attendee",nil],nil);
+  before=mutations;
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==1); CHECK(mutations==before+1);
+  soundResource=CalendarResource(store,31,[remoteBodies objectForKey:soundHref],soundHref,[remoteETags objectForKey:soundHref]);
+  c->resources=[NSArray arrayWithObjects:resource,soundResource,nil]; c->graph=CalendarGraph(c->resources);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state IN ('queued','applied','conflict')")==0);
+  CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==0);
+  puts("PASS: Native recurrence, reminder timing and attendee edits upload, acknowledge and replay without duplicate PUTs");
 }
 static void CalendarTests(BOOL exceptionsOnly)
 {
@@ -1446,7 +1631,14 @@ int main(int argc,char **argv)
           @"home page",@"type",[NSURL URLWithString:@"https://fixture.invalid/home"],@"value",[NSArray arrayWithObject:@"new-fixture"],@"contact",nil];
       NSDictionary *address=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Street Address",ISyncRecordEntityNameKey,
           @"work",@"type",@"Fixture City",@"city",[NSArray arrayWithObject:@"new-fixture"],@"contact",nil];
-      LocalSession(local,[NSDictionary dictionaryWithObjectsAndKeys:newCard,@"new-fixture",website,@"new-website",address,@"new-address",nil],NO);
+      [newCard setObject:@"Synthetic phonetic" forKey:@"first name yomi"];
+      [newCard setObject:[NSArray arrayWithObject:@"new-date"] forKey:@"dates"];
+      [newCard setObject:[NSArray arrayWithObject:@"new-related"] forKey:@"related names"];
+      [newCard setObject:[NSArray arrayWithObject:@"new-im"] forKey:@"IMs"];
+      NSDictionary *date=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Date",ISyncRecordEntityNameKey,@"anniversary",@"type",[NSCalendarDate dateWithYear:2000 month:1 day:2 hour:12 minute:0 second:0 timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]],@"value",[NSArray arrayWithObject:@"new-fixture"],@"contact",nil];
+      NSDictionary *related=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Related Name",ISyncRecordEntityNameKey,@"partner",@"type",@"Synthetic partner",@"value",[NSArray arrayWithObject:@"new-fixture"],@"contact",nil];
+      NSDictionary *im=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.IM",ISyncRecordEntityNameKey,@"home",@"type",@"jabber",@"service",@"synthetic@example.invalid",@"user",[NSArray arrayWithObject:@"new-fixture"],@"contact",nil];
+      LocalSession(local,[NSDictionary dictionaryWithObjectsAndKeys:newCard,@"new-fixture",website,@"new-website",address,@"new-address",date,@"new-date",related,@"new-related",im,@"new-im",nil],NO);
     } else LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"new-fixture"],NO);
     fprintf(stderr,"Stage: exchange at line %d\n",__LINE__);
     CHECK(RCTwoWayExchange(&c,&error)); CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
@@ -1464,10 +1656,10 @@ int main(int argc,char **argv)
     if (fieldsOnly) {
       CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==0);
       CHECK(Scalar(&j,"SELECT count(*) FROM two_way_field_scopes")==2);
-      CHECK([[created objectForKey:@"graph"] count]==3);
+      CHECK([[created objectForKey:@"graph"] count]==6);
       CHECK([[[[created objectForKey:@"graph"] objectForKey:@"contact-downloaded-create"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
       CHECK([[[[resource objectForKey:@"graph"] objectForKey:@"contact-fixture"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);
-      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_aliases WHERE imported_id LIKE 'contact-downloaded-create%'")==3);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_aliases WHERE imported_id LIKE 'contact-downloaded-create%'")==6);
       ISyncRecordSnapshot *snapshot=[manager snapshotOfRecordsInTruthWithEntityNames:[local enabledEntityNames] usingIdentifiersForClient:local];
       NSDictionary *native=[snapshot recordsWithIdentifiers:[NSArray arrayWithObjects:@"fixture",@"new-fixture",nil]];
       CHECK([[[native objectForKey:@"fixture"] objectForKey:@"image"] isEqual:[card objectForKey:@"image"]]);

@@ -43,7 +43,7 @@ static int allowed(const char *component, const char *name)
   const char *fields;
   char wanted[80];
   size_t i;
-  if (!strcmp(component,"VCARD")) fields = "|N|FN|NICKNAME|ORG|TITLE|BDAY|NOTE|PHOTO|TEL|EMAIL|ADR|URL|X-ABLABEL|X-ABADR|X-ABSHOWAS|";
+  if (!strcmp(component,"VCARD")) fields = "|N|FN|NICKNAME|ORG|TITLE|BDAY|NOTE|PHOTO|TEL|EMAIL|ADR|URL|X-ABLABEL|X-ABADR|X-ABSHOWAS|X-PHONETIC-FIRST-NAME|X-PHONETIC-MIDDLE-NAME|X-PHONETIC-LAST-NAME|X-PHONETIC-ORG|X-ABDATE|X-ABRELATEDNAMES|IMPP|X-AIM|X-JABBER|X-MSN|X-YAHOO|X-ICQ|";
   else if (!strcmp(component,"VEVENT")) fields = "|SUMMARY|DESCRIPTION|LOCATION|URL|DTSTART|DTEND|DURATION|STATUS|CLASS|PRIORITY|RRULE|EXDATE|ORGANIZER|ATTENDEE|";
   else if (!strcmp(component,"VALARM")) fields = "|DESCRIPTION|SUMMARY|TRIGGER|REPEAT|DURATION|ACTION|ATTACH|";
   else return 0;
@@ -105,12 +105,15 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
   for (i=0;i<count;i++) {
     editIndex=i; reason="invalid property, occurrence, or unescaped newline";
     if (!token(edits[i].property) || (edits[i].group && !token(edits[i].group)) ||
-        edits[i].occurrence < -1 || (edits[i].occurrence == -1 && !edits[i].value) ||
+        (edits[i].replacementProperty && !token(edits[i].replacementProperty)) ||
+        (edits[i].replacementGroup && (format!=RCResourceVCard || !token(edits[i].replacementGroup))) ||
+        edits[i].occurrence < -1 ||
+        (edits[i].occurrence==-1 && (edits[i].replacementGroup || edits[i].replacementProperty)) || (edits[i].occurrence == -1 && !edits[i].value) ||
         (edits[i].value && (strchr(edits[i].value,'\r') || strchr(edits[i].value,'\n')))) goto invalid;
     if (edits[i].parameters) {
-      reason="invalid insertion parameters";
+      reason="invalid property parameters";
       const char *p=edits[i].parameters;
-      if (edits[i].occurrence!=-1 || !*p || !strchr(p,'=')) goto invalid;
+      if (*p && !strchr(p,'=')) goto invalid;
       for (;*p;p++) if (!((*p>='a' && *p<='z') || (*p>='A' && *p<='Z') ||
           (*p>='0' && *p<='9') || strchr("=,;-_./",*p))) goto invalid;
     }
@@ -149,7 +152,7 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
         if (!allowed(kinds[depth-1],edits[i].property)) goto invalid;
         if ((edits[i].group && (!add(&prefix,edits[i].group,strlen(edits[i].group)) || !add(&prefix,".",1))) ||
             !add(&prefix,edits[i].property,strlen(edits[i].property)) ||
-            (edits[i].parameters && (!add(&prefix,";",1) ||
+            (edits[i].parameters && *edits[i].parameters && (!add(&prefix,";",1) ||
               !add(&prefix,edits[i].parameters,strlen(edits[i].parameters)))) || !add(&prefix,":",1) ||
             !folded(&patches[i].replacement,(char *)prefix.data,prefix.length,edits[i].value)) {
           free(prefix.data); goto memory;
@@ -172,10 +175,23 @@ int RCResourcePatch(RCResourceFormat format, const unsigned char *base, size_t l
           (gLen && strncasecmp(edit->group,(char *)line.data,gLen))) continue;
       if (patches[i].seen++ != edit->occurrence) continue;
       editIndex=i; reason="property is not writable in this component";
-      if (!allowed(kinds[depth-1],edit->property)) goto invalid;
+      if (!allowed(kinds[depth-1],edit->property) || (edit->replacementProperty && !allowed(kinds[depth-1],edit->replacementProperty))) goto invalid;
       patches[i].start=start; patches[i].end=pos; patches[i].found=1;
-      if (edit->value && !folded(&patches[i].replacement,(char *)line.data,
-          (size_t)(sep-(char *)line.data)+1,edit->value)) goto memory;
+      if (edit->value) {
+        if (edit->parameters || edit->replacementGroup || edit->replacementProperty) {
+          Buffer prefix={NULL,0};
+          const char *outputGroup=edit->replacementGroup ?: edit->group;
+          const char *outputProperty=edit->replacementProperty ?: edit->property;
+          if ((outputGroup && (!add(&prefix,outputGroup,strlen(outputGroup)) || !add(&prefix,".",1))) ||
+              !add(&prefix,outputProperty,strlen(outputProperty)) ||
+              (edit->parameters ? (*edit->parameters && (!add(&prefix,";",1) || !add(&prefix,edit->parameters,strlen(edit->parameters)))) : !add(&prefix,nameEnd,(size_t)(sep-nameEnd))) ||
+              !add(&prefix,":",1) || !folded(&patches[i].replacement,(char *)prefix.data,prefix.length,edit->value)) {
+            free(prefix.data); goto memory;
+          }
+          free(prefix.data);
+        } else if (!folded(&patches[i].replacement,(char *)line.data,
+            (size_t)(sep-(char *)line.data)+1,edit->value)) goto memory;
+      }
     }
   }
   editIndex=(size_t)-1; reason="unclosed component";

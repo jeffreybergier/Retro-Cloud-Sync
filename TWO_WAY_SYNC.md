@@ -9,13 +9,17 @@ sessions and SQLite transactions. Credentials remain in Keychain.
 
 ## Supported changes
 
-Contacts support native creation, names, organization/department, notes,
-job title, nickname, birthday, company display, embedded photos, and phone/email/address/URL
-values, including adding/removing those multivalue entries. Existing labels,
-parameters, unedited photos, unknown fields and unedited structured components survive
-updates. Changing the label/type or preferred status of an existing entry is
-left pending without blocking supported value or text edits. Standard types,
-custom labels, and the native URL `home page` type are supported on creation.
+Contacts support native creation, names (including phonetic first/middle/last
+and company names), organization/department, notes, job title, nickname,
+birthday, company display, photos, phone/email/address/URL values, anniversaries
+and custom dates, related names, and Tiger IM accounts. Child entries can be
+added, edited and removed. Existing labels/types, address country codes and
+preferred phone/email/address/URL selections can change. Custom labels on
+ungrouped properties receive a separate vCard group to avoid relabelling other
+entries. Unknown parameters are preserved; unsafe or ambiguous representations
+remain pending. IM import supports IMPP and legacy X-AIM/X-JABBER/X-MSN/X-YAHOO/
+X-ICQ. Service changes convert legacy properties to IMPP in place, retaining
+identity and unrelated parameters. New IM entries use IMPP.
 New contacts require
 exactly one discovered address book; ambiguous destinations are deferred.
 
@@ -32,14 +36,31 @@ Malformed or repeated photos remain opaque during unrelated edits; replacing an 
 binary (`NSData`).
 
 Calendars support edits to event summary, description, location, URL, status,
-classification, and start/end dates in the existing date representation.
-Existing recurrence sets, exceptions, zones and alarms remain intact when
-editing supported event fields. Ordinary timed/all-day events with simple
-relative display/audio alarms can be created inside imported iCloud calendars.
-Local calendars are not converted into remote collections. New recurring or
-scheduled events, recurrence/attendee/alarm structure changes, date-type
-conversions, and edits to duration-based events that require date restructuring
-are deferred. Calendar moves and tasks are also outside this first coordinator.
+classification and start/end dates, including conversion between timed and
+all-day events. Display/audio reminders can be added, removed or edited,
+including relative/absolute triggers and repeat intervals. Recurring events
+can be created and their rules edited or removed using the daily/weekly/monthly/
+yearly rules representable by Tiger's schema. Attendee and organizer fields,
+including RSVP and participation status, can be created and edited. These
+changes are conditional calendar resource writes; server scheduling policy and
+permissions still determine invitation delivery. Offline tests do not verify
+iCloud invitation delivery.
+
+Structural edits clone the affected components, retain unrepresented extensions,
+and pass the production forward mapper before entering the outbox. Untouched
+components retain their physical bytes. RDATE/EXRULE, compound recurrence rules,
+email alarms, tasks and unsupported date/timezone representations remain pending.
+
+New writable local calendars created after the first feature-enabled sync can
+be created remotely when one calendar home is unambiguous. Existing local and
+subscription calendars are not automatically migrated. A persistent creation
+marker and PROPFIND verification recover an uncertain MKCALENDAR response.
+Events can move between imported calendars on the same host using conditional
+MOVE with `Overwrite: F`. The move is verified at both source and destination
+before updating the mirror, retaining the event's local identities. Occupied
+destinations and changed source versions remain conflicts. Pending collection
+operations protect local records and prevent a switch to one-way publication
+from discarding the pending edit. Recovery inspection lists their state.
 
 The coordinator projects local changes onto each encoder's supported fields,
 then validates the resulting resource through the production forward mapper.
@@ -52,9 +73,8 @@ that become absent retain a pending deletion marker until a mapper can
 represent them; absence alone does not prove their remote data was deleted.
 
 An unsupported contact field or an unfamiliar event field does not block a note,
-phone value or event text edit. Unsupported existing labels and alarm or
-participant changes remain pending while independent edits proceed. Changes to
-recurrence structure or all-day representation also defer dependent date and
+phone value or event text edit. Unrepresentable fields remain pending while independent edits proceed. Changes to
+unrepresentable recurrence structure or all-day dates also defer dependent date and
 exception edits, preventing a partial update from mixing incompatible temporal
 representations. If the wire format prevents an otherwise supported edit (for
 example, a legacy-encoded note or DURATION-based dates), independent field groups
@@ -64,8 +84,9 @@ ambiguous destinations still fail safely.
 
 New contacts and ordinary events may be created with supported fields while
 other fields remain pending locally. This is partial creation, not an assertion
-that every field uploaded. New recurring/scheduled events still require a richer mapper; they are
-never silently simplified to ordinary events.
+that every field uploaded. Recurrence and scheduling children must round-trip
+as part of the created event; unsupported structures are never silently
+simplified to ordinary events.
 
 Each outgoing operation atomically saves its represented graph and immutable
 field scope in `two_way_field_scopes`. Verification still checks the complete

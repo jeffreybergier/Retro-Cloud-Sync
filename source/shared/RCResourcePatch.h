@@ -14,18 +14,22 @@ typedef struct {
   const char *group; /* NULL means ungrouped. */
   int occurrence; /* zero-based among matching properties; -1 appends. */
   /* Encoded property value (vCard/iCalendar escaping), not a content line.
-     NULL removes an existing property. Existing parameters are retained. */
+     NULL removes an existing property. Parameters are retained unless overridden. */
   const char *value;
-  /* Optional parameters for a NEW property only, e.g. TYPE=HOME,PREF.
-     Existing property parameters always remain byte-for-byte preserved. */
+  /* Explicit full parameter replacement, e.g. TYPE=HOME,PREF. NULL retains
+     existing parameters; an empty string removes them. The caller owns lossless
+     reconstruction and round-trip validation when overriding parameters. */
   const char *parameters;
+  /* Optional output group for an existing vCard property; selector is unchanged. */
+  const char *replacementGroup;
+  /* Explicit rename between writable properties, e.g. X-AIM to IMPP. */
+  const char *replacementProperty;
 } RCResourceEdit;
 
 /* All selectors address the same immutable base, including multiple deletions.
    Only mapped value fields are editable; structural identity properties cannot
    change. Unknown fields/parameters and untouched physical lines are preserved.
-   Type/parameter changes and three-way merging require a future mapper; this
-   function deliberately does not infer them. Caller frees output. */
+   Parameter changes must be explicit; this function does not infer them. Caller frees output. */
 int RCResourcePatch(RCResourceFormat, const unsigned char *base, size_t length,
     const RCResourceEdit *, size_t editCount, unsigned char **output,
     size_t *outputLength, RCError *);

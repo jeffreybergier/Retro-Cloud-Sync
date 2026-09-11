@@ -15,6 +15,7 @@
 #include <string.h>
 #include <strings.h>
 
+#import "RCContactIM.h"
 static NSString * const kRCContactEntity = @"com.apple.contacts.Contact";
 static NSString * const kRCPhoneEntity = @"com.apple.contacts.Phone Number";
 static NSString * const kRCEmailEntity = @"com.apple.contacts.Email Address";
@@ -171,11 +172,7 @@ static int RCPushChild(RCSyncExportContext *context, long long contactIdentifier
   NSString *value;
   NSString *label;
 
-  /* Empty values and invalid URLs have no native child or identity. */
-  if (![entity isEqualToString:kRCAddressEntity]) {
-    NSString *visible=RCString(property->decodedValue);
-    if (![visible length] || ([entity isEqualToString:kRCURLEntity] && ![NSURL URLWithString:visible])) return 1;
-  }
+  if(!RCContactPropertyVisible(property)) return 1;
   if (context->propertyIdentities) {
     recordIdentifier=[context->propertyIdentities objectForKey:[NSNumber numberWithInt:property->position]];
   } else {
@@ -201,7 +198,28 @@ static int RCPushChild(RCSyncExportContext *context, long long contactIdentifier
     [record setObject:@"home page" forKey:@"type"];
     [record removeObjectForKey:@"label"];
   }
-  if ([entity isEqualToString:kRCAddressEntity]) {
+  if ([entity isEqual:@"com.apple.contacts.Date"] || [entity isEqual:@"com.apple.contacts.Related Name"]) {
+    NSString *type=nil;
+    if ([label hasPrefix:@"_$!<"] && [label hasSuffix:@">!$_"]) type=[[label substringWithRange:NSMakeRange(4,[label length]-8)] lowercaseString];
+    NSArray *types=[entity isEqual:@"com.apple.contacts.Date"] ? [NSArray arrayWithObject:@"anniversary"] :
+      [@"father|mother|parent|child|brother|sister|friend|spouse|partner|assistant|manager" componentsSeparatedByString:@"|"];
+    if ([types containsObject:type]) { [record setObject:type forKey:@"type"]; [record removeObjectForKey:@"label"]; }
+    else [record setObject:@"other" forKey:@"type"];
+    id v=[entity isEqual:@"com.apple.contacts.Date"] ? (id)RCBirthday(property->decodedValue) : RCString(property->decodedValue);
+    if (!v) return 1;
+    [record setObject:v forKey:@"value"];
+  } else if ([entity isEqual:@"com.apple.contacts.IM"]) {
+    NSString *raw=RCString(property->decodedValue);
+    NSString *legacy=RCLegacyIMService(property->name);
+    if(legacy) raw=[NSString stringWithFormat:@"%@:%@",legacy,[raw stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding]];
+    NSRange colon=[raw rangeOfString:@":"];
+    if (colon.location==NSNotFound) return 1;
+    NSString *service=[[raw substringToIndex:colon.location] lowercaseString];
+    if ([service isEqual:@"xmpp"]) service=@"jabber";
+    if (![[ @"aim|jabber|msn|yahoo|icq" componentsSeparatedByString:@"|"] containsObject:service]) return 1;
+    [record setObject:service forKey:@"service"];
+    [record setObject:[[raw substringFromIndex:colon.location+1] stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding] forKey:@"user"];
+  } else if ([entity isEqualToString:kRCAddressEntity]) {
     value = RCStreet(property);
     if ([value length] != 0) [record setObject:value forKey:@"street"];
     value = RCPart(property, 3);
@@ -249,6 +267,7 @@ static int RCExportContact(long long contactIdentifier,
   NSMutableArray *emails = [NSMutableArray array];
   NSMutableArray *addresses = [NSMutableArray array];
   NSMutableArray *urls = [NSMutableArray array];
+  NSMutableArray *dates=[NSMutableArray array], *related=[NSMutableArray array], *ims=[NSMutableArray array];
   NSString *primaryPhone = nil;
   NSString *primaryEmail = nil;
   NSString *primaryAddress = nil;
@@ -297,6 +316,9 @@ static int RCExportContact(long long contactIdentifier,
     NSString *temporaryValue = (stringValue); \
     if ([temporaryValue length] != 0) [contact setObject:temporaryValue forKey:(key)]; \
   } while (0)
+  NSString *phoneticKeys[]={@"first name yomi",@"middle name yomi",@"last name yomi",@"company name yomi"};
+  const char *phoneticNames[]={"X-PHONETIC-FIRST-NAME","X-PHONETIC-MIDDLE-NAME","X-PHONETIC-LAST-NAME","X-PHONETIC-ORG"}; int pi;
+  for(pi=0;pi<4;pi++) { RCVCardProperty *p=RCProperty(&document,phoneticNames[pi]); if(p) RC_SET_STRING(phoneticKeys[pi],RCString(p->decodedValue)); }
   RC_SET_STRING(@"last name", RCPart(name, 0));
   RC_SET_STRING(@"first name", RCPart(name, 1));
   RC_SET_STRING(@"middle name", RCPart(name, 2));
@@ -329,6 +351,12 @@ static int RCExportContact(long long contactIdentifier,
       entity = kRCAddressEntity; identifiers = addresses; primary = &primaryAddress;
     } else if (strcasecmp(property->name, "URL") == 0) {
       entity = kRCURLEntity; identifiers = urls; primary = &primaryURL;
+    } else if (!strcasecmp(property->name,"X-ABDATE")) {
+      entity=@"com.apple.contacts.Date"; identifiers=dates;
+    } else if (!strcasecmp(property->name,"X-ABRELATEDNAMES")) {
+      entity=@"com.apple.contacts.Related Name"; identifiers=related;
+    } else if (!strcasecmp(property->name,"IMPP") || RCLegacyIMService(property->name)) {
+      entity=@"com.apple.contacts.IM"; identifiers=ims;
     }
     if (entity != nil && !RCPushChild(context, contactIdentifier,
         contactSyncIdentifier, &document, property, entity, identifiers,
@@ -344,6 +372,7 @@ static int RCExportContact(long long contactIdentifier,
   RC_SET_RELATIONSHIP(@"email addresses", emails);
   RC_SET_RELATIONSHIP(@"street addresses", addresses);
   RC_SET_RELATIONSHIP(@"URLs", urls);
+  RC_SET_RELATIONSHIP(@"dates",dates); RC_SET_RELATIONSHIP(@"related names",related); RC_SET_RELATIONSHIP(@"IMs",ims);
 #undef RC_SET_RELATIONSHIP
   if (primaryPhone != nil) [contact setObject:[NSArray arrayWithObject:primaryPhone]
                                       forKey:@"primary phone number"];
@@ -551,8 +580,8 @@ NSDictionary *RCContactNativeGraphWithPhotoCache(RCContactStore *store, NSData *
   size_t i;
   if (!RCVCardParse([body bytes],[body length],&doc,error)) return nil;
   for(i=0;i<doc.propertyCount;i++) {
-    NSString *name=[RCString(doc.properties[i].name) uppercaseString];
-    if ([name isEqual:@"TEL"] || [name isEqual:@"EMAIL"] || [name isEqual:@"ADR"] || [name isEqual:@"URL"]) {
+    NSString *name=RCContactPathName(doc.properties[i].name);
+    if ([name isEqual:@"TEL"] || [name isEqual:@"EMAIL"] || [name isEqual:@"ADR"] || [name isEqual:@"URL"] || [name isEqual:@"X-ABDATE"] || [name isEqual:@"X-ABRELATEDNAMES"] || [name isEqual:@"IMPP"]) {
       int n=[[counts objectForKey:name] intValue];
       NSString *identifier=[paths objectForKey:[NSString stringWithFormat:@"%@:%d",name,n]];
       [counts setObject:[NSNumber numberWithInt:n+1] forKey:name];

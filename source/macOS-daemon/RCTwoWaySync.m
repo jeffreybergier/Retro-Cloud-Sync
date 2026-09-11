@@ -1,3 +1,4 @@
+#import "RCCalendarOperations.h"
 #import "RCLogger.h"
 #import "RCTwoWaySync.h"
 #import "RCSyncConflictSession.h"
@@ -600,6 +601,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
     }
     if (step!=SQLITE_DONE) goto sqlError;
     sqlite3_finalize(q); q=NULL;
+    if(!contacts && !RCCalendarProtectOperations(j,resources,graph,busy,error)) goto done;
     NSDictionary *published=PublishedGraph(j,error);
     if (!published) goto done;
     [known addObjectsFromArray:[busy allObjects]];
@@ -716,6 +718,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
       }
       [resources addObject:[NSDictionary dictionaryWithObject:key forKey:@"root"]];
     }
+    if(!contacts && !RCCalendarCollectOperations(j,truth,graph,resources,busy,error)) goto done;
     phase="local mapping and journaling";
     it=[resources objectEnumerator];
     while ((resource=[it nextObject])) {

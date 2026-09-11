@@ -209,9 +209,9 @@ static void patchTests(const char *path)
       "SUMMARY;LANGUAGE=en;X-PRIVATE=stay:Master\r\nX-APPLE-TRAVEL:keep\r\n"
       "BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:alarm\r\nEND:VALARM\r\nEND:VEVENT\r\n"
       "BEGIN:VEVENT\r\nUID:event\r\nRECURRENCE-ID:20260907T100000Z\r\nDTSTART:20260907T120000Z\r\nSUMMARY:Exception\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
-  RCResourceEdit ce[]={{0,"TEL","item1",0,"999",NULL},{0,"TEL",NULL,0,NULL,NULL},{0,"TEL",NULL,1,NULL,NULL},{0,"NOTE",NULL,-1,"new\\nline",NULL}};
-  RCResourceEdit ie[]={{3,"SUMMARY",NULL,0,"Changed master",NULL},{5,"SUMMARY",NULL,0,"Changed exception",NULL}};
-  RCResourceEdit bad={0,"UID",NULL,0,"changed",NULL};
+  RCResourceEdit ce[]={{0,"TEL","item1",0,"999",NULL,NULL,NULL},{0,"TEL",NULL,0,NULL,NULL,NULL,NULL},{0,"TEL",NULL,1,NULL,NULL,NULL,NULL},{0,"NOTE",NULL,-1,"new\\nline",NULL,NULL,NULL}};
+  RCResourceEdit ie[]={{3,"SUMMARY",NULL,0,"Changed master",NULL,NULL,NULL},{5,"SUMMARY",NULL,0,"Changed exception",NULL,NULL,NULL}};
+  RCResourceEdit bad={0,"UID",NULL,0,"changed",NULL,NULL,NULL};
   unsigned char *out=NULL; size_t n; RCWriteJournal j=openJournal(path); long long id,again;
   CHECK(RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),ce,4,&out,&n,&error));
   CHECK(strstr((char *)out,"item1.TEL;TYPE=CELL;X-PRIVATE=\"a:b\":999\r\n"));
@@ -220,12 +220,19 @@ static void patchTests(const char *path)
   CHECK(!strstr((char *)out,"TEL:222") && !strstr((char *)out,"TEL:333") && strstr((char *)out,"NOTE:new\\nline\r\n")); free(out);
   CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&bad,1,&out,&n,&error));
   {
-    RCResourceEdit append={0,"EMAIL","new-entry",-1,"new@example.test","TYPE=HOME,PREF"};
+    RCResourceEdit append={0,"EMAIL","new-entry",-1,"new@example.test","TYPE=HOME,PREF",NULL,NULL};
     CHECK(RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&append,1,&out,&n,&error));
     CHECK(strstr((char *)out,"new-entry.EMAIL;TYPE=HOME,PREF:new@example.test\r\n")); free(out);
     append.parameters="TYPE=HOME\r\nUID:injected";
     CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&append,1,&out,&n,&error));
     append.parameters="TYPE=WORK"; append.property="TEL"; append.group="item1"; append.occurrence=0;
+    CHECK(RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&append,1,&out,&n,&error));
+    CHECK(strstr((char *)out,"item1.TEL;TYPE=WORK:new@example.test")); free(out);
+    append.replacementGroup="isolated";
+    append.replacementProperty="EMAIL";
+    CHECK(RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&append,1,&out,&n,&error));
+    CHECK(strstr((char *)out,"isolated.EMAIL;TYPE=WORK:new@example.test")); free(out);
+    append.replacementProperty="UID";
     CHECK(!RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&append,1,&out,&n,&error));
   }
   bad.component=99; bad.property="SUMMARY"; bad.occurrence=0; bad.value="private event title";
@@ -243,7 +250,7 @@ static void patchTests(const char *path)
   CHECK(n==strlen(calendar) && !memcmp(out,calendar,n)); free(out);
   {
     char longValue[601]; size_t index; RCVCardDocument document;
-    RCResourceEdit edit={0,"NOTE",NULL,-1,longValue,NULL};
+    RCResourceEdit edit={0,"NOTE",NULL,-1,longValue,NULL,NULL,NULL};
     for(index=0;index<sizeof(longValue)-1;index+=2) { longValue[index]=(char)0xc3; longValue[index+1]=(char)0xa9; }
     longValue[sizeof(longValue)-1]=0;
     CHECK(RCResourcePatch(RCResourceVCard,(const unsigned char *)card,strlen(card),&edit,1,&out,&n,&error));

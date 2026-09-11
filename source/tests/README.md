@@ -279,3 +279,18 @@ allows fixture Sync Alerts, opens Conflict Resolver, and saves
 `conflict-review.png` for UI automation or review. The fixture waits for that
 review to finish before submitting the next user edit; a provisional snapshot
 while the chooser is open is not treated as a settled decision.
+
+### Expanded contact and calendar fields
+
+The offline two-way mapper suite covers existing labels and preferred email,
+phonetic names, anniversaries, related names, modern/legacy IM values, reminder
+timing/removal, recurring creation/rule changes, attendee participation/RSVP,
+organizer fields and all-day conversion. It checks extension preservation and
+replay. Synthetic MKCALENDAR and MOVE tests cover lost responses, destination
+conflicts and protection of pending records. The portable HTTP suite checks the
+real conditional headers, Destination, Overwrite and redirect restrictions.
+
+The native `fields` suite creates contacts with Date, Related Name and IM
+children and phonetic names. `calendar-exceptions` also exercises native
+recurrence, reminder timing and attendee changes through verified acceptance.
+All transports in these native tests are synthetic; no invitation is delivered.

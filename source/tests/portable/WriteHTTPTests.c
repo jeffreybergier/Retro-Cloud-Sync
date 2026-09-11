@@ -29,6 +29,18 @@ int main(int argc, char **argv)
   snprintf(url,sizeof(url),"%s/move",argv[1]);
   CHECK(RCHTTPClientConditionalRequest(client,"PUT",url,"text/vcard","new",3,NULL,1,&response,&error) && response.statusCode==307);
   CHECK(response.effectiveURL && !strcmp(response.effectiveURL,url));
+  {
+    char target[256]; snprintf(target,sizeof(target),"%s/target",argv[1]);
+    CHECK(RCHTTPClientMove(client,url,target,"\"base\"",&response,&error) && response.statusCode==307);
+    CHECK(!RCHTTPClientMove(client,url,"https://unexpected.invalid/target","\"base\"",&response,&error));
+    CHECK(!RCHTTPClientMove(client,url,"https://localhost/target\r\nInjected: yes","\"base\"",&response,&error));
+    snprintf(url,sizeof(url),"%s/calendar-move",argv[1]);
+    CHECK(!RCHTTPClientRequest(client,"MOVE",url,NULL,NULL,NULL,0,&response,&error));
+    CHECK(RCHTTPClientMove(client,url,target,"\"base\"",&response,&error) && response.statusCode==201);
+    snprintf(url,sizeof(url),"%s/calendar-create",argv[1]);
+    CHECK(!RCHTTPClientRequest(client,"MKCALENDAR",url,NULL,"application/xml","<new/>",6,&response,&error));
+    CHECK(RCHTTPClientConditionalRequest(client,"MKCALENDAR",url,"application/xml","<new/>",6,NULL,1,&response,&error) && response.statusCode==201);
+  }
   snprintf(url,sizeof(url),"%s/discovery",argv[1]);
   CHECK(RCHTTPClientRequest(client,"PROPFIND",url,"0","application/xml","<probe/>",8,&response,&error) && response.statusCode==207);
   snprintf(url,sizeof(url),"%s/foreign",argv[1]);

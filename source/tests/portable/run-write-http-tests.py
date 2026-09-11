@@ -36,6 +36,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             status = 204
         elif self.path == "/delete" and (self.command, match, none, body) == ("DELETE", '"base"', None, b""):
             status = 204
+        elif self.path == "/calendar-create" and (self.command, match, none, body) == ("MKCALENDAR", None, "*", b"<new/>"):
+            status = 201
+        elif self.path == "/calendar-move" and self.command == "MOVE" and match == '"base"' and none is None and self.headers.get("Overwrite") == "F" and self.headers.get("Destination") == f"https://localhost:{self.server.server_port}/target":
+            status = 201
         elif self.path == "/move":
             status, location = 307, "/must-not-follow"
         elif self.path == "/discovery":
@@ -50,7 +54,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    do_GET = do_PUT = do_DELETE = do_PROPFIND = handle_request
+    do_GET = do_PUT = do_DELETE = do_PROPFIND = do_MOVE = do_MKCALENDAR = handle_request
 
 
 def main():
@@ -73,7 +77,7 @@ def main():
             subprocess.run([sys.argv[1], f"https://localhost:{server.server_port}",
                             str(root / "server.pem"), str(root / "untrusted.pem")], check=True, env=env, timeout=30)
             paths = [request[1] for request in Handler.received]
-            assert paths == ["/create", "/update", "/delete", "/move", "/discovery", "/principal", "/foreign"], paths
+            assert paths == ["/create", "/update", "/delete", "/move", "/move", "/calendar-move", "/calendar-create", "/discovery", "/principal", "/foreign"], paths
         finally:
             server.shutdown()
             thread.join()

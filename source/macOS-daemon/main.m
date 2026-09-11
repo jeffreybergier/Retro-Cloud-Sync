@@ -1,3 +1,4 @@
+#import "RCCalendarOperations.h"
 #import "RCContactPhoto.h"
 #import "RCLogger.h"
 //
@@ -124,6 +125,8 @@ static void RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
   if (!http || RCTwoWayRunWrites(journal,http,calendars ? "text/calendar; charset=utf-8" :
       "text/vcard; charset=utf-8",&error)<0)
     RCLogger(RCLogWarning, NULL, "Upload", @"Outgoing pass failed; queued changes remain pending: %s",error.message);
+  if (http && calendars && !RCCalendarRunOperations(journal,http,&error))
+    RCLogger(RCLogWarning,"Calendars","Upload",@"Calendar operation pending: %s",error.message);
   if (http && contacts && !RCContactPhotoRefreshWrites(contacts,http,&error))
     RCLogger(RCLogWarning,"Contacts","Upload",@"Uploaded photo verification pending: %s",error.message);
   RCHTTPClientDestroy(http);
@@ -139,7 +142,13 @@ static BOOL RCHasPendingWrites(RCWriteJournal *journal)
       "AND state NOT IN ('acknowledged','cancelled') LIMIT 1",-1,&query,NULL)==SQLITE_OK) {
     sqlite3_bind_int64(query,1,journal->account); step=sqlite3_step(query);
   }
-  sqlite3_finalize(query);
+  sqlite3_finalize(query); query=NULL;
+  if(step!=SQLITE_DONE) return YES;
+  if(sqlite3_prepare_v2(journal->db,"SELECT 1 FROM sqlite_master WHERE type='table' AND name='calendar_actions'",-1,&query,NULL)!=SQLITE_OK) return YES;
+  step=sqlite3_step(query); sqlite3_finalize(query); query=NULL;
+  if(step==SQLITE_DONE) return NO;
+  if(step!=SQLITE_ROW || sqlite3_prepare_v2(journal->db,"SELECT 1 FROM calendar_actions WHERE account_id=? AND state<>'done' LIMIT 1",-1,&query,NULL)!=SQLITE_OK) return YES;
+  sqlite3_bind_int64(query,1,journal->account); step=sqlite3_step(query); sqlite3_finalize(query);
   return step!=SQLITE_DONE;
 }
 
@@ -605,6 +614,12 @@ int main(int argc, char *argv[])
         while ((step=sqlite3_step(statement))==SQLITE_ROW)
           printf("%s %d\n",sqlite3_column_text(statement,0),sqlite3_column_int(statement,1));
         if (step!=SQLITE_DONE) { ok=0; RCErrorSet(&error,1,"Could not inspect native attention state"); }
+      }
+      sqlite3_finalize(statement); statement=NULL;
+      if (ok && sqlite3_prepare_v2(database,"SELECT kind,state,count(*) FROM calendar_actions WHERE state<>'done' GROUP BY kind,state",-1,&statement,NULL)==SQLITE_OK) {
+        puts("Calendar operations (kind/state/count)");
+        while((step=sqlite3_step(statement))==SQLITE_ROW) printf("%s %s %d\n",sqlite3_column_text(statement,0),sqlite3_column_text(statement,1),sqlite3_column_int(statement,2));
+        if(step!=SQLITE_DONE) { ok=0; RCErrorSet(&error,1,"Could not inspect calendar operations"); }
       }
       sqlite3_finalize(statement); statement=NULL;
       if (ok && sqlite3_prepare_v2(database,"SELECT root_id,fields FROM two_way_pending_fields ORDER BY account_id,root_id",

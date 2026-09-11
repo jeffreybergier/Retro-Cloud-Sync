@@ -583,11 +583,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
       NSString *title = String((const char *)sqlite3_column_text(q, 2));
       /* Calendar identity is title + read-only in Tiger. Include a stable short
          suffix so equal remote titles cannot merge with each other. */
-      [record
-          setObject:[NSString stringWithFormat:@"%@ (iCloud %@)",
-                                               title ? title : @"Calendar",
-                                               [id substringFromIndex:[id length] - 6]]
-             forKey:@"title"];
+      [record setObject:RCCalendarNativeTitle(RCCalendarStoreWriteJournal(store),id,title) forKey:@"title"];
       Text(record, @"notes", (const char *)sqlite3_column_text(q, 3));
       /* iCal turns imported calendars into writable local calendars. Declaring
          read-only here changes its identity on the next iCal sync and duplicates
