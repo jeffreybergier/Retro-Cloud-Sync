@@ -47,3 +47,5 @@ caldav-probe: build-mac-caldav-probe
 
 help:
 	@cat "$(SOURCE_ROOT)/tests/help.txt"
+
+include $(SOURCE_ROOT)/make/mac-shutdown-tests.mk

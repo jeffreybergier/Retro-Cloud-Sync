@@ -1,7 +1,7 @@
 # Native tests for the NSLog boundary and mail connection diagnostics.
 LOGGING_TEST_ROOT := $(BUILD_ROOT)/tests/macOS/logging
 LOGGING_TEST_SOURCES := $(SOURCE_ROOT)/tests/macOS/logging/LoggerTests.m \
-  $(SOURCE_ROOT)/tests/macOS/logging/MailLoggingTests.c $(DAEMON_SOURCE_ROOT)/RCLogger.m $(DAEMON_SOURCE_ROOT)/RCStatus.m \
+  $(SOURCE_ROOT)/tests/macOS/logging/MailLoggingTests.c $(DAEMON_SOURCE_ROOT)/RCLogger.m $(DAEMON_SOURCE_ROOT)/RCStatus.m $(SHARED_SOURCE_ROOT)/RCError.c \
   $(SOURCE_ROOT)/tests/macOS/logging/StatusTests.m
 LOGGING_TEST_INPUTS := $(LOGGING_TEST_SOURCES) $(DAEMON_SOURCE_ROOT)/RCMailProxy.c \
   $(DAEMON_SOURCE_ROOT)/RCLogger.h $(SHARED_SOURCE_ROOT)/RCLogLevel.h

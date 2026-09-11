@@ -471,6 +471,7 @@ int RCDAVSyncCollection(RCHTTPClient *client, const char *url, const char *token
   tokens[tokenCount++] = RCCopyString(token ? token : "");
   if (!tokens[0]) goto exhausted;
   for (page = 0; page < 1024; page++) {
+    if (RCCheckCancellation(error)) goto exhausted;
     RCHTTPResponse response;
     xmlDocPtr doc = NULL;
     xmlChar *escaped = NULL;

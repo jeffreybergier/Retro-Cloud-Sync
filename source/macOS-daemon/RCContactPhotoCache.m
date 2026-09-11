@@ -106,7 +106,7 @@ BOOL RCContactPhotoRefresh(RCContactStore *store, RCHTTPClient *http, RCError *e
   sqlite3_finalize(q);
   if (step!=SQLITE_DONE) { RCErrorSet(error,1,"Could not read contact photo resources"); return NO; }
   NSEnumerator *it=[resources objectEnumerator]; NSArray *resource;
-  while ((resource=[it nextObject])) if (!RCContactPhotoFetch(store,http,[resource objectAtIndex:0],
+  while ((resource=[it nextObject])) if (RCCheckCancellation(error) || !RCContactPhotoFetch(store,http,[resource objectAtIndex:0],
       [resource objectAtIndex:1],[resource objectAtIndex:2],error)) return NO;
   return YES;
 }
@@ -130,6 +130,7 @@ BOOL RCContactPhotoRefreshWrites(RCContactStore *store, RCHTTPClient *http, RCEr
   if (step!=SQLITE_DONE) { RCErrorSet(error,1,"Could not read uploaded contact photo versions"); return NO; }
   BOOL ok=YES; NSEnumerator *it=[resources objectEnumerator]; NSArray *resource;
   while ((resource=[it nextObject])) {
+    if(RCCheckCancellation(error)) return NO;
     RCError local; RCErrorClear(&local);
     if (!RCContactPhotoFetch(store,http,[resource objectAtIndex:0],[resource objectAtIndex:1],[resource objectAtIndex:2],&local)) {
       ok=NO; if (error) *error=local;

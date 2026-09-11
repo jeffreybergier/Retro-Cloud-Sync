@@ -25,6 +25,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <sys/select.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
 static NSString * const kRCCertificateName = @"cacert.pem";
 static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
@@ -46,6 +51,7 @@ typedef struct {
   int shouldStop;
   unsigned int interval;
   char *username;
+  char *configurationPath;
   char *serviceURL;
   char *databasePath;
   char *certificatePath;
@@ -117,7 +123,7 @@ static void RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
   RCHTTPClientConfig config;
   RCError error;
   RCHTTPClient *http;
-  if (!password) return;
+  if (!password || RCStopRequested) return;
   NSString *service=calendars ? @"Calendars" : @"Contacts";
   RCStatusPhase(service,@"Uploading");
   memset(&config,0,sizeof(config)); RCErrorClear(&error);
@@ -161,6 +167,84 @@ static BOOL RCHasPendingWrites(RCWriteJournal *journal)
   return step!=SQLITE_DONE;
 }
 
+/* Keychain can block in a system authorization dialog. Run only that read in
+   a disposable copy of this same executable (preserving its Keychain ACL).
+   It has no sync stores or sessions. Its stdout is a private pipe, never a log. */
+static BOOL RCCopyPasswordForWorker(RCSyncWorker *worker, char **password,
+                                    size_t *length, RCError *error)
+{
+  NSTask *task=[[[NSTask alloc] init] autorelease];
+  NSPipe *pipe=[NSPipe pipe];
+  NSString *directory=[[NSString stringWithUTF8String:worker->databasePath] stringByDeletingLastPathComponent];
+  [task setLaunchPath:[directory stringByAppendingPathComponent:@"RetroCloudSyncDaemon"]];
+  [task setArguments:[NSArray arrayWithObjects:@"--read-credentials",
+      [NSString stringWithUTF8String:worker->configurationPath],nil]];
+  [task setStandardOutput:pipe]; [task setStandardError:[NSFileHandle fileHandleWithNullDevice]];
+  char *buffer=calloc(4097,1); size_t used=0; BOOL ok=NO, launched=NO;
+  *password=NULL; *length=0;
+  if(!buffer) { RCErrorSet(error,1,"Could not allocate credential buffer"); return NO; }
+  @try {
+    if(!RCStopRequested) {
+      [task launch]; launched=YES;
+      int fd=[[pipe fileHandleForReading] fileDescriptor];
+      fcntl(fd,F_SETFL,fcntl(fd,F_GETFL,0)|O_NONBLOCK);
+      while(!RCStopRequested && used<4096) {
+        fd_set reads; FD_ZERO(&reads); FD_SET(fd,&reads);
+        struct timeval timeout={0,100000};
+        int ready=select(fd+1,&reads,NULL,NULL,&timeout);
+        if(ready<0 && errno!=EINTR) break;
+        if(ready<=0) continue;
+        ssize_t n=read(fd,buffer+used,4096-used);
+        if(n>0) used+=n;
+        else if(n==0) { [task waitUntilExit]; ok=[task terminationStatus]==0 && used>0; break; }
+        else if(errno!=EAGAIN && errno!=EINTR) break;
+      }
+    }
+  } @catch(NSException *exception) { ok=NO; }
+  if(launched && [task isRunning]) {
+    /* Only the read-only credential helper is killed, never a sync worker. */
+    kill([task processIdentifier],SIGKILL); [task waitUntilExit];
+  }
+  if(ok) {
+    NSDictionary *current=[NSDictionary dictionaryWithContentsOfFile:[NSString stringWithUTF8String:worker->configurationPath]];
+    id settings=[current objectForKey:@"Contacts"];
+    id username=[settings isKindOfClass:[NSDictionary class]] ? [settings objectForKey:@"Username"] : nil;
+    if(![username isKindOfClass:[NSString class]] ||
+        [username caseInsensitiveCompare:[NSString stringWithUTF8String:worker->username]]!=NSOrderedSame) ok=NO;
+  }
+  if(RCStopRequested) ok=NO;
+  if(ok) { buffer[used]=0; *password=buffer; *length=used; }
+  else { RCICloudCredentialsClearPassword(buffer,4097); if(!RCCheckCancellation(error)) RCErrorSet(error,1,"Saved password unavailable"); }
+  return ok;
+}
+
+static int RCReadCredentialsHelper(const char *configurationPath)
+{
+  struct stat output;
+  /* Refuse terminal/file output so this private transport cannot print secrets
+     to the daemon's configured log or an interactive shell. */
+  if(fstat(STDOUT_FILENO,&output)!=0 || !S_ISFIFO(output.st_mode)) return 1;
+  NSDictionary *configuration=[NSDictionary dictionaryWithContentsOfFile:[NSString stringWithUTF8String:configurationPath]];
+  id contacts=[configuration objectForKey:@"Contacts"];
+  id username=[contacts isKindOfClass:[NSDictionary class]] ? [contacts objectForKey:@"Username"] : nil;
+  if(![username isKindOfClass:[NSString class]]) return 1;
+  char *password=NULL; size_t length=0,offset=0; RCError error;
+  if(!RCICloudCredentialsCopyPassword([username UTF8String],&password,&length,&error)) return 1;
+  while(offset<length) {
+    ssize_t n=write(STDOUT_FILENO,password+offset,length-offset);
+    if(n<0 && errno==EINTR) continue;
+    if(n<=0) break;
+    offset+=n;
+  }
+  RCICloudCredentialsClearPassword(password,length);
+  return offset==length ? 0 : 1;
+}
+
+static int RCStopSQL(void *unused)
+{
+  (void)unused; return RCStopRequested != 0;
+}
+
 static void *RCSyncWorkerMain(void *context)
 {
   RCSyncWorker *worker = (RCSyncWorker *)context;
@@ -197,13 +281,12 @@ static void *RCSyncWorkerMain(void *context)
     if(worker->contactsEnabled) RCStatusPhase(@"Contacts",@"Waiting");
     if(worker->calendarsEnabled) RCStatusPhase(@"Calendars",@"Waiting");
     RCErrorClear(&error);
-    if (!RCICloudCredentialsCopyPassword(worker->username, &password, &passwordLength,
-                                         &error)) {
+    if (!RCCopyPasswordForWorker(worker, &password, &passwordLength, &error) && !RCStopRequested) {
       if(worker->contactsEnabled) RCStatusFailure(@"Contacts",@"Credentials");
       if(worker->calendarsEnabled) RCStatusFailure(@"Calendars",@"Credentials");
       RCLogger(RCLogWarning, "Account", "Credentials", @"Downloads and uploads skipped; saved password unavailable: %s", error.message);
     }
-    if (worker->contactsEnabled) {
+    if (worker->contactsEnabled && !RCStopRequested) {
       RCLoggerSetContext("Contacts", poll);
       RCErrorClear(&error);
       store = RCContactStoreOpen(worker->databasePath, worker->username, &error);
@@ -213,6 +296,7 @@ static void *RCSyncWorkerMain(void *context)
       } else {
         RCWriteJournal journal=RCContactStoreWriteJournal(store);
         if (worker->contactsTwoWay) RCRunAccountWrites(&journal,worker,password,NO,store);
+        if(RCStopRequested) goto contacts_finished;
         memset(&mirrorConfig, 0, sizeof(mirrorConfig));
         mirrorConfig.serviceURL = worker->serviceURL;
         mirrorConfig.username = worker->username;
@@ -229,7 +313,7 @@ static void *RCSyncWorkerMain(void *context)
                   result.downloadedResourceCount, result.unchangedResourceCount,
                   statistics.availableCount, statistics.missingCount,
                   statistics.parseErrorCount);
-          } else {
+          } else if(!RCStopRequested) {
             RCStatusFailure(@"Contacts",contactsFetched ? @"Database" : @"Download");
             RCLogger(RCLogError, "Contacts", "Download", @"%s failed: %s", contactsFetched ? "Reading download statistics" : "Download", error.message);
           }
@@ -246,6 +330,7 @@ static void *RCSyncWorkerMain(void *context)
           }
           RCHTTPClientDestroy(photos);
         }
+        if (RCStopRequested) goto contacts_finished;
         /* A failed fetch (or locked Keychain) must not prevent retrying the
            last committed mirror. The bridge refuses a never-completed mirror. */
         if(password && !contactsFetched) RCStatusFailure(@"Contacts",@"Download");
@@ -263,6 +348,7 @@ static void *RCSyncWorkerMain(void *context)
           if (!contactsFetched) RCLogger(RCLogInfo, "Contacts", "Apply", @"Attempting local application from the last committed download");
           exported=RCSyncServicesPushContacts(store,worker->syncClientDescriptionPath,&syncRecordCount,&error);
         }
+        if(RCStopRequested) goto contacts_finished;
         if(!exported && contactsFetched) RCStatusFailure(@"Contacts",@"Apply");
         RCStatusFinish(@"Contacts",&journal,contactsFetched && exported && syncRecordCount>=0);
         if (exported && syncRecordCount<0) {
@@ -276,8 +362,9 @@ static void *RCSyncWorkerMain(void *context)
         }
       }
     }
+contacts_finished:
     RCContactStoreClose(store);
-    if (worker->calendarsEnabled) {
+    if (worker->calendarsEnabled && !RCStopRequested) {
       RCCalendarStore *calendarStore;
       RCLoggerSetContext("Calendars", poll);
       RCErrorClear(&error);
@@ -289,6 +376,7 @@ static void *RCSyncWorkerMain(void *context)
       } else {
         RCWriteJournal journal=RCCalendarStoreWriteJournal(calendarStore);
         if (worker->calendarsTwoWay) RCRunAccountWrites(&journal,worker,password,YES,NULL);
+        if(RCStopRequested) goto calendar_finished;
         memset(&mirrorConfig, 0, sizeof(mirrorConfig));
         mirrorConfig.serviceURL = "https://caldav.icloud.com";
         mirrorConfig.username = worker->username;
@@ -309,9 +397,10 @@ static void *RCSyncWorkerMain(void *context)
                   @"resources unchanged this poll",
                   result.collectionCount, result.downloadedResourceCount,
                   result.unchangedResourceCount);
-          else
+          else if(!RCStopRequested)
             RCLogger(RCLogError, "Calendars", "Download", @"Download failed: %s", error.message);
         }
+        if (RCStopRequested) goto calendar_finished;
         if(password && !calendarsFetched) RCStatusFailure(@"Calendars",@"Download");
         RCStatusPhase(@"Calendars",@"Applying");
         RCErrorClear(&error);
@@ -327,6 +416,7 @@ static void *RCSyncWorkerMain(void *context)
           if (!calendarsFetched) RCLogger(RCLogInfo, "Calendars", "Apply", @"Attempting local application from the last committed download");
           exported=RCSyncServicesPushCalendars(calendarStore,worker->calendarDescriptionPath,0,&syncRecordCount,&error);
         }
+        if(RCStopRequested) goto calendar_finished;
         if(!exported && calendarsFetched) RCStatusFailure(@"Calendars",@"Apply");
         RCStatusFinish(@"Calendars",&journal,calendarsFetched && exported && syncRecordCount>=0);
         if (exported && syncRecordCount<0) {
@@ -334,16 +424,26 @@ static void *RCSyncWorkerMain(void *context)
         } else if (exported) {
           RCLogger(RCLogInfo, "Calendars", "Apply", @"Local application complete: %ld Sync Services records in snapshot",
                 syncRecordCount);
-          if (!RCCalendarStorePruneHistory(calendarStore, &error)) {
+          /* History compaction can be lengthy, but it has no remote effects.
+             Interrupt only this maintenance phase, not journal checkpoints. */
+          sqlite3_progress_handler(calendarStore->db,1000,RCStopSQL,NULL);
+          if (!RCStopRequested && !RCCalendarStorePruneHistory(calendarStore, &error) && !RCStopRequested) {
             RCStatusFailure(@"Calendars",@"Database");
             RCLogger(RCLogError, "Calendars", "Database", @"Calendar history cleanup failed: %s", error.message);
           }
+          sqlite3_progress_handler(calendarStore->db,0,NULL,NULL);
         } else if (worker->calendarsTwoWay && !calendarsFetched)
           RCLogger(RCLogWarning, "Calendars", "Apply", @"Skipped: two-way local application requires a successful download");
         else
           RCLogger(RCLogError, "Calendars", "Apply", @"Local application failed: %s", error.message);
+calendar_finished:
         RCCalendarStoreClose(calendarStore);
       }
+    }
+    if (RCStopRequested) {
+      RCICloudCredentialsClearPassword(password,passwordLength);
+      [pool release];
+      break;
     }
     RCLoggerSetContext("Account", poll);
     RCLogger(RCLogInfo, NULL, "Poll", @"Finished in %.1fs; next poll in %us",
@@ -367,7 +467,7 @@ static void *RCSyncWorkerMain(void *context)
 }
 
 static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
-                              NSString *daemonDirectory)
+                              NSString *daemonDirectory, NSString *configurationPath)
 {
   NSDictionary *contacts = [configuration objectForKey:@"Contacts"];
   NSString *username;
@@ -433,6 +533,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
   syncClientDescriptionPath =
       [daemonDirectory stringByAppendingPathComponent:kRCSyncClientDescriptionName];
   worker->username = RCCopyCString([username UTF8String]);
+  worker->configurationPath = RCCopyCString([configurationPath fileSystemRepresentation]);
   worker->serviceURL = RCCopyCString([serviceURL UTF8String]);
   worker->databasePath = RCCopyCString([databasePath fileSystemRepresentation]);
   worker->certificatePath = RCCopyCString([certificatePath fileSystemRepresentation]);
@@ -450,7 +551,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
       @"Contacts=%@, Calendars=%@, interval=%us, calendar history=%@",
       contactsSyncMode, calendarsSyncMode, worker->interval,
       worker->calendarHistoryYears ? [NSString stringWithFormat:@"%d years", worker->calendarHistoryYears] : @"all");
-  if (worker->username == NULL || worker->serviceURL == NULL ||
+  if (worker->configurationPath == NULL || worker->username == NULL || worker->serviceURL == NULL ||
       worker->databasePath == NULL || worker->certificatePath == NULL ||
       worker->syncClientDescriptionPath == NULL ||
       worker->calendarDatabasePath == NULL || worker->calendarDescriptionPath == NULL) {
@@ -469,6 +570,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
   return YES;
 
 failed:
+  free(worker->configurationPath);
   free(worker->username);
   free(worker->serviceURL);
   free(worker->databasePath);
@@ -491,6 +593,7 @@ static void RCSyncWorkerStop(RCSyncWorker *worker)
     pthread_cond_destroy(&worker->condition);
     pthread_mutex_destroy(&worker->mutex);
   }
+  free(worker->configurationPath);
   free(worker->username);
   free(worker->serviceURL);
   free(worker->databasePath);
@@ -504,6 +607,7 @@ static void RCSyncWorkerStop(RCSyncWorker *worker)
 static void HandleTerminationSignal(int signalNumber)
 {
   (void)signalNumber;
+  RCStopRequested = 1;
   gShouldKeepRunning = 0;
 }
 
@@ -604,6 +708,11 @@ int main(int argc, char *argv[])
   RCMailProxyConfig mailConfigs[2];
   RCMailProxy *mailProxy;
   RCSyncWorker syncWorker;
+
+  if(argc==3 && !strcmp(argv[1],"--read-credentials")) {
+    NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
+    int result=RCReadCredentialsHelper(argv[2]); [pool release]; return result;
+  }
 
   signal(SIGINT, HandleTerminationSignal);
   signal(SIGTERM, HandleTerminationSignal);
@@ -762,7 +871,7 @@ int main(int argc, char *argv[])
   }
   RCStatusStart(configurationPath,configuration);
   if (configuration != nil) {
-    if (!RCSyncWorkerStart(&syncWorker, configuration, daemonDirectory)) {
+    if (!RCSyncWorkerStart(&syncWorker, configuration, daemonDirectory, configurationPath)) {
       RCLogger(RCLogError, "Daemon", "Startup", @"Account worker initialization failed; daemon exiting");
       RCStatusFailure(@"Contacts",@"Configuration");
       RCStatusFailure(@"Calendars",@"Configuration");
@@ -793,9 +902,11 @@ int main(int argc, char *argv[])
                                  forMode:NSDefaultRunLoopMode];
   [keepAlivePort release];
   RCLogger(RCLogInfo, "Daemon", "Shutdown", @"Stop requested; waiting for active work");
+  RCStatusStopping();
+  RCMailProxyRequestStop(mailProxy);
   RCSyncWorkerStop(&syncWorker);
   RCStatusStop();
-  RCMailProxyStop(mailProxy);
+  RCMailProxyStopForExit(mailProxy);
 
   RCLogger(RCLogInfo, "Daemon", "Shutdown", @"Stopped");
   curl_global_cleanup();

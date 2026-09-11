@@ -301,3 +301,18 @@ status, retained success timestamps, pending work and account isolation,
 restart/stop snapshots, account switching, private file permissions and failed
 status queries. Run `make test-mac-logging TEST_HOST=x4-vm`; it does not use
 production configuration, Sync Services or iCloud.
+
+## Shutdown regressions
+
+`make test-mac-shutdown TEST_HOST=x4-vm` copies an isolated daemon under Desktop,
+uses alternate loopback mail ports and replaces only its credential helper with
+a sleeping fixture. It sends SIGTERM and checks exit within five seconds,
+helper cleanup and the stopped status snapshot. It does not install a service,
+read Keychain, open Sync Services or contact iCloud.
+
+Portable tests exercise cancellation of a stalled HTTPS response, cancelled
+contact/calendar mirror rollback (including sync tokens and history scope), and
+restart verification of an upload cancelled after the server applied it, without
+another PUT. The native conflict tool includes bounded merge-wait and pre-session
+cancellation checks; `ConflictSessionTests --cancellation-only` runs those checks
+without registering clients. Run Mac suites sequentially.

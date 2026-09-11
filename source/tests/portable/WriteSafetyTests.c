@@ -19,7 +19,7 @@ static const char newCard[]="BEGIN:VCARD\r\nVERSION:3.0\r\nUID:stable\r\nN:Name;
 static char serverFile[100], serverBody[8192], serverETag[128];
 static int exists, writes, reads, fault;
 enum { Normal, CrashAfterWrite, LoseResponse, PreconditionRace, Normalize,
-       ConcurrentAfterWrite, ReadError, RedirectWrite, CanonicalMove };
+       ConcurrentAfterWrite, ReadError, RedirectWrite, StopAfterWrite, CanonicalMove };
 
 static void serverSave(void)
 {
@@ -80,6 +80,7 @@ int RCHTTPClientConditionalRequest(RCHTTPClient *c, const char *method,
   }
   serverSave();
   if (fault==CrashAfterWrite) _exit(77);
+  if (fault==StopAfterWrite) { RCStopRequested=1; RCCheckCancellation(e); return 0; }
   if (fault==LoseResponse) { RCErrorSet(e,1,"simulated lost response"); return 0; }
   if (fault==ConcurrentAfterWrite) { strcpy(serverBody,"new concurrent body"); strcpy(serverETag,"\"third\""); }
   return 1;
@@ -514,13 +515,27 @@ static void nativeReceiptTransactionTests(const char *path)
   CHECK(scalar(j.db,"SELECT count(*) FROM write_operations")==1);
   CHECK(sqlite3_close(j.db)==SQLITE_OK);
 }
+static void cancellationTests(const char *path)
+{
+  unlink(path); RCWriteJournal j=openJournal(path);
+  exists=0; writes=reads=0; fault=StopAfterWrite;
+  long long id=enqueue(&j,"stop-create","stop-resource","create");
+  CHECK(!RCDAVWriterAttempt(&j,id,(RCHTTPClient *)1,"text/vcard",time(NULL),&error));
+  CHECK(error.code==RC_ERROR_CANCELLED && writes==1);
+  state(&j,id,"uncertain");
+  CHECK(sqlite3_close(j.db)==SQLITE_OK);
+  RCStopRequested=0; fault=Normal; j=openJournal(path);
+  CHECK(RCDAVWriterAttempt(&j,id,(RCHTTPClient *)1,"text/vcard",time(NULL)+3600,&error));
+  state(&j,id,"applied"); CHECK(writes==1);
+  CHECK(sqlite3_close(j.db)==SQLITE_OK);
+}
 int main(void)
 {
   char dir[]="/tmp/retro-write-tests-XXXXXX",db[100],contacts[100],calendars[100];
   CHECK(mkdtemp(dir)); snprintf(db,sizeof(db),"%s/journal.sqlite",dir);
   snprintf(serverFile,sizeof(serverFile),"%s/server",dir);
   snprintf(contacts,sizeof(contacts),"%s/contacts.sqlite",dir); snprintf(calendars,sizeof(calendars),"%s/calendars.sqlite",dir);
-  crashTests(db); recoveryTests(db); patchTests(db); storeTests(contacts,calendars); conflictTests(db); nativeReceiptTransactionTests(db);
+  crashTests(db); recoveryTests(db); patchTests(db); storeTests(contacts,calendars); conflictTests(db); nativeReceiptTransactionTests(db); cancellationTests(db);
   unlink(db); unlink(serverFile); unlink(contacts); unlink(calendars); rmdir(dir);
   puts("Write journal, conflict reconciliation/repeated races, completion crash recovery, account isolation and loss-preserving edits passed.");
   return 0;

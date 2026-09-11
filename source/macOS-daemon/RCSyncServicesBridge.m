@@ -1,3 +1,4 @@
+#import "RCSyncConflictSession.h"
 #import "RCTwoWayNative.h"
 #import "RCContactPhoto.h"
 #import "RCLogger.h"
@@ -259,6 +260,7 @@ static int RCExportContact(long long contactIdentifier,
                            size_t rawVCardLength, void *opaqueContext,
                            RCError *error)
 {
+  if (RCCheckCancellation(error)) return 0;
   RCSyncExportContext *context = (RCSyncExportContext *)opaqueContext;
   RCVCardDocument document;
   NSString *contactSyncIdentifier;
@@ -442,8 +444,7 @@ static int RCSyncServicesPushContactsForClient(
       return 0;
     }
     [client setEnabled:YES forEntityNames:entities];
-    session = [ISyncSession beginSessionWithClient:client entityNames:entities
-        beforeDate:[NSDate dateWithTimeIntervalSinceNow:60.0]];
+    session = RCBeginSession(client,entities);
     if (session == nil) {
       RCErrorSet(error, 1, "Could not begin a Sync Services session");
       return 0;
@@ -462,7 +463,7 @@ static int RCSyncServicesPushContactsForClient(
           RCErrorSet(error, 1, "Sync Services did not permit the contact push");
           goto finished;
         }
-        [session pushChangesFromRecord:record withIdentifier:key];
+        RCSessionPush(session,record,key);
       }
     }
     {
@@ -475,8 +476,7 @@ static int RCSyncServicesPushContactsForClient(
       }
     }
     /* Push-only sessions must also enter the merge phase and check its result. */
-    if (![session prepareToPullChangesForEntityNames:pullEntities
-          beforeDate:[NSDate dateWithTimeIntervalSinceNow:60.0]]) {
+    if (!RCPrepareToPull(session,pullEntities)) {
       RCErrorSet(error, 1, "Sync Services could not merge contact changes");
       goto finished;
     }

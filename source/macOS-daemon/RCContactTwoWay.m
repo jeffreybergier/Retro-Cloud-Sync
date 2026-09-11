@@ -467,6 +467,7 @@ int RCSyncServicesTwoWayContacts(RCContactStore *store,const char *description,l
       "AND c.remote_missing=0 AND c.usable_vcard IS NOT NULL ORDER BY c.id",-1,&q,NULL)!=SQLITE_OK) goto failed;
   sqlite3_bind_int64(q,1,j.account);
   while ((step=sqlite3_step(q))==SQLITE_ROW) {
+    if(RCCheckCancellation(error)) goto failed;
     NSString *key=S((const char *)sqlite3_column_text(q,1)), *root=[@"contact-" stringByAppendingString:key];
     NSData *body=[NSData dataWithBytes:sqlite3_column_blob(q,4) length:sqlite3_column_bytes(q,4)];
     NSDictionary *mapped=RCContactNativeGraph(store,sqlite3_column_int64(q,0),[key UTF8String],body,error);

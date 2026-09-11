@@ -27,6 +27,14 @@ typedef struct {
   int exceededLimit;
 } RCWriteContext;
 
+static int RCCancelTransfer(void *context, curl_off_t totalDownload,
+    curl_off_t downloaded, curl_off_t totalUpload, curl_off_t uploaded)
+{
+  (void)context; (void)totalDownload; (void)downloaded;
+  (void)totalUpload; (void)uploaded;
+  return RCStopRequested != 0;
+}
+
 static char *RCCopyString(const char *string)
 {
   size_t length;
@@ -386,6 +394,8 @@ static int RCRequest(RCHTTPClient *client, const char *method,
     RC_SET_OPTION(CURLOPT_REDIR_PROTOCOLS, (long)CURLPROTO_HTTPS);
     RC_SET_OPTION(CURLOPT_FOLLOWLOCATION, 0L);
     RC_SET_OPTION(CURLOPT_NOSIGNAL, 1L);
+    RC_SET_OPTION(CURLOPT_NOPROGRESS, 0L);
+    RC_SET_OPTION(CURLOPT_XFERINFOFUNCTION, RCCancelTransfer);
     RC_SET_OPTION(CURLOPT_CONNECTTIMEOUT, 20L);
     RC_SET_OPTION(CURLOPT_TIMEOUT, 120L);
     RC_SET_OPTION(CURLOPT_USERAGENT, client->userAgent);
@@ -401,7 +411,7 @@ static int RCRequest(RCHTTPClient *client, const char *method,
 
 #undef RC_SET_OPTION
 
-    curlResult = curl_easy_perform(curl);
+    curlResult = RCStopRequested ? CURLE_ABORTED_BY_CALLBACK : curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response->statusCode);
     curl_easy_getinfo(curl, CURLINFO_EFFECTIVE_URL, &effectiveURL);
     response->effectiveURL = RCCopyString(effectiveURL != NULL ?
@@ -409,6 +419,7 @@ static int RCRequest(RCHTTPClient *client, const char *method,
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
+    if (RCCheckCancellation(error)) { free(currentURL); return 0; }
     if (curlResult != CURLE_OK) {
       RCErrorSet(error, (int)curlResult,
                  writeContext.exceededLimit ? "HTTP response exceeded size limit" :

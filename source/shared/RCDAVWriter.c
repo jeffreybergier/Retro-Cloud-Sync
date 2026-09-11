@@ -33,6 +33,7 @@ int RCDAVWriterAttempt(RCWriteJournal *j, long long id, RCHTTPClient *client,
   RCHTTPResponse remote, write;
   int ok = 0, deleting, creating;
   RCHTTPResponseInit(&remote); RCHTTPResponseInit(&write);
+  if (RCCheckCancellation(e)) return 0;
   if (!RCWriteJournalGet(j,id,&o,e)) return 0;
   deleting = !strcmp(o.kind,"delete"); creating = !strcmp(o.kind,"create");
   if ((!creating && !RCWriteETagIsStrong(o.baseETag)) ||

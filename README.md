@@ -53,6 +53,23 @@ download does not advance the success time; neither do pending uploads,
 unsupported mappings or unresolved local changes. Pending items count journal
 operations and attention entries, not unique contacts/events.
 
+## Stopping the daemon
+
+**Stop** unloads the LaunchAgent in the background and shows **Stopping…** while
+keeping the GUI responsive. SIGTERM requests cooperative shutdown: transfers
+abort, resource and upload loops stop at checkpoints, incomplete mirrors roll
+back, and uncertain remote writes remain journaled for verification on restart.
+Sync Services negotiation is cancellable; merge waits use asynchronous callbacks so the worker can
+check shutdown without blocking in a long framework wait. Session cancellation stays on the owning worker thread.
+
+Keychain reads run in a private helper using the installed daemon executable so
+an authorization dialog cannot hold up shutdown. Passwords travel only through
+a private pipe and are cleared from the parent buffer. That helper performs no
+synchronization and can be terminated independently. Mail sockets start closing
+immediately; after the sync worker has finished, shutdown does not wait
+indefinitely for mail DNS/socket calls. No sync worker is forcibly terminated.
+The daemon writes a yellow stopping state without advancing success timestamps.
+
 ## Contacts and Calendars preferences
 
 Open the application and choose **Sync** in the toolbar. Enter the Apple ID

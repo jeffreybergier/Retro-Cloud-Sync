@@ -572,16 +572,30 @@ RCMailProxy *RCMailProxyStart(const RCMailProxyConfig *configs,
   return proxy;
 }
 
-void RCMailProxyStop(RCMailProxy *proxy)
+/* Begin socket teardown without waiting for connection threads. */
+void RCMailProxyRequestStop(RCMailProxy *proxy)
+{
+  if (!proxy) return;
+  pthread_mutex_lock(&proxy->connectionMutex);
+  proxy->stopping=1;
+  RCProxyConnection *connection;
+  for(connection=proxy->connections;connection;connection=connection->next) {
+    shutdown(connection->localSocket,SHUT_RDWR);
+    if(connection->remoteSocket>=0) shutdown(connection->remoteSocket,SHUT_RDWR);
+  }
+  pthread_mutex_unlock(&proxy->connectionMutex);
+}
+
+static void RCStopProxy(RCMailProxy *proxy, int exiting)
 {
   size_t index;
+  struct timespec deadline;
+  deadline.tv_sec=time(NULL)+2; deadline.tv_nsec=0;
 
   if (proxy == NULL) {
     return;
   }
-  pthread_mutex_lock(&proxy->connectionMutex);
-  proxy->stopping = 1;
-  pthread_mutex_unlock(&proxy->connectionMutex);
+  RCMailProxyRequestStop(proxy);
   for (index = 0; index < proxy->listenerCount; index++) {
     if (proxy->listeners[index].threadStarted) {
       pthread_join(proxy->listeners[index].thread, NULL);
@@ -603,8 +617,16 @@ void RCMailProxyStop(RCMailProxy *proxy)
         shutdown(connection->remoteSocket, SHUT_RDWR);
       }
     }
-    pthread_cond_wait(&proxy->connectionCondition,
-                      &proxy->connectionMutex);
+    if(exiting) {
+      int result=pthread_cond_timedwait(&proxy->connectionCondition,
+                                      &proxy->connectionMutex,&deadline);
+      if(result==ETIMEDOUT && proxy->connections!=NULL) {
+        /* DNS/system socket calls may not be interruptible. The daemon has
+           finished its durable work and will exit immediately. Keep this
+           allocation alive for those threads until the OS reclaims it. */
+        pthread_mutex_unlock(&proxy->connectionMutex); return;
+      }
+    } else pthread_cond_wait(&proxy->connectionCondition,&proxy->connectionMutex);
   }
   pthread_mutex_unlock(&proxy->connectionMutex);
   if (proxy->tlsContext != NULL) {
@@ -614,3 +636,6 @@ void RCMailProxyStop(RCMailProxy *proxy)
   pthread_mutex_destroy(&proxy->connectionMutex);
   free(proxy);
 }
+
+void RCMailProxyStop(RCMailProxy *proxy) { RCStopProxy(proxy,0); }
+void RCMailProxyStopForExit(RCMailProxy *proxy) { RCStopProxy(proxy,1); }

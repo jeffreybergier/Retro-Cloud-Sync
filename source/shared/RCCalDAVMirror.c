@@ -90,6 +90,7 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
     goto done;
   result->collectionCount = (long)count;
   for (i = 0; i < count; i++) {
+    if (RCCheckCancellation(error)) goto done;
     long long calendar;
     if (!RCCalendarStoreCollection(store, &collections[i], &calendar, error))
       goto done;
@@ -123,6 +124,7 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
       goto done;
     result->listedResourceCount += (long)resourceCount;
     for (j = 0; j < resourceCount; j++) {
+      if (RCCheckCancellation(error)) goto done;
       int current;
       RCHTTPResponse response;
       if (!RCCalendarStoreSeen(store, calendar, resources[j].url, resources[j].etag,
@@ -165,6 +167,7 @@ collection_complete:
     free(token); free(scope); free(next); token = NULL; scope = NULL; next = NULL;
   }
   if (!RCDAVSyncStateFinish(&state, store->run, error)) goto done;
+  if (RCCheckCancellation(error)) goto done;
   success = 1;
 done:
   if (started) {

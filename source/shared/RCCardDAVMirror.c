@@ -54,6 +54,7 @@ static int RCApplyContactChanges(const RCDAVResource *resources, size_t resource
   size_t index;
   result->listedResourceCount += (long)resourceCount;
   for (index = 0; index < resourceCount; index++) {
+    if (RCCheckCancellation(error)) return 0;
     int current;
     if (resources[index].etag == NULL) {
       if (!RCContactStoreSyncDelete(store, collectionIdentifier, resources[index].url,
@@ -219,6 +220,7 @@ int RCCardDAVMirrorFetch(const RCCardDAVMirrorConfig *config,
                          error)) goto finished;
   result->collectionCount = (long)collectionCount;
   for (index = 0; index < collectionCount; index++) {
+    if (RCCheckCancellation(error)) goto finished;
     if (!RCFetchCollection(config, client, store, &collections[index],
                            runIdentifier, result, error)) goto finished;
   }
@@ -226,6 +228,7 @@ int RCCardDAVMirrorFetch(const RCCardDAVMirrorConfig *config,
     RCDAVSyncState state = RCContactStoreDAVSyncState(store);
     if (!RCDAVSyncStateFinish(&state, runIdentifier, error)) goto finished;
   }
+  if (RCCheckCancellation(error)) goto finished;
   success = 1;
 
 finished:

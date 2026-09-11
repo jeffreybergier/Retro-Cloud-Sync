@@ -4,6 +4,16 @@
 #import <SyncServices/SyncServices.h>
 #include "RCError.h"
 
+/* Sessions are owned by the worker. Cancellation is never performed by the
+   signal handler or a second thread. */
+ISyncSession *RCBeginSession(ISyncClient *, NSArray *);
+BOOL RCPrepareToPull(ISyncSession *, NSArray *);
+void RCSessionCheck(void);
+static inline void RCSessionPush(ISyncSession *session, NSDictionary *record, NSString *identifier)
+{ RCSessionCheck(); [session pushChangesFromRecord:record withIdentifier:identifier]; }
+static inline void RCSessionDelete(ISyncSession *session, NSString *identifier)
+{ RCSessionCheck(); [session deleteRecordWithIdentifier:identifier]; }
+
 /* Only pull entities that this client can receive. Unsupported types can
    remain push-only while contacts/events use the same two-way registration. */
 static inline NSArray *RCSyncPullableEntities(ISyncClient *client)

@@ -3,9 +3,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/time.h>
 
 static RCError error;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"HTTP FAIL line %d: %s (%s)\n",__LINE__,#x,error.message); exit(1); } } while(0)
+static void Stop(int signalNumber) { (void)signalNumber; RCStopRequested=1; }
 int main(int argc, char **argv)
 {
   RCHTTPClientConfig config;
@@ -45,6 +48,18 @@ int main(int argc, char **argv)
   CHECK(RCHTTPClientRequest(client,"PROPFIND",url,"0","application/xml","<probe/>",8,&response,&error) && response.statusCode==207);
   snprintf(url,sizeof(url),"%s/foreign",argv[1]);
   CHECK(!RCHTTPClientRequest(client,"GET",url,NULL,NULL,NULL,0,&response,&error));
+  RCStopRequested=1;
+  snprintf(url,sizeof(url),"%s/not-requested",argv[1]);
+  CHECK(!RCHTTPClientRequest(client,"GET",url,NULL,NULL,NULL,0,&response,&error));
+  CHECK(error.code==RC_ERROR_CANCELLED);
+  RCStopRequested=0;
+  signal(SIGALRM,Stop);
+  struct timeval start,end; gettimeofday(&start,NULL); alarm(1);
+  snprintf(url,sizeof(url),"%s/slow",argv[1]);
+  CHECK(!RCHTTPClientRequest(client,"GET",url,NULL,NULL,NULL,0,&response,&error));
+  alarm(0); gettimeofday(&end,NULL);
+  CHECK(error.code==RC_ERROR_CANCELLED && end.tv_sec-start.tv_sec<5);
+  RCStopRequested=0;
   RCHTTPClientDestroy(client);
   config.allowedHostSuffix=NULL; client=RCHTTPClientCreate(&config,&error); CHECK(client);
   snprintf(url,sizeof(url),"https://127.0.0.1%s/update",strrchr(argv[1],':'));

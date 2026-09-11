@@ -532,6 +532,7 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
   if (sqlite3_prepare_v2(j.db,"SELECT id,sync_id,display_name,description FROM calendars WHERE account_id=? AND remote_missing=0",-1,&q,NULL)!=SQLITE_OK) goto failed;
   sqlite3_bind_int64(q,1,j.account);
   while ((step=sqlite3_step(q))==SQLITE_ROW) {
+    if(RCCheckCancellation(error)) goto failed;
     NSString *id=[@"calendar-" stringByAppendingString:S((const char *)sqlite3_column_text(q,1))];
     NSMutableDictionary *record=[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",ISyncRecordEntityNameKey,
         RCCalendarNativeTitle(j,id,S((const char *)sqlite3_column_text(q,2))),@"title",
@@ -546,6 +547,7 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
       "AND r.remote_missing=0 AND r.scope_excluded=0",-1,&q,NULL)!=SQLITE_OK) goto failed;
   sqlite3_bind_int64(q,1,j.account);
   while ((step=sqlite3_step(q))==SQLITE_ROW) {
+    if(RCCheckCancellation(error)) goto failed;
     long long id=sqlite3_column_int64(q,0); NSString *calendar=[calendarIDs objectForKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q,1)]];
     NSData *body=[NSData dataWithBytes:sqlite3_column_blob(q,3) length:sqlite3_column_bytes(q,3)];
     NSString *etag=S((const char *)sqlite3_column_text(q,4)); RCError mappingError; RCErrorClear(&mappingError);

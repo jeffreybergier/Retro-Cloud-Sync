@@ -85,9 +85,12 @@ static void CheckOwnedFixture(ISyncManager *manager, ISyncClient *client)
   if (record && ![[record objectForKey:@"first name"] isEqual:marker])
     [NSException raise:@"TestFailure" format:@"Fixture belongs to another run; cleanup refused"];
 }
+int RCSessionCancellationTests(void);
 int main(int argc, char **argv)
 {
   NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+  if (!RCSessionCancellationTests()) { fprintf(stderr,"Session cancellation checks failed\n"); return 1; }
+  if(argc==2 && !strcmp(argv[1],"--cancellation-only")) { puts("Session cancellation checks passed"); [pool release]; return 0; }
   ISyncManager *manager = [ISyncManager sharedManager];
   ISyncClient *remote = nil, *local = nil;
   int status = 1;

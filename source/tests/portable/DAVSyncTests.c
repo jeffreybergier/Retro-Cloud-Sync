@@ -33,7 +33,7 @@ static const char event[] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nU
 
 typedef struct { const char *method; char *body, *token, *etag; int status, sync; } Step;
 static Step steps[80];
-static int used, queued, getCount;
+static int used, queued, getCount, stopAfterResponse;
 static void add(const char *method, int status, const char *body)
 {
   Step *s;
@@ -132,6 +132,7 @@ int RCHTTPClientRequest(RCHTTPClient *c, const char *method, const char *url,
   RCHTTPResponseClear(r); r->statusCode = s->status; r->effectiveURL = strdup(url);
   r->body = (unsigned char *)strdup(s->body); r->bodyLength = strlen(s->body);
   r->etag = s->etag ? strdup(s->etag) : NULL;
+  if(stopAfterResponse && used==stopAfterResponse) RCStopRequested=1;
   return 1;
 }
 static long long scalar(sqlite3 *db, const char *sql)
@@ -231,6 +232,13 @@ static void contactTests(void)
   CHECK(tokenIs(state.db, "alice", "urn:2"));
   CHECK(scalar(state.db, "SELECT count(*) FROM contacts WHERE remote_missing=0") == 2);
   CHECK(scalar(state.db, "SELECT remote_missing FROM contacts WHERE uid='b'") == 1);
+  /* Stop after a downloaded revision, before the next sync page/commit. */
+  discovery(0, "urn:stop", 0); syncPage("urn:2", "urn:partial", A3, 1); get(cardA, "three");
+  stopAfterResponse=queued;
+  CHECK(!RCCardDAVMirrorFetch(&config,store,&result,&error));
+  CHECK(error.code==RC_ERROR_CANCELLED);
+  RCStopRequested=0; stopAfterResponse=0; reset();
+  CHECK(tokenIs(state.db,"alice","urn:2") && scalar(state.db,"SELECT count(*) FROM contacts WHERE etag='three'")==0);
   /* Successful early page/GET followed by a failing page must roll back both. */
   discovery(0, "urn:3", 0); syncPage("urn:2", "urn:partial", A3, 1); get(cardA, "three");
   syncResponse("urn:partial", 503, "unavailable");
@@ -313,6 +321,11 @@ static void calendarTests(void)
   discovery(1, "urn:2", 0); syncPage("urn:2", "urn:2", "", 0);
   CHECK(RCCalDAVMirrorFetchSince(&config, store, wide, &result, &error)); reset();
   CHECK(result.unchangedResourceCount == 1 && scalar(store->db, "SELECT count(*) FROM available_events") == 1);
+  discovery(1,"urn:2",0); inventory("",1); stopAfterResponse=queued;
+  CHECK(!RCCalDAVMirrorFetchSince(&config,store,narrow,&result,&error));
+  CHECK(error.code==RC_ERROR_CANCELLED);
+  RCStopRequested=0; stopAfterResponse=0; reset();
+  CHECK(tokenIs(store->db,"alice","urn:2") && scalar(store->db,"SELECT count(*) FROM available_events")==1);
   /* Same token, new cutoff: must query again to age records out. */
   discovery(1, "urn:2", 0); inventory("", 1);
   CHECK(RCCalDAVMirrorFetchSince(&config, store, narrow, &result, &error)); reset();

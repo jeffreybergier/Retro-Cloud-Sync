@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -28,6 +29,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         match = self.headers.get("If-Match")
         none = self.headers.get("If-None-Match")
         self.received.append((self.command, self.path, match, none, body))
+        if self.path == "/slow":
+            self.send_response(200)
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            self.wfile.write(b"x")
+            self.wfile.flush()
+            time.sleep(8)
+            return
         location = None
         status = 400
         if self.path == "/create" and (self.command, match, none, body) == ("PUT", None, "*", b"new"):
@@ -66,7 +75,7 @@ def main():
                 "-keyout", str(root / (name + ".key")), "-out", str(root / (name + ".pem")),
                 "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost",
             ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(root / "server.pem", root / "server.key")
         server.socket = context.wrap_socket(server.socket, server_side=True)
@@ -77,7 +86,7 @@ def main():
             subprocess.run([sys.argv[1], f"https://localhost:{server.server_port}",
                             str(root / "server.pem"), str(root / "untrusted.pem")], check=True, env=env, timeout=30)
             paths = [request[1] for request in Handler.received]
-            assert paths == ["/create", "/update", "/delete", "/move", "/move", "/calendar-move", "/calendar-create", "/discovery", "/principal", "/foreign"], paths
+            assert paths == ["/create", "/update", "/delete", "/move", "/move", "/calendar-move", "/calendar-create", "/discovery", "/principal", "/foreign", "/slow"], paths
         finally:
             server.shutdown()
             thread.join()

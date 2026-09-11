@@ -14,6 +14,7 @@
   NSTimer *statusTimer_;
   RCServiceController *serviceController_;
   BOOL serviceRunning_;
+  BOOL stopInProgress_;
   NSTextField *syncDetails_[2];
   NSImageView *syncIcon_[2];
 }

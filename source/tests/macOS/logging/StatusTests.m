@@ -39,6 +39,11 @@ int RCStatusTests(void)
   /* A broken optional table must not report success. */
   CHECK(sqlite3_exec(j.db,"DROP TABLE two_way_attention; CREATE TABLE two_way_attention(broken INTEGER)",NULL,NULL,NULL)==SQLITE_OK);
   RCStatusFinish(@"Contacts",&j,YES); CHECK([[Read(path) objectForKey:@"Phase"] isEqual:@"Attention"]);
+  RCStopRequested=1;
+  RCStatusFailure(@"Contacts",@"Download"); RCStatusSchedule(60);
+  CHECK([[Read(path) objectForKey:@"Phase"] isEqual:@"Stopping"]);
+  CHECK(![Read(path) objectForKey:@"ErrorCode"] && ![Read(path) objectForKey:@"NextAttempt"]);
+  RCStatusStop(); RCStopRequested=0;
   sqlite3_close(j.db); unlink([path fileSystemRepresentation]); rmdir(directory);
   return 1;
 }

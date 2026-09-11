@@ -6,4 +6,5 @@ void RCStatusPhase(NSString *service, NSString *phase);
 void RCStatusFailure(NSString *service, NSString *code);
 void RCStatusFinish(NSString *service, RCWriteJournal *journal, BOOL complete);
 void RCStatusSchedule(unsigned int interval);
+void RCStatusStopping(void);
 void RCStatusStop(void);

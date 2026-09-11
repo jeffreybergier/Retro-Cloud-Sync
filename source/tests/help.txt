@@ -20,6 +20,7 @@ Build Mac tools without running them (PPC/i386):
 Build and run on the Mac (TEST_HOST defaults to x4-vm):
   make test-mac-app TEST_HOST=x4-vm       Preferences, Start/Stop, files and listeners
   make test-mac-logging TEST_HOST=x4-vm   NSLog output and injected mail errors; no GUI/account
+  make test-mac-shutdown TEST_HOST=x4-vm  Isolated SIGTERM/helper/status regression
   make test-mac-network TEST_HOST=x4-vm   Standalone HTTPS check; internet, no GUI needed
   make test-mac-contacts-syncservices TEST_HOST=x4-vm
   make test-mac-calendars-syncservices TEST_HOST=x4-vm

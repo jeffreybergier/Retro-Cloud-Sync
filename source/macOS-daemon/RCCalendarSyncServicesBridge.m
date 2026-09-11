@@ -1,3 +1,4 @@
+#import "RCSyncConflictSession.h"
 #import "RCLogger.h"
 #import "RCCalendarSyncServicesBridge.h"
 #import "RCCalendarSyncClient.h"
@@ -577,6 +578,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
       goto sqlError;
     sqlite3_bind_int64(q, 1, store->account);
     while ((step = sqlite3_step(q)) == SQLITE_ROW) {
+      RCSessionCheck();
       NSString *id = [@"calendar-"
           stringByAppendingString:String((const char *)sqlite3_column_text(q, 1))];
       NSMutableDictionary *record = Record(@"Calendar");
@@ -610,6 +612,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
       goto sqlError;
     sqlite3_bind_int64(q, 1, store->account);
     while ((step = sqlite3_step(q)) == SQLITE_ROW) {
+      RCSessionCheck();
       long long resource = sqlite3_column_int64(q, 0);
       NSString *calendarID = [calendarRecords
           objectForKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q, 1)]];
@@ -691,10 +694,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
         goto done;
       }
       [client setEnabled:YES forEntityNames:entities];
-      session = [ISyncSession
-          beginSessionWithClient:client
-                     entityNames:entities
-                      beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
+      session = RCBeginSession(client,entities);
       if (!session) {
         RCErrorSet(error, 1, "Could not begin calendar Sync Services session");
         goto done;
@@ -708,17 +708,14 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
           RCErrorSet(error, 1, "Sync Services did not permit the calendar push");
           goto done;
         }
-        [session pushChangesFromRecord:record withIdentifier:key];
+        RCSessionPush(session,record,key);
       }
       keys = [entities objectEnumerator];
       while ((key = [keys nextObject]))
         if ([session shouldPullChangesForEntityName:key])
           [pull addObject:key];
       /* Push-only sessions still have to enter mingling before finishing. */
-      if (![session
-              prepareToPullChangesForEntityNames:pull
-                                      beforeDate:
-                                          [NSDate dateWithTimeIntervalSinceNow:60]]) {
+      if (!RCPrepareToPull(session,pull)) {
         RCErrorSet(error, 1, "Calendar Sync Services could not mingle records");
         goto done;
       }

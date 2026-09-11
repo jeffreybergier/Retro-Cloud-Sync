@@ -15,6 +15,8 @@
 - (void)serviceButtonClicked:(id)sender;
 - (void)updateServiceStatus:(NSTimer *)timer;
 - (void)updateSyncStatus;
+- (void)stopServiceInBackground:(id)unused;
+- (void)stopServiceFinished:(NSString *)errorMessage;
 @end
 
 static NSTextField *RCStatusLabel(NSView *view, NSRect frame)
@@ -222,7 +224,10 @@ static NSString *RCStatusDate(id value)
     [statusLabel_ display];
     succeeded = [serviceController_ startServiceWithError:&errorMessage];
   } else {
-    succeeded = [serviceController_ stopServiceWithError:&errorMessage];
+    stopInProgress_=YES;
+    [statusLabel_ setStringValue:@"Stopping…"];
+    [NSThread detachNewThreadSelector:@selector(stopServiceInBackground:) toTarget:self withObject:nil];
+    return;
   }
 
   if (!succeeded) {
@@ -239,11 +244,32 @@ static NSString *RCStatusDate(id value)
   [serviceButton_ setEnabled:YES];
 }
 
+- (void)stopServiceInBackground:(id)unused;
+{
+  (void)unused;
+  NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
+  RCServiceController *controller=[[RCServiceController alloc] init];
+  NSString *error=nil;
+  @try {
+    if(![controller stopServiceWithError:&error] && !error) error=@"Could not stop the daemon";
+  } @catch(NSException *exception) { error=@"Could not complete the stop request"; }
+  [self performSelectorOnMainThread:@selector(stopServiceFinished:) withObject:error waitUntilDone:NO];
+  [controller release]; [pool release];
+}
+- (void)stopServiceFinished:(NSString *)errorMessage;
+{
+  stopInProgress_=NO;
+  [self updateServiceStatus:nil];
+  [serviceButton_ setEnabled:YES];
+  if(errorMessage) NSRunAlertPanel(@"Retro Cloud Sync",@"%@",@"OK",nil,nil,errorMessage);
+}
+
 - (void)updateServiceStatus:(NSTimer *)timer;
 {
   (void)timer;
   [self updateSyncStatus];
   serviceRunning_ = [serviceController_ isServiceRunning];
+  if(stopInProgress_) { [statusLabel_ setStringValue:@"Stopping…"]; return; }
   if (serviceRunning_) {
     [statusLabel_ setStringValue:@"Running"];
     [serviceButton_ setTitle:@"Stop"];
@@ -269,6 +295,7 @@ static NSString *RCStatusDate(id value)
     BOOL disabled=[phase isEqual:@"Disabled"];
     NSString *message=@"Waiting for daemon status";
     if([phase isEqual:@"UpToDate"]) message=@"Up to date";
+    else if([phase isEqual:@"Stopping"]) message=@"Stopping — saving progress…";
     else if([phase isEqual:@"Waiting"]) message=@"Waiting to sync";
     else if([phase isEqual:@"Downloading"]) message=@"Downloading from iCloud…";
     else if([phase isEqual:@"Applying"]) message=i==0 ? @"Applying to Address Book…" : @"Applying to iCal…";

@@ -51,8 +51,7 @@ NSDictionary *RCSyncResolveConflictWithIntent(ISyncClient *client,
     RCErrorSet(error,1,"Conflict target is absent from the remote graph"); return nil;
   }
   @try {
-    session = [ISyncSession beginSessionWithClient:client entityNames:entities
-        beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
+    session = RCBeginSession(client,entities);
     if (!session) { RCErrorSet(error,1,"Conflict sync session is unavailable"); goto done; }
     if ([expectedLocal count]) {
       NSDictionary *snapshot=[[session snapshotOfRecordsInTruth]
@@ -84,9 +83,8 @@ NSDictionary *RCSyncResolveConflictWithIntent(ISyncClient *client,
        snapshot. We never refresh/reset that snapshot to suppress a conflict. */
     it = [graph keyEnumerator];
     while ((key = [it nextObject]))
-      [session pushChangesFromRecord:[graph objectForKey:key] withIdentifier:key];
-    if (![session prepareToPullChangesForEntityNames:entities
-        beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]) {
+      RCSessionPush(session,[graph objectForKey:key],key);
+    if (!RCPrepareToPull(session,entities)) {
       RCErrorSet(error,1,"Conflict resolution is pending in Sync Services"); goto done;
     }
     /* A remote-winning resolution need not appear in the change enumerator.
@@ -134,8 +132,7 @@ BOOL RCSyncAcceptMappedUpload(ISyncClient *client, NSDictionary *receipt, NSDict
   if (newerTruth) *newerTruth=nil;
   if (![receipt count] || !UsableClient(client,entities,error)) return NO;
   @try {
-    session = [ISyncSession beginSessionWithClient:client entityNames:entities
-        beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
+    session = RCBeginSession(client,entities);
     if (!session) { RCErrorSet(error,1,"Resolution acceptance session is unavailable"); goto done; }
     it = [entities objectEnumerator];
     while ((entity = [it nextObject])) {
@@ -144,8 +141,7 @@ BOOL RCSyncAcceptMappedUpload(ISyncClient *client, NSDictionary *receipt, NSDict
         RCErrorSet(error,1,"Resolution acceptance requires resynchronization"); goto done;
       }
     }
-    if (![session prepareToPullChangesForEntityNames:entities
-        beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]) {
+    if (!RCPrepareToPull(session,entities)) {
       RCErrorSet(error,1,"Resolution acceptance is pending"); goto done;
     }
     NSDictionary *current = [[session snapshotOfRecordsInTruth]
@@ -206,8 +202,7 @@ NSDictionary *RCSyncResolveResourceConflict(ISyncClient *client, NSDictionary *r
   NSArray *entities=RCSyncPullableEntities(client);
   if (!remote || ![targets count] || !UsableClient(client,entities,error)) return nil;
   @try {
-    session=[ISyncSession beginSessionWithClient:client entityNames:entities
-        beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
+    session=RCBeginSession(client,entities);
     if (!session) { RCErrorSet(error,1,"Conflict session unavailable"); goto done; }
     NSEnumerator *it=[entities objectEnumerator]; NSString *key;
     while ((key=[it nextObject])) if ([session shouldPushAllRecordsForEntityName:key] ||
@@ -219,10 +214,10 @@ NSDictionary *RCSyncResolveResourceConflict(ISyncClient *client, NSDictionary *r
     it=[targets objectEnumerator];
     while ((key=[it nextObject])) {
       NSDictionary *record=[remote objectForKey:key];
-      if (record) [session pushChangesFromRecord:record withIdentifier:key];
-      else [session deleteRecordWithIdentifier:key];
+      if (record) RCSessionPush(session,record,key);
+      else RCSessionDelete(session,key);
     }
-    if (![session prepareToPullChangesForEntityNames:entities beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]) {
+    if (!RCPrepareToPull(session,entities)) {
       RCErrorSet(error,1,"System conflict resolution is pending"); goto done;
     }
     NSMutableDictionary *truth=[NSMutableDictionary dictionary];
@@ -237,4 +232,101 @@ done:
   @catch(NSException *exception) { (void)exception; result=nil;
     RCErrorSet(error,1,"Could not close resource conflict session"); }
   return result;
+}
+
+/* Apple supports asynchronous session negotiation and mingling.
+   Keep the callback target alive until delivery, including late cancellation
+   callbacks. A cancelled request that never calls back retains only this small
+   target until process exit, never a live store or worker pointer. */
+@interface RCSessionStartWaiter : NSObject {
+ @public
+  BOOL done;
+  BOOL abandoned;
+  BOOL cancelLateSession;
+  ISyncSession *session;
+}
+- (void)client:(ISyncClient *)client session:(ISyncSession *)value;
+@end
+@implementation RCSessionStartWaiter
+- (void)client:(ISyncClient *)client session:(ISyncSession *)value
+{
+  (void)client;
+  @synchronized(self) {
+    if(done) return;
+    done=YES;
+    if (abandoned) {
+      @try { if(value && cancelLateSession) [value cancelSyncing]; }
+      @catch(NSException *exception) { /* No caller owns this late session. */ }
+    } else session=[value retain];
+  }
+  [self autorelease]; /* outstanding callback ownership */
+}
+- (void)dealloc { [session release]; [super dealloc]; }
+@end
+void RCSessionCheck(void)
+{
+  if(RCStopRequested) [NSException raise:@"RCShutdownRequested" format:@"Shutdown requested"];
+}
+ISyncSession *RCBeginSession(ISyncClient *client, NSArray *entities)
+{
+  RCSessionCheck();
+  RCSessionStartWaiter *waiter=[[RCSessionStartWaiter alloc] init];
+  waiter->cancelLateSession=YES;
+  ISyncSession *result=nil;
+  BOOL submitted=NO;
+  @try {
+    [waiter retain];
+    @try {
+      [ISyncSession beginSessionInBackgroundWithClient:client entityNames:entities
+          target:waiter selector:@selector(client:session:)];
+      submitted=YES;
+    } @catch(NSException *exception) { [waiter release]; @throw; }
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:60];
+    for(;;) {
+      @synchronized(waiter) {
+        if(waiter->done) { result=[[waiter->session retain] autorelease]; break; }
+        if(RCStopRequested || [deadline timeIntervalSinceNow]<=0) { waiter->abandoned=YES; break; }
+      }
+      [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+    if(RCStopRequested && result) { [result cancelSyncing]; result=nil; }
+  } @finally {
+    @synchronized(waiter) { waiter->abandoned=YES; }
+    if(submitted && !result) [ISyncSession cancelPreviousBeginSessionWithClient:client];
+    [waiter release];
+  }
+  /* If cancellation races a successful return, hand ownership to the caller
+     so its normal session cleanup can close it at the next checkpoint. */
+  if(!result) RCSessionCheck();
+  return result;
+}
+BOOL RCPrepareToPull(ISyncSession *session, NSArray *entities)
+{
+  RCSessionCheck();
+  RCSessionStartWaiter *waiter=[[RCSessionStartWaiter alloc] init];
+  BOOL submitted=NO, ready=NO;
+  @try {
+    [waiter retain];
+    @try {
+      [session prepareToPullChangesInBackgroundForEntityNames:entities
+          target:waiter selector:@selector(client:session:)];
+      submitted=YES;
+    } @catch(NSException *exception) { [waiter release]; @throw; }
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:60];
+    for(;;) {
+      @synchronized(waiter) {
+        if(waiter->done) { ready=waiter->session!=nil; break; }
+        if(RCStopRequested || [deadline timeIntervalSinceNow]<=0) break;
+      }
+      [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+  } @finally {
+    @synchronized(waiter) { waiter->abandoned=YES; }
+    /* Only the owning thread closes the live session. Late callbacks merely
+       discard their result; they must not touch a session being cancelled. */
+    @try { if(submitted && (!ready || RCStopRequested) && ![session isCancelled]) [session cancelSyncing]; }
+    @finally { [waiter release]; }
+  }
+  RCSessionCheck();
+  return ready;
 }

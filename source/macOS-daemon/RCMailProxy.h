@@ -29,6 +29,9 @@ RCMailProxy *RCMailProxyStart(const RCMailProxyConfig *configs,
                              const char *certificatePath);
 
 // Stops listeners and active connections, then releases |proxy|.
+void RCMailProxyRequestStop(RCMailProxy *proxy);
 void RCMailProxyStop(RCMailProxy *proxy);
+/* Only when the caller will immediately exit the process. */
+void RCMailProxyStopForExit(RCMailProxy *proxy);
 
 #endif  // RC_MAIL_PROXY_H

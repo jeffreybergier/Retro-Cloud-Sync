@@ -574,6 +574,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
     NSMutableSet *known=[NSMutableSet set], *busy=[NSMutableSet set], *excluded=[NSMutableSet set];
     it=[c->resources objectEnumerator];
     while ((resource=[it nextObject])) {
+      RCSessionCheck();
       NSDictionary *r=MapResource(resource,aliases);
       [resources addObject:r]; [known addObject:[r objectForKey:@"root"]];
     }
@@ -624,8 +625,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
        their calendar containers untouched too, including inverse relationships. */
     if ([busy count]) RCLogger(RCLogWarning, NULL, "Apply", @"Preserving %lu unresolved Sync Services records; eligible records can continue", (unsigned long)[busy count]);
     phase="session start";
-    session=[ISyncSession beginSessionWithClient:client entityNames:entities
-        beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]];
+    session=RCBeginSession(client,entities);
     if (!session) { RCErrorSet(error,1,"Could not begin two-way sync session"); goto done; }
     it=[entities objectEnumerator]; NSString *entity;
     while ((entity=[it nextObject])) if ([session shouldReplaceAllRecordsOnClientForEntityName:entity]) {
@@ -640,14 +640,14 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
     } else [session clientWantsToPushAllRecordsForEntityNames:entities];
     it=[graph keyEnumerator]; NSString *key;
     while ((key=[it nextObject])) if (![busy containsObject:key])
-      [session pushChangesFromRecord:[graph objectForKey:key] withIdentifier:key];
+      RCSessionPush(session,[graph objectForKey:key],key);
     if ([busy count]) {
       it=[published keyEnumerator];
       while ((key=[it nextObject])) if (![graph objectForKey:key] && ![busy containsObject:key])
-        [session deleteRecordWithIdentifier:key];
+        RCSessionDelete(session,key);
     }
     phase="local change collection";
-    if (![session prepareToPullChangesForEntityNames:pullEntities beforeDate:[NSDate dateWithTimeIntervalSinceNow:60]]) {
+    if (!RCPrepareToPull(session,pullEntities)) {
       RCErrorSet(error,1,"Two-way merge is pending"); goto done;
     }
     NSMutableDictionary *checkpoint=[NSMutableDictionary dictionaryWithDictionary:graph];
@@ -722,6 +722,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
     phase="local mapping and journaling";
     it=[resources objectEnumerator];
     while ((resource=[it nextObject])) {
+      RCSessionCheck();
       NSString *root=[resource objectForKey:@"root"];
       if ([busy containsObject:root]) continue;
       BOOL creating=![resource objectForKey:@"body"];
@@ -788,6 +789,7 @@ int RCTwoWayRunWrites(RCWriteJournal *j, RCHTTPClient *http, const char *type, R
   long long operation; int count=0;
   if (!http || !RCTwoWayInitialize(j,error)) return -1;
   while (count<100) {
+    if (RCCheckCancellation(error)) return -1;
     if (!RCWriteJournalNext(j,time(NULL),&operation,error)) return -1;
     if (!operation) break;
     /* Only operations with this coordinator's durable native receipts are owned. */

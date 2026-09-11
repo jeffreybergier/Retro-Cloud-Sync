@@ -168,6 +168,7 @@ BOOL RCCalendarRunOperations(RCWriteJournal *j,RCHTTPClient *http,RCError *error
   }
   sqlite3_finalize(q); NSEnumerator *it=[actions objectEnumerator]; NSDictionary *a; BOOL all=YES;
   while((a=[it nextObject])) {
+    if (RCCheckCancellation(error)) return NO;
     NSString *target=[a objectForKey:@"target"], *native=[a objectForKey:@"native"];
     BOOL done=NO,conflict=NO; RCHTTPResponse response; RCHTTPResponseInit(&response);
     if([[a objectForKey:@"kind"] isEqual:@"create"]) {
