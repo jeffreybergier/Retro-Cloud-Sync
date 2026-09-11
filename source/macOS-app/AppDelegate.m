@@ -9,6 +9,7 @@
 @interface AppDelegate (Private)
 - (void)buildMainMenu;
 - (void)showWindow;
+- (void)showPreferencePane:(id)sender;
 @end
 
 @implementation AppDelegate
@@ -48,8 +49,13 @@
   NSMenu *mainMenu = [[[NSMenu alloc] initWithTitle:@"MainMenu"] autorelease];
   NSMenuItem *applicationItem;
   NSMenu *applicationMenu;
+  NSMenuItem *editItem;
+  NSMenu *editMenu;
   NSMenuItem *windowItem;
   NSMenu *windowMenu;
+  NSArray *paneNames = [NSArray arrayWithObjects:
+      @"Daemon", @"Mail", @"Sync", @"Log", nil];
+  unsigned int paneIndex;
 
   applicationItem = [mainMenu addItemWithTitle:@""
                                         action:NULL
@@ -74,12 +80,37 @@
                              action:@selector(terminate:)
                       keyEquivalent:@"q"];
 
+  editItem = [mainMenu addItemWithTitle:@"Edit"
+                                 action:NULL
+                          keyEquivalent:@""];
+  editMenu = [[[NSMenu alloc] initWithTitle:@"Edit"] autorelease];
+  [mainMenu setSubmenu:editMenu forItem:editItem];
+  [editMenu addItemWithTitle:@"Cut"
+                      action:@selector(cut:)
+               keyEquivalent:@"x"];
+  [editMenu addItemWithTitle:@"Copy"
+                      action:@selector(copy:)
+               keyEquivalent:@"c"];
+  [editMenu addItemWithTitle:@"Paste"
+                      action:@selector(paste:)
+               keyEquivalent:@"v"];
+
   windowItem = [mainMenu addItemWithTitle:@"Window"
                                    action:NULL
                             keyEquivalent:@""];
   windowMenu = [[[NSMenu alloc] initWithTitle:@"Window"] autorelease];
   [mainMenu setSubmenu:windowMenu forItem:windowItem];
   [application setWindowsMenu:windowMenu];
+  for (paneIndex = 0; paneIndex < [paneNames count]; paneIndex++) {
+    NSString *paneName = [paneNames objectAtIndex:paneIndex];
+    NSMenuItem *paneItem = [windowMenu addItemWithTitle:paneName
+        action:@selector(showPreferencePane:)
+        keyEquivalent:[NSString stringWithFormat:@"%u", paneIndex + 1]];
+
+    [paneItem setTarget:self];
+    [paneItem setRepresentedObject:paneName];
+  }
+  [windowMenu addItem:[NSMenuItem separatorItem]];
   [windowMenu addItemWithTitle:@"Minimize"
                         action:@selector(performMiniaturize:)
                  keyEquivalent:@"m"];
@@ -93,6 +124,11 @@
 - (void)showWindow;
 {
   [preferencesWindowController_ showWindow:self];
+}
+
+- (void)showPreferencePane:(id)sender;
+{
+  [preferencesWindowController_ showPreferencePane:[sender representedObject]];
 }
 
 @end

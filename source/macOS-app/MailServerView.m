@@ -193,13 +193,13 @@ autoresizingMask:(unsigned int)mask;
   const float controlSpacing = 4;
   const float boxTitleHeight = 14;
   const float labelWidth = 70;
-  const float localPortWidth = 72;
   const float portLabelWidth = 44;
   const float serverPortWidth = 58;
   const float fieldHeight = 22;
   const float labelHeight = 20;
   NSBox *box = [[[NSBox alloc]
       initWithFrame:boxFrame] autorelease];
+  NSTextField *proxyHostField;
 
   innerLeft = NSMinX(boxFrame) + boxPadding;
   innerRight = NSMaxX(boxFrame) - boxPadding;
@@ -213,13 +213,25 @@ autoresizingMask:(unsigned int)mask;
   [box setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   [self addSubview:box];
 
-  [self addLabel:@"Local port:"
+  [self addLabel:@"Proxy:"
            frame:NSMakeRect(innerLeft, firstFieldY - 3,
                             labelWidth, labelHeight)
 autoresizingMask:NSViewMinYMargin];
+  proxyHostField = [[[NSTextField alloc] initWithFrame:
+      NSMakeRect(fieldX, firstFieldY,
+                 portLabelX - controlSpacing - fieldX, fieldHeight)] autorelease];
+  [proxyHostField setStringValue:@"localhost"];
+  [proxyHostField setEditable:NO];
+  [proxyHostField setSelectable:NO];
+  [proxyHostField setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+  [self addSubview:proxyHostField];
+  [self addLabel:@"Port:"
+           frame:NSMakeRect(portLabelX, firstFieldY - 3,
+                            portLabelWidth, labelHeight)
+autoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
   *localPortField = [self newEditableFieldWithFrame:
-      NSMakeRect(fieldX, firstFieldY, localPortWidth, fieldHeight)
-      autoresizingMask:NSViewMinYMargin];
+      NSMakeRect(portFieldX, firstFieldY, serverPortWidth, fieldHeight)
+      autoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
   [self addLabel:@"Server:"
            frame:NSMakeRect(innerLeft, secondFieldY - 3,
                             labelWidth, labelHeight)

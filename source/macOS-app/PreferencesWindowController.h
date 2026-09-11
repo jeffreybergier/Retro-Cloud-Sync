@@ -23,4 +23,5 @@
   NSImage *logToolbarImage_;
   NSView *visibleView_;
 }
+- (void)showPreferencePane:(NSString *)identifier;
 @end

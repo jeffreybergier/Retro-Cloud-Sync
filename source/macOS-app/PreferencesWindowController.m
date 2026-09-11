@@ -17,6 +17,7 @@ static NSString * const kRCMailToolbarItem = @"Mail";
 static NSString * const kRCSyncToolbarItem = @"Sync";
 static NSString * const kRCLogToolbarItem = @"Log";
 static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
+static NSString * const kRCWindowFrameAutosaveName = @"RetroCloudSyncPreferences";
 
 @interface PreferencesWindowController (Private)
 - (void)selectPreferencePane:(id)sender;
@@ -27,7 +28,11 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
 
 - (id)init;
 {
-  return [super initWithWindowNibName:@"ignored"];
+  self = [super initWithWindowNibName:@"ignored"];
+  if (self != nil) {
+    [self setShouldCascadeWindows:NO];
+  }
+  return self;
 }
 
 - (void)dealloc;
@@ -132,18 +137,21 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   [toolbar setSelectedItemIdentifier:kRCDaemonToolbarItem];
   [self showView:daemonStatusView_];
 
-  [window center];
+  if (![window setFrameUsingName:kRCWindowFrameAutosaveName]) {
+    [window center];
+  }
+  [window setFrameAutosaveName:kRCWindowFrameAutosaveName];
   [window release];
 }
 
 - (void)showWindow:(id)sender;
 {
+  [super showWindow:sender];
   if (visibleView_ == daemonStatusView_) {
     [daemonStatusView_ startUpdating];
   } else if (visibleView_ == daemonLogView_) {
     [daemonLogView_ startUpdating];
   }
-  [super showWindow:sender];
 }
 
 - (void)windowWillClose:(NSNotification *)notification;
@@ -213,8 +221,11 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
 
 - (void)selectPreferencePane:(id)sender;
 {
-  NSString *identifier = [sender itemIdentifier];
+  [self showPreferencePane:[sender itemIdentifier]];
+}
 
+- (void)showPreferencePane:(NSString *)identifier;
+{
   if (![[self window] makeFirstResponder:nil]) return;
   if ([identifier isEqualToString:kRCMailToolbarItem]) {
     [mailServerView_ reloadSettings];
@@ -229,6 +240,7 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
     [self showView:daemonStatusView_];
   }
   [toolbar_ setSelectedItemIdentifier:identifier];
+  [self showWindow:self];
 }
 
 - (void)showView:(NSView *)view;
