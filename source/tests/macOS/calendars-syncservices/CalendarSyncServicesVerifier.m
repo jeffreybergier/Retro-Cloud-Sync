@@ -67,7 +67,7 @@ int main(int argc, char **argv)
   if (argc == 2 && !strcmp(argv[1], "diagnose")) {
     ISyncClient *ical = [manager clientWithIdentifier:@"com.apple.iCal"];
     NSLog(@"Test client=%@",
-          [manager clientWithIdentifier:@"com.retrocloudsync.calendars.test.v1"]);
+          [manager clientWithIdentifier:@"com.altivecintelligence.calendars.test.v1"]);
     NSLog(@"iCal enabled=%lu calendars=%lu events=%lu",
           (unsigned long)[[ical enabledEntityNames] count],
           (unsigned long)[calendars count], (unsigned long)[events count]);

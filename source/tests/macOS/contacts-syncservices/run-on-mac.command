@@ -10,7 +10,7 @@ if ! mkdir "$lock" 2>/dev/null; then
   exit 1
 fi
 echo "$$ $(pwd)" > "$lock/owner"
-daemon=./RetroCloudSyncDaemon
+daemon=./rcloudd
 verifier=./RetroCloudContactsSyncServicesVerifier
 description=./ContactsTestSyncClient.plist
 history=./Contacts-truth-history.plist
@@ -73,11 +73,11 @@ finish() {
   exit "$status"
 }
 trap finish EXIT
-if ps -axww -o command | grep '/Library/Application Support/RetroCloudSync/RetroCloudSyncDaemon --config' | grep -v grep >/dev/null; then
+if ps -axww -o command | grep '/Library/Application Support/\(RetroCloudSync\|rCloud\)/\(RetroCloudSyncDaemon\|rcloudd\) --config' | grep -v grep >/dev/null; then
   echo 'Stop the production daemon before running offline contacts tests.'
   exit 1
 fi
-sed 's/Retro Cloud Sync Contacts/Retro Cloud Contacts Tests/' SyncClient.plist > "$description"
+sed 's/rCloud Contacts/Retro Cloud Contacts Tests/' SyncClient.plist > "$description"
 chmod +x "$daemon" "$verifier"
 "$verifier" snapshot AddressBook-baseline.plist
 "$verifier" client-registration "$description"

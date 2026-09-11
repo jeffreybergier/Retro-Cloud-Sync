@@ -99,8 +99,8 @@ On the Mac, the embedded daemon supports these commands without starting the
 service, accessing Keychain, opening a Sync Services session or using the network:
 
 ```sh
-RetroCloudSyncDaemon --inspect-recovery /path/to/Contacts.sqlite
-RetroCloudSyncDaemon --export-recovery /path/to/Contacts.sqlite /path/to/new-snapshot.sqlite
+rcloudd --inspect-recovery /path/to/Contacts.sqlite
+rcloudd --export-recovery /path/to/Contacts.sqlite /path/to/new-snapshot.sqlite
 ```
 
 Inspection is a read-only diagnostic listing operation IDs, kinds, states and

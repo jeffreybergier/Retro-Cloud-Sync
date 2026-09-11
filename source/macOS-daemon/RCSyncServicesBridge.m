@@ -28,7 +28,7 @@ static NSString * const kRCSmartGroupEntity = @"com.apple.contacts.SmartGroup";
 static NSString * const kRCIMEntity = @"com.apple.contacts.IM";
 static NSString * const kRCRelatedNameEntity = @"com.apple.contacts.Related Name";
 static NSString * const kRCTestClientIdentifier =
-    @"com.retrocloudsync.contacts.test.v1";
+    @"com.altivecintelligence.contacts.test.v1";
 
 typedef struct {
   RCContactStore *store;

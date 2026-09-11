@@ -34,6 +34,8 @@ build-mac-calendars-syncservices-tests: $(CALENDAR_VERIFIER) $(CALENDAR_MAC_FIXT
 CALENDAR_CLIENT_TEST := $(CALENDAR_MAC_TEST_ROOT)/RetroCloudCalendarClientRegistrationTests
 CALENDAR_CLIENT_TEST_SOURCE := \
 	$(SOURCE_ROOT)/tests/macOS/calendars-syncservices/CalendarClientRegistrationTests.m
+$(CALENDAR_MAC_TEST_ROOT)/client-ppc $(CALENDAR_MAC_TEST_ROOT)/client-i386: \
+	COMMON_FLAGS += -I$(ALTIVECCORE_ROOT)/include
 $(CALENDAR_MAC_TEST_ROOT)/client-ppc: $(CALENDAR_CLIENT_TEST_SOURCE) \
 	$(DAEMON_SOURCE_ROOT)/RCCalendarSyncClient.h
 	@mkdir -p "$(dir $@)"

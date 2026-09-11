@@ -8,7 +8,7 @@ remote_relative="Desktop/$run_name"
 local_artifacts="$build_root/tests/macOS/contacts-syncservices/$run_name"
 mkdir -p "$local_artifacts"
 ssh -o LogLevel=ERROR "$test_host" "mkdir -p '$remote_relative'"
-scp -o LogLevel=ERROR "$build_root/macOS-daemon/release/RetroCloudSyncDaemon" \
+scp -o LogLevel=ERROR "$build_root/macOS-daemon/release/rcloudd" \
   "$build_root/tests/macOS/contacts-syncservices/RetroCloudContactsSyncServicesVerifier" \
   "$build_root"/tests/macOS/contacts-syncservices/Contacts-*.sqlite \
   "$project_root/source/macOS-app/Resources/SyncClient.plist" \

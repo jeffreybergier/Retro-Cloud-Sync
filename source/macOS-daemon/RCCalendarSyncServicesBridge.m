@@ -9,7 +9,7 @@
 #include <string.h>
 #include <strings.h>
 
-static NSString *const testIdentifier = @"com.retrocloudsync.calendars.test.v1";
+static NSString *const testIdentifier = @"com.altivecintelligence.calendars.test.v1";
 static NSString *String(const char *s)
 {
   return s ? [NSString stringWithUTF8String:s] : nil;

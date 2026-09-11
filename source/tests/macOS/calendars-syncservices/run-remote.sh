@@ -6,7 +6,7 @@ project_root="${PROJECT_ROOT:?PROJECT_ROOT is required}"
 run_name="RetroCloudSync-CalendarTests-$(date +%Y%m%d-%H%M%S)-$$"
 remote_relative="Desktop/$run_name"
 ssh -o LogLevel=ERROR "$test_host" "mkdir -p '$remote_relative'"
-scp -o LogLevel=ERROR "$build_root/macOS-daemon/release/RetroCloudSyncDaemon" \
+scp -o LogLevel=ERROR "$build_root/macOS-daemon/release/rcloudd" \
     "$build_root/tests/macOS/calendars-syncservices/RetroCloudCalendarSyncServicesVerifier" \
     "$build_root/tests/macOS/calendars-syncservices/RetroCloudCalendarFixtureGenerator" \
     "$build_root/tests/macOS/calendars-syncservices/RetroCloudCalendarClientRegistrationTests" \

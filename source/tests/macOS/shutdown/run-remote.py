@@ -51,7 +51,7 @@ echo 'SIGTERM interrupted a blocked credential read and stopped the daemon withi
 with tempfile.TemporaryDirectory() as temporary:
     files = Path(temporary)
     (files / 'Configuration.plist').write_bytes(plistlib.dumps(configuration))
-    (files / 'RetroCloudSyncDaemon').write_text(helper)
+    (files / 'rcloudd').write_text(helper)
     (files / 'run.command').write_text(script)
     run('mkdir ' + shlex.quote(remote))
     def copy(source, name):
@@ -59,10 +59,10 @@ with tempfile.TemporaryDirectory() as temporary:
     copy(os.environ['DAEMON_OUTPUT'], 'DaemonUnderTest')
     copy(os.environ['SESSION_TEST_OUTPUT'], 'SessionCancellationTests')
     copy(os.environ['CA_CERTIFICATE'], 'cacert.pem')
-    for name in ('Configuration.plist', 'RetroCloudSyncDaemon', 'run.command'):
+    for name in ('Configuration.plist', 'rcloudd', 'run.command'):
         copy(files / name, name)
     try:
-        output = run('cd ' + shlex.quote(remote) + ' && chmod +x DaemonUnderTest RetroCloudSyncDaemon SessionCancellationTests run.command && ./SessionCancellationTests --cancellation-only && ./run.command')
+        output = run('cd ' + shlex.quote(remote) + ' && chmod +x DaemonUnderTest rcloudd SessionCancellationTests run.command && ./SessionCancellationTests --cancellation-only && ./run.command')
         print(output, end='')
     finally:
         subprocess.run(['scp', '-O', '-o', 'BatchMode=yes', host + ':' + remote + '/daemon.log', str(root / 'daemon.log')], check=False, timeout=30)

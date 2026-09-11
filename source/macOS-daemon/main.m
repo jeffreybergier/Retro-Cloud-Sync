@@ -176,7 +176,7 @@ static BOOL RCCopyPasswordForWorker(RCSyncWorker *worker, char **password,
   NSTask *task=[[[NSTask alloc] init] autorelease];
   NSPipe *pipe=[NSPipe pipe];
   NSString *directory=[[NSString stringWithUTF8String:worker->databasePath] stringByDeletingLastPathComponent];
-  [task setLaunchPath:[directory stringByAppendingPathComponent:@"RetroCloudSyncDaemon"]];
+  [task setLaunchPath:[directory stringByAppendingPathComponent:@"rcloudd"]];
   [task setArguments:[NSArray arrayWithObjects:@"--read-credentials",
       [NSString stringWithUTF8String:worker->configurationPath],nil]];
   [task setStandardOutput:pipe]; [task setStandardError:[NSFileHandle fileHandleWithNullDevice]];
@@ -844,7 +844,7 @@ int main(int argc, char *argv[])
   } else if (argc == 1) {
     RCUseDefaultMailConfiguration(mailConfigs);
   } else {
-    RCLogger(RCLogError, "Daemon", "Startup", @"Usage: RetroCloudSyncDaemon [--config path] | "
+    RCLogger(RCLogError, "Daemon", "Startup", @"Usage: rcloudd [--config path] | "
            "--inspect-recovery database | --export-recovery database new-snapshot | "
            "--test-syncservices database client-description | "
            "--unregister-syncservices-test-client");

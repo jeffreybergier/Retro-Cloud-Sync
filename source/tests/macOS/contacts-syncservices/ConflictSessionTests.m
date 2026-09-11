@@ -106,8 +106,8 @@ int main(int argc, char **argv)
           encoding:NSUTF8StringEncoding error:NULL];
       REQUIRE([saved hasPrefix:@"RetroCloudConflictFixture-"]);
       marker=saved;
-      remote=[manager clientWithIdentifier:@"com.retrocloudsync.conflict.test.remote"];
-      local=[manager clientWithIdentifier:@"com.retrocloudsync.conflict.test.local"];
+      remote=[manager clientWithIdentifier:@"com.altivecintelligence.conflict.test.remote"];
+      local=[manager clientWithIdentifier:@"com.altivecintelligence.conflict.test.local"];
     } else {
     NSDictionary *description = [NSDictionary dictionaryWithObjectsAndKeys:
         @"server", @"Type", @"Retro Cloud Conflict Tests", @"DisplayName",
@@ -117,16 +117,16 @@ int main(int argc, char **argv)
     [description writeToFile:@"ConflictClient.plist" atomically:YES];
     NSString *path = [[[NSFileManager defaultManager] currentDirectoryPath]
         stringByAppendingPathComponent:@"ConflictClient.plist"];
-    if ([manager clientWithIdentifier:@"com.retrocloudsync.conflict.test.remote"] ||
-        [manager clientWithIdentifier:@"com.retrocloudsync.conflict.test.local"])
+    if ([manager clientWithIdentifier:@"com.altivecintelligence.conflict.test.remote"] ||
+        [manager clientWithIdentifier:@"com.altivecintelligence.conflict.test.local"])
       [NSException raise:@"TestFailure" format:@"Previous test clients require recovery"];
     marker=[@"RetroCloudConflictFixture-" stringByAppendingString:
         [[NSProcessInfo processInfo] globallyUniqueString]];
     REQUIRE([marker writeToFile:@"fixture-marker.txt" atomically:YES
         encoding:NSUTF8StringEncoding error:NULL]);
-    remote = [manager registerClientWithIdentifier:@"com.retrocloudsync.conflict.test.remote"
+    remote = [manager registerClientWithIdentifier:@"com.altivecintelligence.conflict.test.remote"
         descriptionFilePath:path];
-    local = [manager registerClientWithIdentifier:@"com.retrocloudsync.conflict.test.local"
+    local = [manager registerClientWithIdentifier:@"com.altivecintelligence.conflict.test.local"
         descriptionFilePath:path];
     if (!remote || !local) [NSException raise:@"TestFailure" format:@"Registration"];
     [remote setEnabled:YES forEntityNames:[NSArray arrayWithObject:entity]];

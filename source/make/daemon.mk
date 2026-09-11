@@ -1,7 +1,8 @@
 # Retro Cloud Sync background process.
 
-DAEMON_NAME := RetroCloudSyncDaemon
+DAEMON_NAME := rcloudd
 DAEMON_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-daemon
+DAEMON_INFO_PLIST := $(DAEMON_SOURCE_ROOT)/Info.plist
 DAEMON_BUILD_ROOT := $(BUILD_ROOT)/macOS-daemon/$(CONFIG)
 DAEMON_SOURCES := main.m RCCalendarSyncServicesBridge.m RCSyncServicesBridge.m RCSyncConflictSession.m \
 	RCContactConflictResolver.m RCTwoWaySync.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m RCCalendarTwoWay.m RCCalendarOperations.m \
@@ -26,6 +27,7 @@ DAEMON_LINK_FLAGS := -framework Foundation -framework CoreFoundation \
 		-framework SystemConfiguration -framework Security -lxml2 \
 		-framework SyncServices \
 		-lobjc -lgcc_s.10.4
+DAEMON_LINK_FLAGS += -Wl,-sectcreate,__TEXT,__info_plist,$(DAEMON_INFO_PLIST)
 
 daemon-config: validate-build shared-config $(DAEMON_OUTPUT)
 
@@ -44,16 +46,16 @@ $(DAEMON_OUTPUT): $(DAEMON_INTERMEDIATES)/ppc.bin \
 	@$(LIPO) -create $^ -output "$@"
 
 $(DAEMON_INTERMEDIATES)/ppc.bin: $(DAEMON_PPC_OBJECTS) \
-		$(PPC_SHARED_LIBRARY) $(DAEMON_PPC_ALTIVECCORE) $(ICAL_PPC_LIBRARY) $(LIBVC_PPC_LIBRARY)
+		$(PPC_SHARED_LIBRARY) $(DAEMON_PPC_ALTIVECCORE) $(ICAL_PPC_LIBRARY) $(LIBVC_PPC_LIBRARY) $(DAEMON_INFO_PLIST)
 	@echo "  > linking daemon ppc binary"
 	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(PPC_CC) \
-		-arch ppc -isysroot "$(SDK)" $^ $(DAEMON_LINK_FLAGS) -o "$@"
+		-arch ppc -isysroot "$(SDK)" $(filter-out $(DAEMON_INFO_PLIST),$^) $(DAEMON_LINK_FLAGS) -o "$@"
 
 $(DAEMON_INTERMEDIATES)/i386.bin: $(DAEMON_I386_OBJECTS) \
-		$(I386_SHARED_LIBRARY) $(DAEMON_I386_ALTIVECCORE) $(ICAL_I386_LIBRARY) $(LIBVC_I386_LIBRARY)
+		$(I386_SHARED_LIBRARY) $(DAEMON_I386_ALTIVECCORE) $(ICAL_I386_LIBRARY) $(LIBVC_I386_LIBRARY) $(DAEMON_INFO_PLIST)
 	@echo "  > linking daemon i386 binary"
 	@MACOSX_DEPLOYMENT_TARGET=$(MACOSX_DEPLOYMENT_TARGET) $(I386_CC) \
-		-arch i386 -isysroot "$(SDK)" $^ $(DAEMON_LINK_FLAGS) -o "$@"
+		-arch i386 -isysroot "$(SDK)" $(filter-out $(DAEMON_INFO_PLIST),$^) $(DAEMON_LINK_FLAGS) -o "$@"
 
 $(DAEMON_INTERMEDIATES)/ppc/%.o: $(DAEMON_SOURCE_ROOT)/%.m $(ICAL_PPC_LIBRARY)
 	@mkdir -p "$(dir $@)"

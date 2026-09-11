@@ -29,7 +29,7 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
 {
   NSString *supportDirectory = [[NSHomeDirectory()
       stringByAppendingPathComponent:@"Library/Application Support"]
-      stringByAppendingPathComponent:@"RetroCloudSync"];
+      stringByAppendingPathComponent:@"rCloud"];
 
   return [supportDirectory stringByAppendingPathComponent:@"Configuration.plist"];
 }
@@ -98,13 +98,13 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
         !isDirectory ||
         ![fileManager createDirectoryAtPath:directory attributes:nil]) {
       if (errorMessage != NULL) {
-        *errorMessage = @"Could not create the RetroCloudSync support directory";
+        *errorMessage = @"Could not create the rCloud support directory";
       }
       return NO;
     }
   } else if (!isDirectory) {
     if (errorMessage != NULL) {
-      *errorMessage = @"The RetroCloudSync support path is not a directory";
+      *errorMessage = @"The rCloud support path is not a directory";
     }
     return NO;
   }

@@ -8,7 +8,7 @@
   <key>Type</key>
   <string>server</string>
   <key>DisplayName</key>
-  <string>Retro Cloud Sync Contacts</string>
+  <string>rCloud Contacts</string>
   <key>Entities</key>
   <dict>
     <key>com.apple.contacts.Contact</key>

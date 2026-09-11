@@ -251,7 +251,7 @@ static void ContactCreationPolicyTests(int scenario)
     NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description]; CHECK(desc);
     [desc setObject:@"Retro Cloud Two Way Tests" forKey:@"DisplayName"];
     [desc removeObjectForKey:@"PushOnlyEntities"]; CHECK([desc writeToFile:description atomically:YES]);
-    local=[manager registerClientWithIdentifier:@"com.retrocloudsync.tw.test.local" descriptionFilePath:description]; CHECK(local);
+    local=[manager registerClientWithIdentifier:@"com.altivecintelligence.tw.test.local" descriptionFilePath:description]; CHECK(local);
     [local setEnabled:YES forEntityNames:[[desc objectForKey:@"Entities"] allKeys]];
     store=RCContactStoreOpen([[NSString stringWithFormat:@"Creation-%d.sqlite",scenario] UTF8String],"synthetic",&error); CHECK(store);
     long long run,collection;
@@ -263,7 +263,7 @@ static void ContactCreationPolicyTests(int scenario)
     NSDictionary *card=[NSDictionary dictionaryWithObjectsAndKeys:@"com.apple.contacts.Contact",ISyncRecordEntityNameKey,
         [marker stringByAppendingString:@"-new"],@"first name",@"Tiger",@"last name",@"person",@"display as company",nil];
     LocalSession(local,[NSDictionary dictionaryWithObject:card forKey:@"new-fixture"],NO);
-    RCTwoWayContext c={j,@"com.retrocloudsync.tw.test.server",description,@"com.apple.contacts.Contact",
+    RCTwoWayContext c={j,@"com.altivecintelligence.tw.test.server",description,@"com.apple.contacts.Contact",
         [NSArray array],[NSDictionary dictionary],EncodeFixtureContact,store,NO,RCContactProjectVerified,NO};
     server=LegacyClient(c.clientIdentifier,description,c.graph);
     CHECK(RCTwoWayInitialize(&j,&error));
@@ -1301,15 +1301,15 @@ static void CalendarTests(BOOL exceptionsOnly)
     NSString *description=[[[NSFileManager defaultManager] currentDirectoryPath] stringByAppendingPathComponent:@"CalendarSyncClient.plist"];
     NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description]; CHECK(desc);
     [desc setObject:@"Retro Cloud Two Way Tests" forKey:@"DisplayName"]; [desc removeObjectForKey:@"PushOnlyEntities"]; CHECK([desc writeToFile:description atomically:YES]);
-    CHECK(![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.local"] && ![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.server"]);
-    local=[manager registerClientWithIdentifier:@"com.retrocloudsync.tw.test.cal.local" descriptionFilePath:description]; CHECK(local);
+    CHECK(![manager clientWithIdentifier:@"com.altivecintelligence.tw.test.cal.local"] && ![manager clientWithIdentifier:@"com.altivecintelligence.tw.test.cal.server"]);
+    local=[manager registerClientWithIdentifier:@"com.altivecintelligence.tw.test.cal.local" descriptionFilePath:description]; CHECK(local);
     [local setEnabled:YES forEntityNames:[[desc objectForKey:@"Entities"] allKeys]];
     store=RCCalendarStoreOpen("TwoWayCalendar.sqlite","synthetic",&error); CHECK(store);
     RCWriteJournal j=RCCalendarStoreWriteJournal(store);
     CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO calendars(account_id,url,sync_id,display_name) VALUES(%lld,'https://fixture.invalid/calendar/','fixture','Fixture')",j.account));
     if (exceptionsOnly) {
       remoteBodies=[NSMutableDictionary dictionary]; remoteETags=[NSMutableDictionary dictionary]; mutations=0;
-      RCTwoWayContext subset={j,@"com.retrocloudsync.tw.test.cal.server",description,@"com.apple.calendars.Event",[NSArray array],CalendarGraph([NSArray array]),RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
+      RCTwoWayContext subset={j,@"com.altivecintelligence.tw.test.cal.server",description,@"com.apple.calendars.Event",[NSArray array],CalendarGraph([NSArray array]),RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
       @try { CalendarExceptionIntegration(&subset,local,store); }
       @finally { server=[manager clientWithIdentifier:subset.clientIdentifier]; }
       goto calendarDone;
@@ -1319,7 +1319,7 @@ static void CalendarTests(BOOL exceptionsOnly)
     remoteBodies=[NSMutableDictionary dictionaryWithObject:body forKey:href]; remoteETags=[NSMutableDictionary dictionaryWithObject:@"\"base\"" forKey:href]; mutations=0;
     NSDictionary *resource=CalendarResource(store,1,body,href,@"\"base\"");
     NSArray *resources=[NSArray arrayWithObject:resource];
-    RCTwoWayContext c={j,@"com.retrocloudsync.tw.test.cal.server",description,@"com.apple.calendars.Event",resources,CalendarGraph(resources),RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
+    RCTwoWayContext c={j,@"com.altivecintelligence.tw.test.cal.server",description,@"com.apple.calendars.Event",resources,CalendarGraph(resources),RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
     server=LegacyClient(c.clientIdentifier,description,c.graph);
     CHECK(![server canPullChangesForEntityName:c.rootEntity]);
     LocalSession(local,nil,NO);
@@ -1528,10 +1528,10 @@ int main(int argc,char **argv)
     marker=[NSString stringWithContentsOfFile:@"fixture-marker.txt" encoding:NSUTF8StringEncoding error:NULL];
     if (argc==2 && !strcmp(argv[1],"--cleanup")) {
       CHECK([marker hasPrefix:@"RetroCloudTwoWay-"]);
-      local=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.local"];
-      server=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.server"];
+      local=[manager clientWithIdentifier:@"com.altivecintelligence.tw.test.local"];
+      server=[manager clientWithIdentifier:@"com.altivecintelligence.tw.test.server"];
       Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
-      local=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.local"]; server=[manager clientWithIdentifier:@"com.retrocloudsync.tw.test.cal.server"];
+      local=[manager clientWithIdentifier:@"com.altivecintelligence.tw.test.cal.local"]; server=[manager clientWithIdentifier:@"com.altivecintelligence.tw.test.cal.server"];
       Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
       if ([[NSFileManager defaultManager] fileExistsAtPath:@"Calendar-baseline.archive"]) {
         NSDictionary *baseline=[NSKeyedUnarchiver unarchiveObjectWithFile:@"Calendar-baseline.archive"]; CHECK(baseline);
@@ -1547,7 +1547,7 @@ int main(int argc,char **argv)
     BOOL editDeleteOnly=argc==2 && !strcmp(argv[1],"--edit-delete");
     BOOL conflictReplayOnly=argc==2 && !strcmp(argv[1],"--conflict-replay");
     CHECK(argc==1 || recoveryOnly || editDeleteOnly || fieldsOnly || conflictReplayOnly);
-    CHECK(![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.local"] && ![manager clientWithIdentifier:@"com.retrocloudsync.tw.test.server"]);
+    CHECK(![manager clientWithIdentifier:@"com.altivecintelligence.tw.test.local"] && ![manager clientWithIdentifier:@"com.altivecintelligence.tw.test.server"]);
     marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
     CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
     if (!recoveryOnly && !editDeleteOnly && !fieldsOnly && !conflictReplayOnly) { ContactCreationPolicyTests(0); ContactCreationPolicyTests(1); ContactCreationPolicyTests(2); ContactCreationPolicyTests(3); }
@@ -1556,7 +1556,7 @@ int main(int argc,char **argv)
     NSMutableDictionary *desc=[NSMutableDictionary dictionaryWithContentsOfFile:description]; CHECK(desc);
     [desc setObject:@"Retro Cloud Two Way Tests" forKey:@"DisplayName"]; [desc removeObjectForKey:@"PushOnlyEntities"];
     CHECK([desc writeToFile:description atomically:YES]);
-    local=[manager registerClientWithIdentifier:@"com.retrocloudsync.tw.test.local" descriptionFilePath:description]; CHECK(local);
+    local=[manager registerClientWithIdentifier:@"com.altivecintelligence.tw.test.local" descriptionFilePath:description]; CHECK(local);
     [local setEnabled:YES forEntityNames:[[desc objectForKey:@"Entities"] allKeys]];
     store=RCContactStoreOpen("TwoWay.sqlite","synthetic",&error); CHECK(store);
     long long run,collection;
@@ -1568,7 +1568,7 @@ int main(int argc,char **argv)
     remoteBodies=[NSMutableDictionary dictionaryWithObject:body forKey:href]; remoteETags=[NSMutableDictionary dictionaryWithObject:@"\"base\"" forKey:href];
     NSDictionary *resource=ContactResource(body,@"contact-fixture",href,@"\"base\"");
     RCWriteJournal j=RCContactStoreWriteJournal(store);
-    RCTwoWayContext c={j,@"com.retrocloudsync.tw.test.server",description,@"com.apple.contacts.Contact",[NSArray arrayWithObject:resource],
+    RCTwoWayContext c={j,@"com.altivecintelligence.tw.test.server",description,@"com.apple.contacts.Contact",[NSArray arrayWithObject:resource],
         [resource objectForKey:@"graph"],EncodeFixtureContact,store,NO,RCContactProjectVerified,NO};
     server=LegacyClient(c.clientIdentifier,description,c.graph);
     CHECK(![server canPullChangesForEntityName:c.rootEntity]);

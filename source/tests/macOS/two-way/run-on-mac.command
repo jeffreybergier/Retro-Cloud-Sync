@@ -31,7 +31,7 @@ finish() {
   exit "$status"
 }
 trap finish EXIT
-if ps -axww -o command | grep '/Library/Application Support/RetroCloudSync/RetroCloudSyncDaemon --config' | grep -v grep >/dev/null; then
+if ps -axww -o command | grep '/Library/Application Support/\(RetroCloudSync\|rCloud\)/\(RetroCloudSyncDaemon\|rcloudd\) --config' | grep -v grep >/dev/null; then
   echo 'Stop the production daemon before running two-way tests.'
   exit 1
 fi

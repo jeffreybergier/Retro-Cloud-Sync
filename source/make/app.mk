@@ -1,6 +1,6 @@
 # Retro Cloud Sync graphical application and product bundle.
 
-APP_NAME := RetroCloudSync
+APP_NAME := rCloud
 APP_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-app
 APP_BUILD_ROOT := $(BUILD_ROOT)/macOS-app/$(CONFIG)
 APP_SOURCES := main.m AppDelegate.m PreferencesWindowController.m \

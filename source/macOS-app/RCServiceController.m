@@ -10,8 +10,8 @@
 
 #include <unistd.h>
 
-static NSString * const kRCServiceLabel = @"com.retrocloudsync.daemon";
-static NSString * const kRCDaemonName = @"RetroCloudSyncDaemon";
+static NSString * const kRCServiceLabel = @"com.altivecintelligence.rcloudd";
+static NSString * const kRCDaemonName = @"rcloudd";
 static NSString * const kRCCertificateName = @"cacert.pem";
 static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
 
@@ -148,7 +148,7 @@ static NSArray *RCLaunchctlArguments(NSString *action, NSString *path)
   NSString *supportDirectory =
       [libraryDirectory stringByAppendingPathComponent:@"Application Support"];
 
-  return [supportDirectory stringByAppendingPathComponent:@"RetroCloudSync"];
+  return [supportDirectory stringByAppendingPathComponent:@"rCloud"];
 }
 
 - (NSString *)installedDaemonPath;
@@ -287,7 +287,7 @@ static NSArray *RCLaunchctlArguments(NSString *action, NSString *path)
   NSFileManager *fileManager = [NSFileManager defaultManager];
   NSString *embeddedDaemonPath = [[[NSBundle mainBundle] bundlePath]
       stringByAppendingPathComponent:
-          @"Contents/Library/LaunchServices/RetroCloudSyncDaemon"];
+          @"Contents/Library/LaunchServices/rcloudd"];
   NSString *installedDaemonPath = [self installedDaemonPath];
   NSString *embeddedCertificatePath = [[NSBundle mainBundle]
       pathForResource:@"cacert" ofType:@"pem"];

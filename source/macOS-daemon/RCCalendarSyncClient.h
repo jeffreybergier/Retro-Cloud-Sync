@@ -7,9 +7,9 @@
 static inline NSString *RCCalendarSyncClientIdentifier(NSString *accountSyncID)
 {
   /* Tiger hex-encodes each UTF-16 code unit as four filename characters.
-     With the full 32-character account ID, this is 58 * 4 = 232 bytes.
-     The former "calendars" prefix produced 256, exceeding NAME_MAX (255). */
-  return [@"com.retrocloudsync.cal.v1." stringByAppendingString:accountSyncID];
+     The prefix plus the full 32-character account ID is 63 * 4 = 252 bytes,
+     just below NAME_MAX (255). Do not lengthen this identifier. */
+  return [@"com.altivecintelligence.cal.v1." stringByAppendingString:accountSyncID];
 }
 
 static inline NSString *RCCalendarNativeTitle(RCWriteJournal journal,NSString *identifier,NSString *title)

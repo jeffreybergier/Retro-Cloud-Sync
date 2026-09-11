@@ -11,7 +11,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-static NSString * const kRCTestDaemonName = @"RetroCloudSyncDaemon";
+static NSString * const kRCTestDaemonName = @"rcloudd";
 
 @interface AppGUITestRunner (Private)
 - (BOOL)captureScreenshotNamed:(NSString *)name;
@@ -177,7 +177,7 @@ static BOOL ConfigurationMatches(NSString *path,
 
   supportDirectory = [[NSHomeDirectory()
       stringByAppendingPathComponent:@"Library/Application Support"]
-      stringByAppendingPathComponent:@"RetroCloudSync"];
+      stringByAppendingPathComponent:@"rCloud"];
   daemonPath = [supportDirectory stringByAppendingPathComponent:
       kRCTestDaemonName];
   certificatePath = [supportDirectory
@@ -188,7 +188,7 @@ static BOOL ConfigurationMatches(NSString *path,
       stringByAppendingPathComponent:@"Configuration.plist"];
   launchAgentPath = [[NSHomeDirectory()
       stringByAppendingPathComponent:@"Library/LaunchAgents"]
-      stringByAppendingPathComponent:@"com.retrocloudsync.daemon.plist"];
+      stringByAppendingPathComponent:@"com.altivecintelligence.rcloudd.plist"];
   daemonLogPath = [[NSHomeDirectory()
       stringByAppendingPathComponent:@"Library/Logs/RetroCloudSync"]
       stringByAppendingPathComponent:@"RetroCloudSyncDaemon.log"];
@@ -804,7 +804,7 @@ cleanup:
   NSString *output;
   NSString *daemonPath = [[[NSHomeDirectory()
       stringByAppendingPathComponent:@"Library/Application Support"]
-      stringByAppendingPathComponent:@"RetroCloudSync"]
+      stringByAppendingPathComponent:@"rCloud"]
       stringByAppendingPathComponent:kRCTestDaemonName];
   NSArray *lines;
   NSEnumerator *enumerator;
@@ -849,7 +849,7 @@ cleanup:
 
   executablePath = [[applicationPath_
       stringByAppendingPathComponent:@"Contents/MacOS"]
-      stringByAppendingPathComponent:@"RetroCloudSync"];
+      stringByAppendingPathComponent:@"rCloud"];
   if (![[NSFileManager defaultManager] fileExistsAtPath:executablePath]) {
     PrintFail(@"Application executable is missing");
     return NO;

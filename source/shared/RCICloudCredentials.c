@@ -6,8 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char kRCService[] = "com.retrocloudsync.icloud";
-static const char kRCLabel[] = "Retro Cloud Sync iCloud Account";
+static const char kRCService[] = "com.altivecintelligence.rcloud.icloud";
+static const char kRCLabel[] = "rCloud iCloud Account";
 static const int kRCParameterError = -50;
 static const int kRCMemoryError = -108;
 
@@ -44,7 +44,7 @@ static OSStatus RCCreateAccess(const char *daemonPath, SecAccessRef *access)
   }
   CFArrayAppendValue(trusted, application);
   CFArrayAppendValue(trusted, daemon);
-  status = SecAccessCreate(CFSTR("Retro Cloud Sync iCloud Account"), trusted,
+  status = SecAccessCreate(CFSTR("rCloud iCloud Account"), trusted,
                            access);
 
 finished:

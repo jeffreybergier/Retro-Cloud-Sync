@@ -11,12 +11,12 @@ make clean
 
 Outputs are in `build/`. Override with `BUILD_ROOT=/path`.
 
-The app is `build/macOS-app/release/RetroCloudSync.app`. Copy it to a Mac and
+The app is `build/macOS-app/release/rCloud.app`. Copy it to a Mac and
 open it; do not run Mach-O binaries on the Linux build host.
 
-The app embeds `RetroCloudSyncDaemon` in `Contents/Library/LaunchServices`.
-Start copies it to `~/Library/Application Support/RetroCloudSync`, writes
-`~/Library/LaunchAgents/com.retrocloudsync.daemon.plist`, and runs
+The app embeds `rcloudd` in `Contents/Library/LaunchServices`.
+Start copies it to `~/Library/Application Support/rCloud`, writes
+`~/Library/LaunchAgents/com.altivecintelligence.rcloudd.plist`, and runs
 `launchctl load`. Stop runs `launchctl unload` and removes the plist. This is a
 per-user LaunchAgent, not a LaunchDaemon.
 

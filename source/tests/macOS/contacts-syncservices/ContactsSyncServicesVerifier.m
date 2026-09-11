@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static NSString * const kRCTestClient = @"com.retrocloudsync.contacts.test.v1";
+static NSString * const kRCTestClient = @"com.altivecintelligence.contacts.test.v1";
 static NSString * const kRCAlpha = @"RCSSTestAlpha";
 static NSString * const kRCBeta = @"RCSSTestBeta";
 #define CHECK(condition, message) do { if (!(condition)) { \

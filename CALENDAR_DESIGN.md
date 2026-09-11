@@ -12,7 +12,7 @@ suite on PowerPC Mac OS X 10.4.11. Authenticated iCloud testing is still pending
 Calendar mirror and SyncServices proposal — September 5, 2026
 
 Implement the existing contacts flow for calendars: download from iCloud into
-`~/Library/Application Support/RetroCloudSync/Calendar.sqlite`, retain the
+`~/Library/Application Support/rCloud/Calendar.sqlite`, retain the
 original calendar data alongside ordinary SQL tables, and publish a supported
 projection to iCal through Tiger's SyncServices API. Start with the same
 one-way behavior as Contacts. Calendar writes to iCloud are a later phase.
@@ -209,7 +209,7 @@ types, inverse relationships, and recurrence behavior. The available SDK has
 API headers but did not supply that installed schema in the inspected paths.
 Treat the published 2007 reference as a starting point; gate each property on
 Tiger availability. Register a stable server client such as
-`com.retrocloudsync.calendars.v1` with push-only mapped entities.
+`com.altivecintelligence.cal.v1.<accountSyncID>` with push-only mapped entities.
 
 Build the supported calendar object graph before opening an ISyncSession.
 Preserve the contacts approach of consistent sync mode across related entities.

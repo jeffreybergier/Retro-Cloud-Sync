@@ -16,6 +16,6 @@ Flex, Bison and the project's legacy OS X cross toolchain:
   bash build-libvc.sh i386 "$PWD" /osxcross/legacy/target
   bash relink-libvc-daemon.sh "$PWD" /osxcross/legacy/target
 
-The resulting RetroCloudSyncDaemon can replace the embedded daemon in the
+The resulting rcloudd can replace the embedded daemon in the
 app's Contents/Library/LaunchServices before installation/start. Run Mach-O
 executables only on a Mac. Keep remote Mac work under ~/Desktop.

@@ -7,7 +7,7 @@ exec > calendar-tests.log 2>&1
 export_status=1
 alert_helper_pid=
 # Scope automatic confirmation to this harness's separate synthetic-data client.
-sed 's/Retro Cloud Sync Calendars/Retro Cloud Calendar Tests/' CalendarSyncClient.plist > CalendarTestSyncClient.plist
+sed 's/rCloud Calendars/Retro Cloud Calendar Tests/' CalendarSyncClient.plist > CalendarTestSyncClient.plist
 /usr/bin/osascript <<'APPLESCRIPT' &
 repeat 900 times
   tell application "System Events"
@@ -28,7 +28,7 @@ APPLESCRIPT
 alert_helper_pid=$!
 push_calendar() {
   attempts=0
-  until ./RetroCloudSyncDaemon --test-calendar-syncservices Calendar-active.sqlite CalendarTestSyncClient.plist; do
+  until ./rcloudd --test-calendar-syncservices Calendar-active.sqlite CalendarTestSyncClient.plist; do
     attempts=$((attempts + 1))
     if [ "$attempts" -ge 3 ]; then return 1; fi
     echo 'Sync Services is busy; retrying the synthetic export.'
@@ -52,7 +52,7 @@ finish() {
   wait_for_phase empty
   cleanup_status=$?
   if [ "$cleanup_status" -eq 0 ]; then
-    ./RetroCloudSyncDaemon --unregister-calendar-test-client
+    ./rcloudd --unregister-calendar-test-client
   fi
   if [ "$original_status" -ne 0 ] || [ "$cleanup_status" -ne 0 ]; then export_status=1; fi
   kill "$alert_helper_pid" 2>/dev/null || true
@@ -60,7 +60,7 @@ finish() {
   exit "$export_status"
 }
 trap finish EXIT
-if ps -axww -o command | grep '/Library/Application Support/RetroCloudSync/RetroCloudSyncDaemon --config' | grep -v grep >/dev/null; then
+if ps -axww -o command | grep '/Library/Application Support/\(RetroCloudSync\|rCloud\)/\(RetroCloudSyncDaemon\|rcloudd\) --config' | grep -v grep >/dev/null; then
   echo 'Stop the production daemon before running offline calendar tests.'
   trap - EXIT
   kill "$alert_helper_pid" 2>/dev/null || true

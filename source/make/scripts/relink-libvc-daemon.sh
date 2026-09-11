@@ -13,8 +13,8 @@ for arch in ppc i386; do
     "$root/libvc-$arch/libvc.a" \
     -framework Foundation -framework CoreFoundation -framework SystemConfiguration \
     -framework Security -lxml2 -framework SyncServices -lobjc -lgcc_s.10.4 \
-    -o "$root/relink/$arch/RetroCloudSyncDaemon"
+    -o "$root/relink/$arch/rcloudd"
 done
 "$toolchain/bin/i386-apple-darwin9-lipo" -create \
-  "$root/relink/ppc/RetroCloudSyncDaemon" "$root/relink/i386/RetroCloudSyncDaemon" \
-  -output "$root/RetroCloudSyncDaemon"
+  "$root/relink/ppc/rcloudd" "$root/relink/i386/rcloudd" \
+  -output "$root/rcloudd"

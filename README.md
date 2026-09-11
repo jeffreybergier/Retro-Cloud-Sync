@@ -147,7 +147,7 @@ When enabled, the daemon downloads contacts immediately after it starts and
 then at the configured interval. Its read-only mirror is stored at:
 
 ```text
-~/Library/Application Support/RetroCloudSync/Contacts.sqlite
+~/Library/Application Support/rCloud/Contacts.sqlite
 ```
 
 Contact download errors do not stop the mail proxy; they are written to the
@@ -213,7 +213,7 @@ With Calendars set to **1-way**, the daemon downloads calendars immediately and
 at the shared sync interval. The database is:
 
 ```text
-~/Library/Application Support/RetroCloudSync/Calendar.sqlite
+~/Library/Application Support/rCloud/Calendar.sqlite
 ```
 
 In **Sync → Calendar**, **Past events** selects **Last 1 year**, **Last 2 years**
@@ -298,7 +298,7 @@ Calendar integration tests run synthetic data through the real Tiger framework
 and verify iCal using AppleScript. They also register and remove a client using
 the production identifier format and a synthetic account ID, catching Tiger's
 encoded filename length limit without publishing records. Production calendar
-clients use `com.retrocloudsync.cal.v1.` plus the full account sync ID.
+clients use `com.altivecintelligence.cal.v1.` plus the full account sync ID.
 The import tests use a separate test client, preserve a
 baseline of existing calendar/event identifiers, exercise repeated imports,
 updates/deletion and malformed/unsupported replacements, and clean up their
@@ -313,7 +313,17 @@ The build uses libical 3.0.20 from the HTTPS Git submodule at
 It builds only the C library for PPC/i386 and native tests. Preparation copies
 the checkout into `build/dependencies` (or `BUILD_ROOT/dependencies`) and applies
 the GCC 4.2 diagnostic-only patches there, leaving the submodule unchanged.
-`RetroCloudSync.zip` contains only `RetroCloudSync.app` at the archive root.
+`rCloud.zip` contains only `rCloud.app` at the archive root.
+The GUI executable is `rCloud` with bundle ID `com.altivecintelligence.rcloud`.
+The embedded daemon is `rcloudd`; its embedded bundle ID and LaunchAgent label
+are `com.altivecintelligence.rcloudd`. Configuration and sync databases live in
+`~/Library/Application Support/rCloud`. The Keychain service is
+`com.altivecintelligence.rcloud.icloud`.
+Sync Services client identifiers use `com.altivecintelligence.ct.v1.` for
+contacts and `com.altivecintelligence.cal.v1.` for calendars, followed by the
+full 32-character account sync ID. These are new registrations; the rename
+does not migrate or remove previous registrations, settings, or files.
+
 Runtime time-zone data and a copy of the MPL 2.0 license are included inside
 the app; build-only time-zone files are excluded. The dependency build script's
 `prepare-archive` mode can prepare a source archive without a Git checkout.
@@ -330,7 +340,7 @@ make test-host-contacts
 ```
 
 Copy `build/probes/macOS/carddav/release/RetroCloudCardDAVProbe` and
-`build/macOS-app/release/RetroCloudSync.app/Contents/Resources/cacert.pem` to
+`build/macOS-app/release/rCloud.app/Contents/Resources/cacert.pem` to
 a Mac under `~/Desktop`, then run:
 
 ```sh
@@ -366,7 +376,7 @@ A portability shim supplies Tiger's missing `getline` and the missing
 long-value and concurrent parsing checks. `make build-mac-vcard-tests` builds the
 same checks for PPC/i386; the PPC executable has also passed on Tiger.
 The app includes a copy of the libvc license. Debug and release ZIPs contain
-only `RetroCloudSync.app`, with no enclosing folder or companion sources.
+only `rCloud.app`, with no enclosing folder or companion sources.
 Copy the `.app` to the Mac for installation.
 
 ### Legacy libicalvcal compatibility check
@@ -406,7 +416,7 @@ make test-mac-contacts-syncservices TEST_HOST=x4-vm
 
 The test refuses to run while the production daemon is active. It uses the
 separate Sync Services client identifier
-`com.retrocloudsync.contacts.test.v1` and never reads the login Keychain,
+`com.altivecintelligence.contacts.test.v1` and never reads the login Keychain,
 loads the service configuration, initializes the network stack, or contacts
 iCloud. The runner copies the tools with SCP and starts them through Terminal
 in the logged-in desktop session. Enable Accessibility on Tiger so the harness

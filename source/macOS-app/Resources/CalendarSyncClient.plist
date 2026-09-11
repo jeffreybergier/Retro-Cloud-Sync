@@ -5,7 +5,7 @@
 	<key>Type</key>
 	<string>server</string>
 	<key>DisplayName</key>
-	<string>Retro Cloud Sync Calendars</string>
+	<string>rCloud Calendars</string>
 	<key>Entities</key>
 	<dict>
 		<key>com.apple.calendars.Calendar</key>

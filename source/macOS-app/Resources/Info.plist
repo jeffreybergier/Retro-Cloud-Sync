@@ -8,13 +8,13 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>English</string>
   <key>CFBundleExecutable</key>
-  <string>RetroCloudSync</string>
+  <string>rCloud</string>
   <key>CFBundleIdentifier</key>
-  <string>com.retrocloudsync.RetroCloudSync</string>
+  <string>com.altivecintelligence.rcloud</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
-  <string>Retro Cloud Sync</string>
+  <string>rCloud</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleSignature</key>
