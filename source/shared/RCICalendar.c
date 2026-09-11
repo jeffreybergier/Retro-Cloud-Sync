@@ -49,10 +49,11 @@ static int RCFraming(const unsigned char *bytes, size_t length)
   return roots == 1 && depth == 0;
 }
 
-/* Ignore an empty optional URL (with an optional VALUE=URI) only in the temporary parsing copy.
+/* Ignore empty optional URL (with optional VALUE=URI) and CATEGORIES lines
+   only in the temporary parsing copy.
    Do not discard libical errors: malformed dates, parameters and other values
    still invalidate the resource. In particular, a folded value is not empty. */
-static void RCOmitEmptyURLs(char *copy)
+static void RCOmitEmptyOptionalProperties(char *copy)
 {
   char *read = copy, *write = copy;
   while (*read) {
@@ -64,7 +65,8 @@ static void RCOmitEmptyURLs(char *copy)
     if (*read == '\n') read++;
     n = (size_t)(end - start);
     if (((n == 4 && !strncasecmp(start, "URL:", 4)) ||
-         (n == 14 && !strncasecmp(start, "URL;VALUE=URI:", 14))) &&
+         (n == 14 && !strncasecmp(start, "URL;VALUE=URI:", 14)) ||
+         (n == 11 && !strncasecmp(start, "CATEGORIES:", 11))) &&
         *read != ' ' && *read != '\t') continue;
     memmove(write, start, (size_t)(read - start));
     write += read - start;
@@ -90,7 +92,7 @@ icalcomponent *RCICalendarParse(const unsigned char *bytes, size_t length,
   }
   memcpy(copy, bytes, length);
   copy[length] = 0;
-  RCOmitEmptyURLs(copy);
+  RCOmitEmptyOptionalProperties(copy);
   icalerror_set_errors_are_fatal(0);
   root = icalparser_parse_string(copy);
   free(copy);

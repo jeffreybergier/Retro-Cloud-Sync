@@ -55,6 +55,38 @@ int main(void)
     CHECK(!strcmp(RCICalendarValue(icalcomponent_get_first_component(root, ICAL_VEVENT_COMPONENT), ICAL_URL_PROPERTY), "https://example.test/folded"));
     icalcomponent_free(root);
   }
+  /* Empty categories do not invalidate an event or alter its original bytes.
+     Preserve real categories, including folded values, and reject bad dates. */
+  {
+    const char *properties[] = {
+      "CATEGORIES:\r\n", "categories:\n", "CATEGORIES:Work\r\n",
+      "CATEGORIES:\r\n Work\r\n", "CATEGORIES:\n\tWork\n"
+    };
+    unsigned int i;
+    for (i = 0; i < sizeof(properties) / sizeof(properties[0]); i++) {
+      char input[512], original[512];
+      icalcomponent *root, *event;
+      const char *categories;
+      snprintf(input, sizeof(input),
+          "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n"
+          "UID:empty-categories\r\nDTSTART:20241218T094500Z\r\n%s"
+          "END:VEVENT\r\nEND:VCALENDAR\r\n", properties[i]);
+      strcpy(original, input);
+      root = RCICalendarParse((const unsigned char *)input, strlen(input), &error);
+      CHECK(root);
+      CHECK(!strcmp(input, original));
+      event = icalcomponent_get_first_component(root, ICAL_VEVENT_COMPONENT);
+      categories = RCICalendarValue(event, ICAL_CATEGORIES_PROPERTY);
+      CHECK(i < 2 ? categories == NULL : categories && !strcmp(categories, "Work"));
+      icalcomponent_free(root);
+    }
+    {
+      const char *invalid = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"
+          "BEGIN:VEVENT\r\nUID:bad-date\r\nCATEGORIES:\r\n"
+          "DTSTART:not-a-date\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+      CHECK(!RCICalendarParse((const unsigned char *)invalid, strlen(invalid), &error));
+    }
+  }
   fd = mkstemp(path);
   if (fd < 0)
     return 1;
