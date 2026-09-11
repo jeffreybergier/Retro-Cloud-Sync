@@ -66,7 +66,7 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
   DaemonLogView *daemonLogView;
   NSToolbar *toolbar;
 
-  frame = NSMakeRect(0, 0, 480, 410);
+  frame = NSMakeRect(0, 0, 480, 480);
   styleMask = NSTitledWindowMask | NSClosableWindowMask |
               NSMiniaturizableWindowMask | NSResizableWindowMask;
   window = [[NSWindow alloc] initWithContentRect:frame
@@ -74,7 +74,7 @@ static NSString * const kRCToolbarIdentifier = @"RetroCloudSyncPreferences";
                                          backing:NSBackingStoreBuffered
                                            defer:NO];
   [window setReleasedWhenClosed:NO];
-  [window setContentMinSize:NSMakeSize(480, 410)];
+  [window setContentMinSize:NSMakeSize(480, 480)];
   [window setDelegate:self];
   [window setTitle:@"Retro Cloud Sync"];
 

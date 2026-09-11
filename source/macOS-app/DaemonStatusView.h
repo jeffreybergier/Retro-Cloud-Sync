@@ -14,6 +14,8 @@
   NSTimer *statusTimer_;
   RCServiceController *serviceController_;
   BOOL serviceRunning_;
+  NSTextField *syncDetails_[2];
+  NSImageView *syncIcon_[2];
 }
 
 // Starts periodic daemon status checks if they are not already active.

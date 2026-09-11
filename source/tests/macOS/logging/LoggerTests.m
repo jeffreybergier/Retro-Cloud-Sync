@@ -6,6 +6,7 @@
 #include <string.h>
 
 int RCMailLoggingTests(void);
+int RCStatusTests(void);
 
 static void *Worker(void *argument)
 {
@@ -27,6 +28,7 @@ int main(void)
   pthread_t contacts, calendars;
   void *first, *second;
   char longMessage[10000];
+  if (!RCStatusTests()) return 5;
   if (!RCMailLoggingTests()) return 1;
   errno = EDOM;
   RCLoggerSetContext("Daemon", 0);

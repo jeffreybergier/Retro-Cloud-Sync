@@ -1,3 +1,4 @@
+#import "RCStatus.h"
 #import "RCCalendarOperations.h"
 #import "RCContactPhoto.h"
 #import "RCLogger.h"
@@ -117,18 +118,26 @@ static void RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
   RCError error;
   RCHTTPClient *http;
   if (!password) return;
+  NSString *service=calendars ? @"Calendars" : @"Contacts";
+  RCStatusPhase(service,@"Uploading");
   memset(&config,0,sizeof(config)); RCErrorClear(&error);
   config.username=worker->username; config.password=password;
   config.certificatePath=worker->certificatePath;
   config.allowedHostSuffix=".icloud.com";
   http=RCHTTPClientCreate(&config,&error);
   if (!http || RCTwoWayRunWrites(journal,http,calendars ? "text/calendar; charset=utf-8" :
-      "text/vcard; charset=utf-8",&error)<0)
+      "text/vcard; charset=utf-8",&error)<0) {
+    RCStatusFailure(service,@"Upload");
     RCLogger(RCLogWarning, NULL, "Upload", @"Outgoing pass failed; queued changes remain pending: %s",error.message);
-  if (http && calendars && !RCCalendarRunOperations(journal,http,&error))
+  }
+  if (http && calendars && !RCCalendarRunOperations(journal,http,&error)) {
+    RCStatusFailure(service,@"Upload");
     RCLogger(RCLogWarning,"Calendars","Upload",@"Calendar operation pending: %s",error.message);
-  if (http && contacts && !RCContactPhotoRefreshWrites(contacts,http,&error))
+  }
+  if (http && contacts && !RCContactPhotoRefreshWrites(contacts,http,&error)) {
+    RCStatusFailure(service,@"Upload");
     RCLogger(RCLogWarning,"Contacts","Upload",@"Uploaded photo verification pending: %s",error.message);
+  }
   RCHTTPClientDestroy(http);
 }
 
@@ -185,9 +194,13 @@ static void *RCSyncWorkerMain(void *context)
 
     RCLoggerSetContext("Account", ++poll);
     RCLogger(RCLogDebug, NULL, "Poll", @"Starting poll");
+    if(worker->contactsEnabled) RCStatusPhase(@"Contacts",@"Waiting");
+    if(worker->calendarsEnabled) RCStatusPhase(@"Calendars",@"Waiting");
     RCErrorClear(&error);
     if (!RCICloudCredentialsCopyPassword(worker->username, &password, &passwordLength,
                                          &error)) {
+      if(worker->contactsEnabled) RCStatusFailure(@"Contacts",@"Credentials");
+      if(worker->calendarsEnabled) RCStatusFailure(@"Calendars",@"Credentials");
       RCLogger(RCLogWarning, "Account", "Credentials", @"Downloads and uploads skipped; saved password unavailable: %s", error.message);
     }
     if (worker->contactsEnabled) {
@@ -195,6 +208,7 @@ static void *RCSyncWorkerMain(void *context)
       RCErrorClear(&error);
       store = RCContactStoreOpen(worker->databasePath, worker->username, &error);
       if (store == NULL) {
+        RCStatusFailure(@"Contacts",@"Database");
         RCLogger(RCLogError, "Contacts", "Database", @"Could not open database; Contacts skipped this poll: %s", error.message);
       } else {
         RCWriteJournal journal=RCContactStoreWriteJournal(store);
@@ -206,6 +220,7 @@ static void *RCSyncWorkerMain(void *context)
         mirrorConfig.certificatePath = worker->certificatePath;
         mirrorConfig.allowedHostSuffix = ".icloud.com";
         mirrorConfig.progress = RCContactProgress;
+        RCStatusPhase(@"Contacts",@"Downloading");
         if (password != NULL) {
           if ((contactsFetched=RCCardDAVMirrorFetch(&mirrorConfig, store, &result, &error)) &&
               RCContactStoreGetStatistics(store, &statistics, &error)) {
@@ -215,6 +230,7 @@ static void *RCSyncWorkerMain(void *context)
                   statistics.availableCount, statistics.missingCount,
                   statistics.parseErrorCount);
           } else {
+            RCStatusFailure(@"Contacts",contactsFetched ? @"Database" : @"Download");
             RCLogger(RCLogError, "Contacts", "Download", @"%s failed: %s", contactsFetched ? "Reading download statistics" : "Download", error.message);
           }
         }
@@ -232,6 +248,8 @@ static void *RCSyncWorkerMain(void *context)
         }
         /* A failed fetch (or locked Keychain) must not prevent retrying the
            last committed mirror. The bridge refuses a never-completed mirror. */
+        if(password && !contactsFetched) RCStatusFailure(@"Contacts",@"Download");
+        RCStatusPhase(@"Contacts",@"Applying");
         RCErrorClear(&error);
         BOOL exported;
         if (worker->contactsTwoWay) {
@@ -245,6 +263,8 @@ static void *RCSyncWorkerMain(void *context)
           if (!contactsFetched) RCLogger(RCLogInfo, "Contacts", "Apply", @"Attempting local application from the last committed download");
           exported=RCSyncServicesPushContacts(store,worker->syncClientDescriptionPath,&syncRecordCount,&error);
         }
+        if(!exported && contactsFetched) RCStatusFailure(@"Contacts",@"Apply");
+        RCStatusFinish(@"Contacts",&journal,contactsFetched && exported && syncRecordCount>=0);
         if (exported && syncRecordCount<0) {
           RCLogger(RCLogWarning, "Contacts", "Apply", @"Applied eligible records to local apps; unresolved local edits remain pending");
         } else if (exported) {
@@ -263,9 +283,10 @@ static void *RCSyncWorkerMain(void *context)
       RCErrorClear(&error);
       calendarStore =
           RCCalendarStoreOpen(worker->calendarDatabasePath, worker->username, &error);
-      if (calendarStore == NULL)
+      if (calendarStore == NULL) {
+        RCStatusFailure(@"Calendars",@"Database");
         RCLogger(RCLogError, "Calendars", "Database", @"Could not open database; Calendars skipped this poll: %s", error.message);
-      else {
+      } else {
         RCWriteJournal journal=RCCalendarStoreWriteJournal(calendarStore);
         if (worker->calendarsTwoWay) RCRunAccountWrites(&journal,worker,password,YES,NULL);
         memset(&mirrorConfig, 0, sizeof(mirrorConfig));
@@ -275,6 +296,7 @@ static void *RCSyncWorkerMain(void *context)
         mirrorConfig.certificatePath = worker->certificatePath;
         mirrorConfig.allowedHostSuffix = ".icloud.com";
         mirrorConfig.progress = RCCalendarProgress;
+        RCStatusPhase(@"Calendars",@"Downloading");
         if (password != NULL) {
           char historyStart[17];
           const char *today = [[[NSDate date] descriptionWithCalendarFormat:@"%Y%m%d"
@@ -290,6 +312,8 @@ static void *RCSyncWorkerMain(void *context)
           else
             RCLogger(RCLogError, "Calendars", "Download", @"Download failed: %s", error.message);
         }
+        if(password && !calendarsFetched) RCStatusFailure(@"Calendars",@"Download");
+        RCStatusPhase(@"Calendars",@"Applying");
         RCErrorClear(&error);
         BOOL exported;
         if (worker->calendarsTwoWay) {
@@ -303,13 +327,17 @@ static void *RCSyncWorkerMain(void *context)
           if (!calendarsFetched) RCLogger(RCLogInfo, "Calendars", "Apply", @"Attempting local application from the last committed download");
           exported=RCSyncServicesPushCalendars(calendarStore,worker->calendarDescriptionPath,0,&syncRecordCount,&error);
         }
+        if(!exported && calendarsFetched) RCStatusFailure(@"Calendars",@"Apply");
+        RCStatusFinish(@"Calendars",&journal,calendarsFetched && exported && syncRecordCount>=0);
         if (exported && syncRecordCount<0) {
           RCLogger(RCLogWarning, "Calendars", "Apply", @"Applied eligible records to local apps; unresolved local edits remain pending");
         } else if (exported) {
           RCLogger(RCLogInfo, "Calendars", "Apply", @"Local application complete: %ld Sync Services records in snapshot",
                 syncRecordCount);
-          if (!RCCalendarStorePruneHistory(calendarStore, &error))
+          if (!RCCalendarStorePruneHistory(calendarStore, &error)) {
+            RCStatusFailure(@"Calendars",@"Database");
             RCLogger(RCLogError, "Calendars", "Database", @"Calendar history cleanup failed: %s", error.message);
+          }
         } else if (worker->calendarsTwoWay && !calendarsFetched)
           RCLogger(RCLogWarning, "Calendars", "Apply", @"Skipped: two-way local application requires a successful download");
         else
@@ -320,6 +348,7 @@ static void *RCSyncWorkerMain(void *context)
     RCLoggerSetContext("Account", poll);
     RCLogger(RCLogInfo, NULL, "Poll", @"Finished in %.1fs; next poll in %us",
         [NSDate timeIntervalSinceReferenceDate] - started, worker->interval);
+    RCStatusSchedule(worker->interval);
     RCICloudCredentialsClearPassword(password, passwordLength);
     [pool release];
 
@@ -731,9 +760,13 @@ int main(int argc, char *argv[])
     [processPool release];
     return 1;
   }
+  RCStatusStart(configurationPath,configuration);
   if (configuration != nil) {
     if (!RCSyncWorkerStart(&syncWorker, configuration, daemonDirectory)) {
       RCLogger(RCLogError, "Daemon", "Startup", @"Account worker initialization failed; daemon exiting");
+      RCStatusFailure(@"Contacts",@"Configuration");
+      RCStatusFailure(@"Calendars",@"Configuration");
+      RCStatusStop();
       RCMailProxyStop(mailProxy);
       curl_global_cleanup();
       [configuration release];
@@ -761,6 +794,7 @@ int main(int argc, char *argv[])
   [keepAlivePort release];
   RCLogger(RCLogInfo, "Daemon", "Shutdown", @"Stop requested; waiting for active work");
   RCSyncWorkerStop(&syncWorker);
+  RCStatusStop();
   RCMailProxyStop(mailProxy);
 
   RCLogger(RCLogInfo, "Daemon", "Shutdown", @"Stopped");

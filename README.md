@@ -34,6 +34,25 @@ for coverage, runtime requirements, artifacts and compatibility aliases.
 all normal Mac test tools without running them. `test-mac-app` and
 `test-mac-network` separately exercise the GUI and the HTTPS diagnostic.
 
+## Daemon status
+
+The **Daemon** pane shows independent Contacts and Calendars status with colored
+Font Awesome icons: green for a complete sync, yellow for waiting, work in
+progress or pending items, and red for errors. Each service keeps its last
+successful sync time and shows its next attempt or pending-item count. **Log** in the
+toolbar opens the application's Log pane. Stopped services retain their last
+successful times and appear paused.
+
+The daemon owns phase, error and completion decisions and atomically writes
+`Status.plist` beside `Configuration.plist`, with mode 0600. The GUI reads it
+every two seconds and checks process liveness so a stopped/crashed daemon does
+not appear to be syncing. Snapshots contain structured status and a hashed
+account identity, not passwords, record bodies or raw error messages. Switching
+accounts resets the displayed success history. A cached import after a failed
+download does not advance the success time; neither do pending uploads,
+unsupported mappings or unresolved local changes. Pending items count journal
+operations and attention entries, not unique contacts/events.
+
 ## Contacts and Calendars preferences
 
 Open the application and choose **Sync** in the toolbar. Enter the Apple ID

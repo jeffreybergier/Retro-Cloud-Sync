@@ -294,3 +294,10 @@ The native `fields` suite creates contacts with Date, Related Name and IM
 children and phonetic names. `calendar-exceptions` also exercises native
 recurrence, reminder timing and attendee changes through verified acceptance.
 All transports in these native tests are synthetic; no invitation is delivered.
+
+The native logging suite also runs daemon status regressions using temporary
+files and an in-memory SQLite database. It checks failed-download/cached-import
+status, retained success timestamps, pending work and account isolation,
+restart/stop snapshots, account switching, private file permissions and failed
+status queries. Run `make test-mac-logging TEST_HOST=x4-vm`; it does not use
+production configuration, Sync Services or iCloud.

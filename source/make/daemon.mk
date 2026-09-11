@@ -5,7 +5,7 @@ DAEMON_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-daemon
 DAEMON_BUILD_ROOT := $(BUILD_ROOT)/macOS-daemon/$(CONFIG)
 DAEMON_SOURCES := main.m RCCalendarSyncServicesBridge.m RCSyncServicesBridge.m RCSyncConflictSession.m \
 	RCContactConflictResolver.m RCTwoWaySync.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m RCCalendarTwoWay.m RCCalendarOperations.m \
-	RCMailProxy.c RCLogger.m
+	RCMailProxy.c RCLogger.m RCStatus.m
 DAEMON_SOURCE_PATHS := $(addprefix $(DAEMON_SOURCE_ROOT)/,$(DAEMON_SOURCES))
 DAEMON_INTERMEDIATES := $(DAEMON_BUILD_ROOT)/Intermediates
 DAEMON_OUTPUT := $(DAEMON_BUILD_ROOT)/$(DAEMON_NAME)
