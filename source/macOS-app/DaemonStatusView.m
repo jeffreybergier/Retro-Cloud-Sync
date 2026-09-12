@@ -15,6 +15,8 @@
 - (void)serviceButtonClicked:(id)sender;
 - (void)updateServiceStatus:(NSTimer *)timer;
 - (void)updateSyncStatus;
+- (void)setServiceStatus:(NSString *)message severity:(NSString *)severity
+                  paused:(BOOL)paused;
 - (void)stopServiceInBackground:(id)unused;
 - (void)stopServiceFinished:(NSString *)errorMessage;
 @end
@@ -29,32 +31,34 @@ static NSTextField *RCStatusLabel(NSView *view, NSRect frame)
   [label setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
   [view addSubview:label]; return label;
 }
-/* Six paragraphs in one field: a muted heading followed by its value.
-   Fixed line heights keep both service sections aligned, including empty states. */
-static NSAttributedString *RCStatusDetails(NSString *message, NSString *last,
-                                          NSString *heading, NSString *detail)
+/* Muted headings and fixed line heights shared by all status sections. */
+static NSAttributedString *RCStatusRows(NSArray *rows)
 {
-  NSArray *rows=[NSArray arrayWithObjects:@"Status",message,
-      @"Last successful sync",last,heading,detail,nil];
   NSMutableAttributedString *text=[[[NSMutableAttributedString alloc] init] autorelease];
   unsigned int i;
-  for(i=0;i<6;i++) {
+  for(i=0;i<[rows count];i++) {
     BOOL isHeading=(i%2)==0;
     NSMutableParagraphStyle *paragraph=[[[NSMutableParagraphStyle alloc] init] autorelease];
     [paragraph setMinimumLineHeight:16];
     [paragraph setMaximumLineHeight:16];
-    [paragraph setParagraphSpacing:!isHeading && i<5 ? 6 : 0];
+    [paragraph setParagraphSpacing:!isHeading && i+1<[rows count] ? 6 : 0];
     [paragraph setLineBreakMode:NSLineBreakByTruncatingTail];
     NSDictionary *attributes=[NSDictionary dictionaryWithObjectsAndKeys:
         isHeading ? [NSFont boldSystemFontOfSize:11] : [NSFont systemFontOfSize:12],NSFontAttributeName,
         isHeading ? [NSColor darkGrayColor] : [NSColor controlTextColor],NSForegroundColorAttributeName,
         paragraph,NSParagraphStyleAttributeName,nil];
     NSString *row=[rows objectAtIndex:i];
-    if(i<5) row=[row stringByAppendingString:@"\n"];
+    if(i+1<[rows count]) row=[row stringByAppendingString:@"\n"];
     [text appendAttributedString:[[[NSAttributedString alloc] initWithString:row
         attributes:attributes] autorelease]];
   }
   return text;
+}
+static NSAttributedString *RCStatusDetails(NSString *message, NSString *last,
+                                          NSString *heading, NSString *detail)
+{
+  return RCStatusRows([NSArray arrayWithObjects:@"Status",message,
+      @"Last successful sync",last,heading,detail,nil]);
 }
 static NSImage *RCStatusIcon(NSString *severity, BOOL paused)
 {
@@ -88,77 +92,34 @@ static NSString *RCStatusDate(id value)
   if (self != nil) {
     NSBox *serviceBox;
     NSButton *serviceButton;
-    NSTextField *statusTitle;
-    NSTextField *statusLabel;
-    NSRect boxFrame;
-    float innerLeft;
-    float innerRight;
-    float buttonX;
-    float buttonY;
-    float textY;
-    const float edgePadding = 8;
-    const float boxPadding = 8;
-    const float controlSpacing = 4;
-    const float boxTitleHeight = 14;
-    const float labelWidth = 70;
+    const float boxHeight = 76;
     const float buttonWidth = 88;
-    const float buttonHeight = 26;
-    const float textHeight = 20;
-    float boxHeight;
-
+    NSRect boxFrame = NSMakeRect(8,NSHeight(frame)-8-boxHeight,
+                                NSWidth(frame)-16,boxHeight);
     serviceController_ = [[RCServiceController alloc] init];
-    boxHeight = boxTitleHeight + boxPadding + buttonHeight + boxPadding;
-    boxFrame = NSMakeRect(edgePadding,
-        NSHeight(frame) - edgePadding - boxHeight,
-        NSWidth(frame) - (edgePadding * 2), boxHeight);
-    innerLeft = NSMinX(boxFrame) + boxPadding;
-    innerRight = NSMaxX(boxFrame) - boxPadding;
-    buttonX = innerRight - buttonWidth;
-    buttonY = NSMinY(boxFrame) + boxPadding;
-    textY = buttonY + ((buttonHeight - textHeight) / 2);
-
-    serviceBox = [[[NSBox alloc]
-        initWithFrame:boxFrame] autorelease];
+    serviceBox = [[[NSBox alloc] initWithFrame:boxFrame] autorelease];
     [serviceBox setTitle:@"Daemon"];
     [serviceBox setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
     [self addSubview:serviceBox];
 
-    statusTitle = [[[NSTextField alloc]
-        initWithFrame:NSMakeRect(innerLeft, textY,
-                                 labelWidth, textHeight)] autorelease];
-    [statusTitle setBezeled:NO];
-    [statusTitle setDrawsBackground:NO];
-    [statusTitle setEditable:NO];
-    [statusTitle setSelectable:NO];
-    [statusTitle setAlignment:NSRightTextAlignment];
-    [statusTitle setStringValue:@"Status:"];
-    [statusTitle setAutoresizingMask:NSViewMinYMargin];
-    [self addSubview:statusTitle];
-
-    statusLabel = [[NSTextField alloc]
-        initWithFrame:NSMakeRect(innerLeft + labelWidth + controlSpacing,
-            textY,
-            buttonX - controlSpacing -
-                (innerLeft + labelWidth + controlSpacing),
-            textHeight)];
-    [statusLabel setBezeled:NO];
-    [statusLabel setDrawsBackground:NO];
-    [statusLabel setEditable:NO];
-    [statusLabel setSelectable:NO];
-    [statusLabel setStringValue:@"Stopped"];
-    [statusLabel setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
-    [self addSubview:statusLabel];
-    statusLabel_ = statusLabel;
+    NSView *content = [serviceBox contentView];
+    float width = NSWidth([content bounds]);
+    serviceIcon_ = [[[NSImageView alloc]
+        initWithFrame:NSMakeRect(6,20,24,24)] autorelease];
+    [serviceIcon_ setAutoresizingMask:NSViewMinYMargin];
+    [content addSubview:serviceIcon_];
+    statusLabel_ = [RCStatusLabel(content,
+        NSMakeRect(36,10,width-42-buttonWidth-4,38)) retain];
+    [self setServiceStatus:@"Stopped" severity:@"yellow" paused:YES];
 
     serviceButton = [[NSButton alloc]
-        initWithFrame:NSMakeRect(buttonX, buttonY,
-                                 buttonWidth, buttonHeight)];
+        initWithFrame:NSMakeRect(width-6-buttonWidth,16,buttonWidth,26)];
     [serviceButton setTitle:@"Start"];
     [serviceButton setBezelStyle:NSRoundedBezelStyle];
     [serviceButton setTarget:self];
     [serviceButton setAction:@selector(serviceButtonClicked:)];
     [serviceButton setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
-    [self addSubview:serviceButton];
+    [content addSubview:serviceButton];
     serviceButton_ = serviceButton;
 
     const float sectionGap = 8;
@@ -220,25 +181,26 @@ static NSString *RCStatusDate(id value)
   (void)sender;
   [serviceButton_ setEnabled:NO];
   if (!serviceRunning_) {
-    [statusLabel_ setStringValue:@"Starting..."];
+    [self setServiceStatus:@"Starting..." severity:@"yellow" paused:NO];
     [statusLabel_ display];
     succeeded = [serviceController_ startServiceWithError:&errorMessage];
   } else {
     stopInProgress_=YES;
-    [statusLabel_ setStringValue:@"Stopping…"];
+    [self setServiceStatus:@"Stopping…" severity:@"yellow" paused:NO];
     [NSThread detachNewThreadSelector:@selector(stopServiceInBackground:) toTarget:self withObject:nil];
     return;
   }
 
   if (!succeeded) {
-    [statusLabel_ setStringValue:@"Error"];
+    [self setServiceStatus:@"Error" severity:@"red" paused:NO];
     NSRunAlertPanel(@"Retro Cloud Sync",
         errorMessage != nil ? errorMessage : @"Unknown service error",
         @"OK", nil, nil);
-    [statusLabel_ setStringValue:@"Error"];
+    [self setServiceStatus:@"Error" severity:@"red" paused:NO];
   } else {
     serviceRunning_ = !serviceRunning_;
-    [statusLabel_ setStringValue:serviceRunning_ ? @"Running" : @"Stopped"];
+    [self setServiceStatus:serviceRunning_ ? @"Running" : @"Stopped"
+        severity:serviceRunning_ ? @"green" : @"yellow" paused:!serviceRunning_];
     [serviceButton_ setTitle:serviceRunning_ ? @"Stop" : @"Start"];
   }
   [serviceButton_ setEnabled:YES];
@@ -269,14 +231,24 @@ static NSString *RCStatusDate(id value)
   (void)timer;
   [self updateSyncStatus];
   serviceRunning_ = [serviceController_ isServiceRunning];
-  if(stopInProgress_) { [statusLabel_ setStringValue:@"Stopping…"]; return; }
+  if(stopInProgress_) { [self setServiceStatus:@"Stopping…" severity:@"yellow" paused:NO]; return; }
   if (serviceRunning_) {
-    [statusLabel_ setStringValue:@"Running"];
+    [self setServiceStatus:@"Running" severity:@"green" paused:NO];
     [serviceButton_ setTitle:@"Stop"];
   } else {
-    [statusLabel_ setStringValue:@"Stopped"];
+    [self setServiceStatus:@"Stopped" severity:@"yellow" paused:YES];
     [serviceButton_ setTitle:@"Start"];
   }
+}
+
+- (void)setServiceStatus:(NSString *)message severity:(NSString *)severity
+                  paused:(BOOL)paused;
+{
+  NSAttributedString *details = RCStatusRows(
+      [NSArray arrayWithObjects:@"Status",message,nil]);
+  [statusLabel_ setAttributedStringValue:details];
+  [statusLabel_ setToolTip:[details string]];
+  [serviceIcon_ setImage:RCStatusIcon(severity,paused)];
 }
 
 - (void)updateSyncStatus;

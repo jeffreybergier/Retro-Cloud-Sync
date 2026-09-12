@@ -54,7 +54,7 @@
   NSMenuItem *windowItem;
   NSMenu *windowMenu;
   NSArray *paneNames = [NSArray arrayWithObjects:
-      @"Daemon", @"Mail", @"Sync", @"Log", nil];
+      @"Status", @"Mail", @"Sync", @"Log", nil];
   unsigned int paneIndex;
 
   applicationItem = [mainMenu addItemWithTitle:@""

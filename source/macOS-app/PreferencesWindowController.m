@@ -12,7 +12,7 @@
 #import "ContactsView.h"
 #import "DaemonLogView.h"
 
-static NSString * const kRCDaemonToolbarItem = @"Daemon";
+static NSString * const kRCDaemonToolbarItem = @"Status";
 static NSString * const kRCMailToolbarItem = @"Mail";
 static NSString * const kRCSyncToolbarItem = @"Sync";
 static NSString * const kRCLogToolbarItem = @"Log";
@@ -87,7 +87,7 @@ static NSString * const kRCWindowFrameAutosaveName = @"RetroCloudSyncPreferences
   [toolbar setDelegate:self];
   [toolbar setAllowsUserCustomization:NO];
   [toolbar setAutosavesConfiguration:NO];
-  daemonToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAServer
+  daemonToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAGauge
       style:AIFontAwesomeStyleSolid iconSize:24.0 canvasSize:32.0
       scale:1.0] retain];
   mailToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAEnvelope

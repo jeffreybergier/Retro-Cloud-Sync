@@ -1233,9 +1233,10 @@ cleanup:
 - (BOOL)waitForStatus:(NSString *)status timeout:(NSTimeInterval)timeout;
 {
   NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+  NSString *details = [NSString stringWithFormat:@"Status\n%@", status];
 
   while ([deadline timeIntervalSinceNow] > 0.0) {
-    AXUIElementRef element = [self findElementNamed:status
+    AXUIElementRef element = [self findElementNamed:details
                                          inElement:windowElement_
                                              depth:0];
     if (element != NULL) {
