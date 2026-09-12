@@ -265,10 +265,22 @@ Changing accounts preserves the previous account's cached/local calendars.
 
 The Tiger mapper supports ordinary and all-day events, daily/weekly/monthly/
 yearly recurrence within Apple's schema, exclusions, moved/cancelled instances,
-participants, and display/audio alarms. Floating timed events, unsupported
-recurrence forms (including RDATE, subdaily rules and ranged exceptions), and
-recurring zones that differ from Tiger's rules remain in SQLite with an export
-explanation. A previously exported series is retained if its replacement cannot
+participants, and display/audio alarms. Floating events use Tiger's native
+floating-date marker, including local recurrence limits and exclusions.
+Finite RDATE/EXRULE sets at the DTSTART wall time and timezone can be projected
+as a daily recurrence with exclusions (at most 3,660 days and 10,000 generated
+rule instances). Their original resource bytes remain intact.
+
+When a recurring timezone differs from Tiger's rules, eligible finite series
+use UTC dates and detached instances for offset changes. This preserves the
+occurrence instants without relying on iCal to retain an unfamiliar timezone.
+The projection is limited to series ending by 2037, at most 3,660 days, ordinary timed events
+of at most one day, and resources without existing detached instances, absolute
+reminders or DURATION. These limits avoid expanding beyond the legacy codec's timezone
+coverage. Unbounded differing-zone series, subdaily/mixed-time recurrence sets,
+RDATE periods, and ranged exceptions remain in SQLite with an explanation.
+A floating date in a local clock gap that Tiger cannot represent also stays
+pending. A previously exported series is retained if its replacement cannot
 be represented. Tasks, unknown extensions, and unsupported alarm actions are
 stored but not exported. Calendar color is stored but is not a Tiger schema field.
 

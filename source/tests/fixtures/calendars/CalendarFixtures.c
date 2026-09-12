@@ -1,4 +1,5 @@
 #include "CalendarFixtures.h"
+#include "CalendarTimeFixtures.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -60,6 +61,13 @@ int RCCalendarFixturePopulate(RCCalendarStore *s, const char *phase, RCError *e)
     return RCCalendarStoreFinishRun(s, 1, NULL, e);
   if (!RCCalendarStoreCollection(s, &c, &id, e))
     goto fail;
+  if(!strcmp(phase,"time")) {
+    ok=save(s,id,"https://example.test/cal/custom.ics","time",RC_TIME_CUSTOM,e) &&
+       save(s,id,"https://example.test/cal/floating.ics","time",RC_TIME_FLOAT,e) &&
+       save(s,id,"https://example.test/cal/dates.ics","time",RC_TIME_DATES,e);
+    if(!ok) goto fail;
+    return RCCalendarStoreFinishRun(s,1,NULL,e);
+  }
   changed = malloc(strlen(series) + 1);
   if (!changed)
     goto fail;

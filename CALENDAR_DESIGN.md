@@ -1,3 +1,7 @@
+> Implementation update: floating dates and bounded finite recurrence/timezone
+> projections are now implemented. See README.md and TWO_WAY_SYNC.md for their
+> limits and supported edits; the original design discussion below is historical.
+
 Implementation note (September 5, 2026): the one-way mirror, readable SQLite
 store, CalDAV probe, daemon integration, and Tiger SyncServices mapper are now
 implemented. See README.md for the supported mapping and test commands. The

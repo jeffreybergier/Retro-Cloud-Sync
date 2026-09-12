@@ -9,8 +9,8 @@ int main(int argc, char **argv)
   int ok;
   if (argc != 3 || (strcmp(argv[1], "initial") && strcmp(argv[1], "updated") &&
       strcmp(argv[1], "empty") && strcmp(argv[1], "malformed") &&
-      strcmp(argv[1], "missing-uid") && strcmp(argv[1], "unsupported"))) {
-    fprintf(stderr, "usage: %s initial|updated|empty|malformed|missing-uid|unsupported DATABASE\n", argv[0]);
+      strcmp(argv[1], "missing-uid") && strcmp(argv[1], "unsupported") && strcmp(argv[1], "time"))) {
+    fprintf(stderr, "usage: %s initial|updated|empty|malformed|missing-uid|unsupported|time DATABASE\n", argv[0]);
     return 2;
   }
   RCErrorClear(&error);

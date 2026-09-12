@@ -204,7 +204,7 @@ static int RCPushChild(RCSyncExportContext *context, long long contactIdentifier
     if ([label hasPrefix:@"_$!<"] && [label hasSuffix:@">!$_"]) type=[[label substringWithRange:NSMakeRange(4,[label length]-8)] lowercaseString];
     NSArray *types=[entity isEqual:@"com.apple.contacts.Date"] ? [NSArray arrayWithObject:@"anniversary"] :
       [@"father|mother|parent|child|brother|sister|friend|spouse|partner|assistant|manager" componentsSeparatedByString:@"|"];
-    if ([types containsObject:type]) { [record setObject:type forKey:@"type"]; [record removeObjectForKey:@"label"]; }
+    if (type != nil && [types containsObject:type]) { [record setObject:type forKey:@"type"]; [record removeObjectForKey:@"label"]; }
     else [record setObject:@"other" forKey:@"type"];
     id v=[entity isEqual:@"com.apple.contacts.Date"] ? (id)RCBirthday(property->decodedValue) : RCString(property->decodedValue);
     if (!v) return 1;

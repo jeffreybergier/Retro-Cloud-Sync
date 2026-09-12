@@ -11,6 +11,7 @@
 #include <string.h>
 
 #import "../../../macOS-daemon/RCContactIM.h"
+#import "../../../macOS-daemon/RCCalendarRecurrence.h"
 
 static RCError error;
 static NSMutableDictionary *remoteBodies, *remoteETags;
@@ -772,10 +773,11 @@ static void MapperTests(void)
 }
 static NSDictionary *CalendarResource(RCCalendarStore *store, long long identifier, NSData *body, NSString *href, NSString *etag)
 {
-  NSDictionary *mapped=RCCalendarNativeGraph(store,identifier,@"calendar-fixture",body,&error); CHECK(mapped);
+  NSDictionary *mapped=RCCalendarNativeGraph(store,identifier,@"calendar-fixture",body,&error); if(!mapped) fprintf(stderr,"Calendar resource %lld mapping failed: %s\n",identifier,error.message); CHECK(mapped);
   NSString *root=nil;
   NSMutableDictionary *paths=[NSMutableDictionary dictionary];
   icalcomponent *calendar=RCICalendarParse([body bytes],[body length],&error), *event; CHECK(calendar);
+  CHECK(RCPrepareCalendarProjection(calendar,&error));
   for(event=icalcomponent_get_first_component(calendar,ICAL_VEVENT_COMPONENT);event;
       event=icalcomponent_get_next_component(calendar,ICAL_VEVENT_COMPONENT)) {
     char *key=RCICalendarRecurrenceKey(event);
@@ -977,8 +979,11 @@ static void CalendarEmptyMapperTests(RCCalendarStore *store)
   CHECK(RCNativeScopeMatches(truth,[partial objectForKey:@"graph"],[partial objectForKey:@"fieldScopes"]));
   puts("PASS: Omitted attendee defaults permit unrelated edits while RSVP and participation edits round-trip; incomplete child deletions remain protected");
 }
+
+#include "CalendarTimeTests.h"
 static void CalendarMapperRegressionTests(RCCalendarStore *store)
 {
+  CalendarTimeMapperTests(store);
   CalendarEmptyMapperTests(store);
   NSString *event=@"BEGIN:VEVENT\r\nUID:ordering\r\nDTSTART:20260907T100000Z\r\nDTEND:20260907T110000Z\r\nSUMMARY:Original café\r\nX-PRIVATE;P=keep:folded\r\n value\r\nEND:VEVENT\r\n";
   NSString *zone=@"BEGIN:VTIMEZONE\r\nTZID:Etc/UTC\r\nBEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nTZOFFSETFROM:+0000\r\nTZOFFSETTO:+0000\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n";
@@ -1208,6 +1213,58 @@ static NSString *EventWithTitle(NSDictionary *events,NSString *title)
   while((key=[it nextObject])) if([[[events objectForKey:key] objectForKey:@"summary"] isEqual:title]) return key;
   return nil;
 }
+static NSString *MainEventWithTitle(NSDictionary *events,NSString *title)
+{
+  NSEnumerator *it=[events keyEnumerator]; NSString *key;
+  while((key=[it nextObject])) if([[[events objectForKey:key] objectForKey:@"summary"] isEqual:title] &&
+      ![[[events objectForKey:key] objectForKey:@"main event"] count]) return key;
+  return nil;
+}
+static void CalendarTimeIntegration(RCTwoWayContext *c,ISyncClient *local,RCCalendarStore *store)
+{
+  int index;
+  for(index=0;index<2;index++) {
+    NSString *title=[marker stringByAppendingFormat:@"-time-%d",index],
+        *href=[NSString stringWithFormat:@"https://fixture.invalid/calendar/time-%d.ics",index];
+    NSString *text=TimeFixture(index ? ChangedZone() : @"",index ? @";TZID=Europe/London" : @"",@"RRULE:FREQ=WEEKLY;COUNT=40\r\n");
+    text=Replace(text,@"Time fixture",title);
+    NSData *body=[text dataUsingEncoding:NSUTF8StringEncoding];
+    [remoteBodies setObject:body forKey:href]; [remoteETags setObject:@"\"time-base\"" forKey:href];
+    NSDictionary *resource=CalendarResource(store,250+index,body,href,[remoteETags objectForKey:href]);
+    c->resources=[NSArray arrayWithObject:resource]; c->graph=CalendarGraph(c->resources);
+    CHECK(RCTwoWayExchange(c,&error)); CalendarFixtureSession(local,nil,nil);
+    NSDictionary *events=CalendarFixtureEvents(local); NSString *root=MainEventWithTitle(events,title); CHECK(root);
+    NSMutableDictionary *event=[NSMutableDictionary dictionaryWithDictionary:[events objectForKey:root]];
+    NSCalendarDate *start=[event objectForKey:@"start date"];
+    CHECK(RCCalendarFloatingDate(start)==(index==0));
+    NSTimeZone *zone=[start timeZone];
+    [event setObject:[NSCalendarDate dateWithYear:2026 month:7 day:1 hour:9 minute:0 second:0 timeZone:zone] forKey:@"start date"];
+    [event setObject:[NSCalendarDate dateWithYear:2026 month:7 day:1 hour:10 minute:0 second:0 timeZone:zone] forKey:@"end date"];
+    NSMutableDictionary *changes=[NSMutableDictionary dictionaryWithObject:event forKey:root];
+    if(index) {
+      [changes removeAllObjects]; NSEnumerator *keys=[events keyEnumerator]; NSString *identifier;
+      while((identifier=[keys nextObject])) if([[[events objectForKey:identifier] objectForKey:@"summary"] isEqual:title]) {
+        NSMutableDictionary *edited=[NSMutableDictionary dictionaryWithDictionary:[events objectForKey:identifier]];
+        [edited setObject:@"Whole-series native note" forKey:@"description"]; [changes setObject:edited forKey:identifier];
+      }
+    }
+    CalendarFixtureSession(local,changes,nil);
+    int before=mutations;
+    CHECK(RCTwoWayExchange(c,&error));
+    CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==1); CHECK(mutations==before+1);
+    NSString *wire=[[[NSString alloc] initWithData:[remoteBodies objectForKey:href] encoding:NSUTF8StringEncoding] autorelease];
+    CHECK([wire rangeOfString:index ? @"DESCRIPTION:Whole-series native note" : @"DTSTART:20260701T090000\r\n"].location!=NSNotFound);
+    resource=CalendarResource(store,250+index,[remoteBodies objectForKey:href],href,[remoteETags objectForKey:href]);
+    c->resources=[NSArray arrayWithObject:resource]; c->graph=CalendarGraph(c->resources);
+    CHECK(RCTwoWayExchange(c,&error));
+    CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state IN ('queued','applied','conflict')")==0);
+    CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==0);
+    CHECK(mutations==before+1);
+    CalendarFixtureSession(local,nil,nil);
+    CHECK([MainEventWithTitle(CalendarFixtureEvents(local),title) isEqual:root]);
+  }
+  puts("PASS: Native floating date edits and projected custom-DST series notes upload without changing source time semantics, acknowledge on the same records, and replay without duplicate PUTs");
+}
 static void CalendarExceptionIntegration(RCTwoWayContext *c,ISyncClient *local,RCCalendarStore *store)
 {
   NSString *title=[marker stringByAppendingString:@"-series"], *href=@"https://fixture.invalid/calendar/series.ics";
@@ -1286,6 +1343,7 @@ static void CalendarExceptionIntegration(RCTwoWayContext *c,ISyncClient *local,R
   CHECK(RCTwoWayExchange(c,&error)); CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state IN ('queued','applied','conflict')")==0);
   CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==0);
   puts("PASS: Native recurrence, reminder timing and attendee edits upload, acknowledge and replay without duplicate PUTs");
+  CalendarTimeIntegration(c,local,store);
 }
 static void CalendarTests(BOOL exceptionsOnly)
 {

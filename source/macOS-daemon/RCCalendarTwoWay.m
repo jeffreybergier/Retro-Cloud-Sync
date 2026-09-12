@@ -2,6 +2,8 @@
 #import "RCTwoWayNative.h"
 #import "RCCalendarSyncClient.h"
 #import "RCSyncRecordEquality.h"
+#import "RCCalendarTime.h"
+#import "RCCalendarRecurrence.h"
 #include "RCResourcePatch.h"
 #include <stdlib.h>
 #include <errno.h>
@@ -33,6 +35,7 @@ static NSString *DifferentField(NSDictionary *a, NSDictionary *b)
 static NSString *DateValue(NSDate *date, BOOL allDay, NSTimeZone *zone)
 {
   if (![date isKindOfClass:[NSDate class]]) return nil;
+  if(!allDay && !zone && RCCalendarFloatingDate(date)) zone=[NSTimeZone localTimeZone];
   return [date descriptionWithCalendarFormat:allDay ? @"%Y%m%d" : zone ? @"%Y%m%dT%H%M%S" : @"%Y%m%dT%H%M%SZ"
       timeZone:zone ?: [NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil];
 }
@@ -107,6 +110,7 @@ static NSDictionary *Paths(RCCalendarStore *store,long long resource,NSData *bod
   icalcomponent *calendar=RCICalendarParse([body bytes],[body length],error), *event;
   NSMutableDictionary *paths=[NSMutableDictionary dictionary];
   if (!calendar) return nil;
+  if(!RCPrepareCalendarProjection(calendar,error)) { icalcomponent_free(calendar); return nil; }
   for(event=icalcomponent_get_first_component(calendar,ICAL_VEVENT_COMPONENT);event;
       event=icalcomponent_get_next_component(calendar,ICAL_VEVENT_COMPONENT)) {
     char *key=RCICalendarRecurrenceKey(event);
@@ -343,9 +347,8 @@ static NSDictionary *PrepareExceptions(RCCalendarStore *store,NSDictionary *reso
     icalproperty *start=icalcomponent_get_first_property(master,ICAL_DTSTART_PROPERTY);
     BOOL allDay=icalproperty_get_dtstart(start).is_date;
     const char *tz=RCICalendarTZID(start);
-    NSTimeZone *zone=tz ? [NSTimeZone timeZoneWithName:S(tz)] : nil;
-    NSString *date=DateValue([record objectForKey:@"original date"],allDay,zone);
-    if(!date || (tz && !zone)) { RCErrorSet(error,1,"Detached event has an invalid original date or timezone"); goto done; }
+    NSString *date=RCCalendarWireDate([record objectForKey:@"original date"],allDay,calendar,start,error);
+    if(!date) { RCErrorSet(error,1,"Detached event has an invalid original date or timezone"); goto done; }
     NSString *line=[NSString stringWithFormat:@"RECURRENCE-ID%@:%@",allDay ? @";VALUE=DATE" : tz ? [@";TZID=" stringByAppendingString:S(tz)] : @"",date];
     icalproperty *rid=icalproperty_new_from_string([line UTF8String]);
     icalcomponent *clone=icalcomponent_new_clone(master);
@@ -404,9 +407,32 @@ done:
   if(!result && (!error || !error->code)) RCErrorSet(error,1,"Could not encode detached recurrence changes");
   return result;
 }
+static BOOL ProtectProjectedRecurrence(NSDictionary *resource, NSDictionary *truth, RCError *error)
+{
+  NSData *body=[resource objectForKey:@"body"];
+  icalcomponent *calendar=RCICalendarParse([body bytes],[body length],error), *event;
+  if(!calendar) return NO;
+  BOOL ok=YES;
+  for(event=icalcomponent_get_first_component(calendar,ICAL_VEVENT_COMPONENT);event;
+      event=icalcomponent_get_next_component(calendar,ICAL_VEVENT_COMPONENT)) {
+    if(!icalcomponent_count_properties(event,ICAL_RDATE_PROPERTY) && !icalcomponent_count_properties(event,ICAL_EXRULE_PROPERTY) && !RCNeedsUTCProjection(calendar,event)) continue;
+    char *key=RCICalendarRecurrenceKey(event);
+    NSString *identifier=[[resource objectForKey:@"paths"] objectForKey:[@"event:" stringByAppendingString:S(key)]]; free(key);
+    NSDictionary *base=[resource objectForKey:@"graph"], *old=[base objectForKey:identifier], *record=[truth objectForKey:identifier];
+    NSArray *fields=[NSArray arrayWithObjects:@"start date",@"end date",@"all day",@"exception dates",@"detached events",@"original date",nil];
+    NSEnumerator *it=[fields objectEnumerator]; NSString *field;
+    while((field=[it nextObject])) if(!RCNativePropertyValuesEqual(eventEntity,field,[old objectForKey:field],[record objectForKey:field])) ok=NO;
+    if(ChildChanges(old,record,@"recurrences",base,truth)) ok=NO;
+    if(!ok) break;
+  }
+  icalcomponent_free(calendar);
+  if(!ok) RCErrorSet(error,1,"Editing projected recurrence/timezone structure requires a loss-preserving recurrence editor");
+  return ok;
+}
 NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,NSDictionary *truth,NSString *root,RCError *error)
 {
   if (!resource) return Create(opaque,truth,root,error);
+  if(!ProtectProjectedRecurrence(resource,truth,error)) return nil;
   resource=PrepareExceptions(opaque,resource,truth,root,error);
   if (!resource) return nil;
   resource=PrepareStructure(resource,truth,error);
@@ -445,13 +471,16 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
       if (k>=6) {
         BOOL allDay=[[base objectForKey:@"all day"] boolValue];
         icalproperty *p=icalcomponent_get_first_property(event,k==6 ? ICAL_DTSTART_PROPERTY : ICAL_DTEND_PROPERTY);
-        const char *tz=RCICalendarTZID(p); NSTimeZone *zone=tz ? [NSTimeZone timeZoneWithName:S(tz)] : nil;
-        if ((tz && !zone) || (!p && allDay) || icalcomponent_count_properties(event,ICAL_DURATION_PROPERTY)) {
+        if ((!p && allDay) || icalcomponent_count_properties(event,ICAL_DURATION_PROPERTY)) {
           RCErrorSet(error,1,"Event component %d field '%s': %s",component,[keys[k] UTF8String],
-              tz && !zone ? "timezone is unavailable" : !p && allDay ? "missing all-day date property" : "DURATION-based date edits are not supported");
+              !p && allDay ? "missing all-day date property" : "DURATION-based date edits are not supported");
           goto failed;
         }
-        encoded=DateValue(value,allDay,zone);
+        if(!p) {
+          icalproperty *start=icalcomponent_get_first_property(event,ICAL_DTSTART_PROPERTY);
+          if(!RCICalendarTZID(start) && !icaltime_is_utc(icalcomponent_get_dtstart(event))) p=start;
+        }
+        encoded=RCCalendarWireDate(value,allDay,calendar,p,error);
         if (!encoded) { RCErrorSet(error,1,"Event component %d field '%s' has an invalid date",component,[keys[k] UTF8String]); goto failed; }
       }
       if (!AddEdit(event,component,names[k],encoded,edits,error)) goto failed;
@@ -470,11 +499,14 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
           @"EXDATE",@"name",[NSNumber numberWithInt:component],@"component",[NSNumber numberWithUnsignedInt:n],@"occurrence",[NSNull null],@"value",nil]];
       BOOL allDay=[[base objectForKey:@"all day"] boolValue];
       for(n=0;n<[exceptions count];n++) {
-        NSString *date=DateValue([exceptions objectAtIndex:n],allDay,nil);
+        icalproperty *basis=icalcomponent_get_first_property(event,ICAL_DTSTART_PROPERTY);
+        const char *tz=RCICalendarTZID(basis);
+        NSString *parameters=allDay ? @"VALUE=DATE" : tz ? [@"TZID=" stringByAppendingString:S(tz)] : @"";
+        NSString *date=RCCalendarWireDate([exceptions objectAtIndex:n],allDay,calendar,basis,error);
         if(!date) { RCErrorSet(error,1,"Invalid exception date"); goto failed; }
         [edits addObject:[NSDictionary dictionaryWithObjectsAndKeys:@"EXDATE",@"name",
             [NSNumber numberWithInt:component],@"component",[NSNumber numberWithInt:-1],@"occurrence",date,@"value",
-            allDay ? @"VALUE=DATE" : @"",@"parameters",nil]];
+            parameters,@"parameters",nil]];
       }
       [expected setObject:exceptions forKey:@"exception dates"];
     }

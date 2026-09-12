@@ -3,6 +3,8 @@
 #import "RCCalendarSyncServicesBridge.h"
 #import "RCCalendarSyncClient.h"
 #import "RCTwoWaySync.h"
+#import "RCCalendarTime.h"
+#import "RCCalendarRecurrence.h"
 #import <Foundation/Foundation.h>
 #import <SyncServices/SyncServices.h>
 #include <stdlib.h>
@@ -45,19 +47,15 @@ static icaltimezone *RCEventZone(icalcomponent *root, icalproperty *p,
                                  struct icaltimetype t)
 {
   const char *tz = RCICalendarTZID(p);
-  icaltimezone *zone;
   if (icaltime_is_utc(t))
     return icaltimezone_get_utc_timezone();
   if (!tz)
     return NULL;
-  zone = icalcomponent_get_timezone(root, tz);
-  if (!zone)
-    zone = icaltimezone_get_builtin_timezone(tz);
-  return zone;
+  return RCCalendarSourceZone(root,p);
 }
 /* Dates are constructed from calendar fields, never through 32-bit time_t. */
 static NSCalendarDate *Date(icalcomponent *root, icalproperty *p, struct icaltimetype t,
-                            BOOL recurring, RCError *error)
+                            icalcomponent *recurring, RCError *error)
 {
   NSTimeZone *native;
   icaltimezone *zone;
@@ -77,54 +75,36 @@ static NSCalendarDate *Date(icalcomponent *root, icalproperty *p, struct icaltim
                                  second:0
                                timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
   zone = RCEventZone(root, p, t);
+  if (!zone && !tz && !icaltime_is_utc(t)) {
+    date=RCCalendarWallDate(t,[NSTimeZone localTimeZone]);
+    if([date yearOfCommonEra]!=t.year || [date monthOfYear]!=t.month || [date dayOfMonth]!=t.day ||
+        [date hourOfDay]!=t.hour || [date minuteOfHour]!=t.minute || [date secondOfMinute]!=t.second) {
+      RCErrorSet(error,1,"Floating time falls in a local clock gap that Tiger cannot represent"); return nil;
+    }
+    return date;
+  }
   if (!zone) {
-    RCErrorSet(error, 1,
-               tz ? "Event timezone is unavailable"
-                  : "Floating timed events are not yet supported by the Tiger mapper");
+    RCErrorSet(error, 1, "Event timezone is unavailable");
     return nil;
   }
   offset = icaltimezone_get_utc_offset(zone, &t, &daylight);
   native = icaltime_is_utc(t) ? [NSTimeZone timeZoneForSecondsFromGMT:0]
                               : [NSTimeZone timeZoneWithName:String(tz)];
-  date = [NSCalendarDate dateWithYear:t.year
-                                month:t.month
-                                  day:t.day
-                                 hour:t.hour
-                               minute:t.minute
-                               second:t.second
-                             timeZone:[NSTimeZone timeZoneForSecondsFromGMT:offset]];
-  if (!recurring)
-    return date;
-  if (!native || [native secondsFromGMTForDate:date] != offset) {
-    RCErrorSet(error, 1, "Recurring event timezone cannot be represented by Tiger");
-    return nil;
+  date=RCCalendarWallDate(t,[NSTimeZone timeZoneForSecondsFromGMT:offset]);
+  if (!recurring || icaltime_is_utc(t)) return date;
+  BOOL matches=native && [native secondsFromGMTForDate:date]==offset;
+  /* The projection pass checks the master's zone daily. Retain the original
+     seasonal check here as well for a separately zoned DTEND. */
+  struct icaltimetype probe=t; probe.month=1; probe.day=15; probe.hour=12;
+  while(matches && probe.year<=t.year+5) {
+    int expected=icaltimezone_get_utc_offset(zone,&probe,&daylight);
+    NSCalendarDate *nd=RCCalendarWallDate(probe,[NSTimeZone timeZoneForSecondsFromGMT:expected]);
+    matches=[native secondsFromGMTForDate:nd]==expected;
+    if(++probe.month>12) { probe.month=1; probe.year++; }
   }
-  /* Check both sides of each season. Old system zone rules must not silently
-     change recurrence wall time. Unmatched custom/changed zones stay in SQL. */
-  {
-    int year, month;
-    for (year = t.year; year <= t.year + 5; year++)
-      for (month = 1; month <= 12; month++) {
-        struct icaltimetype probe = t;
-        NSCalendarDate *nd;
-        probe.year = year;
-        probe.month = month;
-        probe.day = 15;
-        probe.hour = 12;
-        offset = icaltimezone_get_utc_offset(zone, &probe, &daylight);
-        nd =
-            [NSCalendarDate dateWithYear:year
-                                   month:month
-                                     day:15
-                                    hour:12
-                                  minute:0
-                                  second:0
-                                timeZone:[NSTimeZone timeZoneForSecondsFromGMT:offset]];
-        if ([native secondsFromGMTForDate:nd] != offset) {
-          RCErrorSet(error, 1, "Tiger timezone rules differ from the recurring event");
-          return nil;
-        }
-      }
+  if(!matches && RCSourceZoneIsFixed(zone,offset)) { native=[NSTimeZone timeZoneForSecondsFromGMT:offset]; matches=YES; }
+  if(!matches) {
+    RCErrorSet(error,1,"Recurring timezone requires a finite UTC projection"); return nil;
   }
   [date setTimeZone:native];
   return date;
@@ -182,7 +162,8 @@ static int Recurrence(RCCalendarStore *store, icalcomponent *root, icalcomponent
   if (r.count)
     [rule setObject:[NSNumber numberWithInt:r.count] forKey:@"count"];
   if (!icaltime_is_null_time(r.until)) {
-    NSCalendarDate *until = Date(root, p, r.until, NO, error);
+    icalproperty *basis=icalcomponent_get_first_property(event,ICAL_DTSTART_PROPERTY);
+    NSCalendarDate *until = Date(root, icaltime_is_utc(r.until) ? p : basis, r.until, NULL, error);
     if (!until)
       return 0;
     [rule setObject:until forKey:@"until"];
@@ -337,6 +318,7 @@ static int Alarms(RCCalendarStore *store, icalcomponent *root, icalcomponent *ev
     Link(a, @"owner", owner);
     trigger = icalproperty_get_trigger(p);
     if (!icaltime_is_null_time(trigger.time)) {
+      if(!icaltime_is_utc(trigger.time)) { RCErrorSet(error,1,"Absolute reminders must use UTC"); return 0; }
       NSCalendarDate *date = Date(root, p, trigger.time, NO, error);
       if (!date)
         return 0;
@@ -389,6 +371,7 @@ static NSMutableDictionary *MapResource(RCCalendarStore *store, long long resour
   int success = 0;
   if (!root)
     return nil;
+  if(!RCPrepareCalendarProjection(root,error)) goto done;
   for (component = icalcomponent_get_first_component(root, ICAL_ANY_COMPONENT);
        component;
        component = icalcomponent_get_next_component(root, ICAL_ANY_COMPONENT)) {
@@ -443,7 +426,7 @@ static NSMutableDictionary *MapResource(RCCalendarStore *store, long long resour
                  *endProperty =
                      icalcomponent_get_first_property(event, ICAL_DTEND_PROPERTY),
                  *p;
-    BOOL recurring = icalcomponent_count_properties(event, ICAL_RRULE_PROPERTY) > 0;
+    icalcomponent *recurring = icalcomponent_count_properties(event, ICAL_RRULE_PROPERTY) > 0 ? event : NULL;
     struct icaltimetype start = icalcomponent_get_dtstart(event),
                         end = icalcomponent_get_dtend(event);
     NSCalendarDate *startDate, *endDate;

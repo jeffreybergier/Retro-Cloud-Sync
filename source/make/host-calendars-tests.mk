@@ -31,4 +31,4 @@ calendar-dav-test: $(CALENDAR_DAV_TEST)
 	@"$(CALENDAR_DAV_TEST)"
 .PHONY: calendar-dav-test
 
-$(CALENDAR_TEST_OUTPUT): $(CALENDAR_FIXTURE_ROOT)/CalendarFixtures.h
+$(CALENDAR_TEST_OUTPUT): $(CALENDAR_FIXTURE_ROOT)/CalendarFixtures.h $(CALENDAR_FIXTURE_ROOT)/CalendarTimeFixtures.h

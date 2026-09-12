@@ -316,3 +316,25 @@ restart verification of an upload cancelled after the server applied it, without
 another PUT. The native conflict tool includes bounded merge-wait and pre-session
 cancellation checks; `ConflictSessionTests --cancellation-only` runs those checks
 without registering clients. Run Mac suites sequentially.
+
+### Calendar time and finite recurrence coverage
+
+The mapper phase checks floating-date markers, archives, local UNTIL values,
+source-timezone conversion, finite RDATE/EXRULE sets, and differing-zone series
+projected through UTC dates and detached instances. It verifies exact original
+wire preservation, whole-series text edits, replay, and refusal of edits to the
+synthesized temporal structure or unbounded differing-zone recurrence.
+
+`make test-mac-calendars-syncservices TEST_HOST=x4-vm` also imports these
+synthetic events into real Tiger iCal, checks the floating marker and DST
+occurrence offsets in native truth, repeats the import, and cleans up fixtures.
+The `calendar-exceptions` two-way subset includes a floating date edit and a
+whole-series note edit on a projected custom-DST series, conditional upload,
+verified acknowledgement on the same records, and replay without another PUT.
+All remote artifacts remain under Desktop and all DAV writes use the synthetic
+transport.
+
+The implementation deliberately uses ordinary Tiger schema records. A native
+probe showed that Foundation can archive custom NSTimeZone data, but iCal
+normalizes an unfamiliar timezone name into a floating date during a real sync.
+Therefore custom timezone objects are not used for publication.

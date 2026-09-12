@@ -122,6 +122,28 @@ export_phase unsupported updated
 /usr/bin/sqlite3 Calendar-active.sqlite "SELECT export_status FROM calendar_resources WHERE href='https://example.test/cal/series.ics';" | grep -q 'retained previous'
 echo '[PASS] Unsupported recurrence retained the last exported series'
 export_phase updated updated
+export_phase time time
+export_phase time time
+/usr/bin/osascript <<'APPLESCRIPT'
+tell application "iCal"
+  repeat 30 times
+    set cs to every calendar whose name starts with "RCS Calendar Test"
+    if (count cs) is 1 then
+      set c to item 1 of cs
+      if (count every event of c) is greater than or equal to 3 then
+        set f to every event of c whose summary is "RCS Calendar Test Floating"
+        set z to every event of c whose summary is "RCS Calendar Test Custom Time"
+        set r to every event of c whose summary is "RCS Calendar Test Extra Dates"
+        if (count f) is 1 and (count z) is greater than or equal to 1 and (count r) is 1 then return "iCal time fixtures verified"
+      end if
+    end if
+    delay 1
+  end repeat
+  error "Timed out waiting for time fixtures in iCal"
+end tell
+APPLESCRIPT
+./RetroCloudCalendarSyncServicesVerifier time
+echo '[PASS] iCal received floating/custom-timezone/finite RDATE events without duplicate imports'
 export_phase empty empty
 ./RetroCloudCalendarSyncServicesVerifier baseline Calendar-baseline.plist
 echo '[PASS] Cleanup preserved pre-existing calendar/event identifiers'

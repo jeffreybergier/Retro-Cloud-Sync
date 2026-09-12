@@ -57,4 +57,4 @@ test-mac-calendars-syncservices: release build-mac-calendars-syncservices-tests
 .PHONY: test-mac-calendars-syncservices
 
 $(CALENDAR_MAC_TEST_ROOT)/fixtures-ppc $(CALENDAR_MAC_TEST_ROOT)/fixtures-i386: \
-	$(CALENDAR_FIXTURE_ROOT)/CalendarFixtures.h
+	$(CALENDAR_FIXTURE_ROOT)/CalendarFixtures.h $(CALENDAR_FIXTURE_ROOT)/CalendarTimeFixtures.h

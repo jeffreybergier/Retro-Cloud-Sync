@@ -25,13 +25,16 @@ int main(int argc, char **argv)
                                         dictionaryWithObject:Entity(@"Calendar")
                                                       forKey:ISyncRecordEntityNameKey]];
   NSMutableDictionary *testEvents = [NSMutableDictionary dictionary];
-  NSMutableArray *baseline = [NSMutableArray array];
+  NSMutableArray *baseline = [NSMutableArray array], *timeOverrides=[NSMutableArray array];
   NSEnumerator *keys = [events keyEnumerator];
   NSString *key;
   int testCalendars = 0, ok = 0;
   while ((key = [keys nextObject])) {
     NSDictionary *event = [events objectForKey:key];
     NSString *title = [event objectForKey:@"summary"];
+    if([title isEqual:@"RCS Calendar Test Custom Time"] && [[event objectForKey:@"main event"] count]) {
+      [timeOverrides addObject:event]; continue;
+    }
     if ([title hasPrefix:@"RCS Calendar Test "]) {
       if ([testEvents objectForKey:title]) {
         fprintf(stderr, "Duplicate synthetic event\n");
@@ -85,6 +88,23 @@ int main(int argc, char **argv)
   }
   if (argc == 2 && !strcmp(argv[1], "empty")) {
     ok = testCalendars == 0 && [testEvents count] == 0;
+    goto done;
+  }
+  if(argc==2 && !strcmp(argv[1],"time")) {
+    NSDictionary *floating=[testEvents objectForKey:@"RCS Calendar Test Floating"],
+      *custom=[testEvents objectForKey:@"RCS Calendar Test Custom Time"],
+      *extra=[testEvents objectForKey:@"RCS Calendar Test Extra Dates"];
+    NSCalendarDate *start=[floating objectForKey:@"start date"];
+    NSTimeZone *zone=[[custom objectForKey:@"start date"] timeZone];
+    NSCalendarDate *summer=[NSCalendarDate dateWithYear:2026 month:7 day:1 hour:9 minute:0 second:0 timeZone:zone];
+    NSCalendarDate *winter=[NSCalendarDate dateWithYear:2026 month:12 day:1 hour:9 minute:0 second:0 timeZone:zone];
+    NSDictionary *rule=[[[snapshot recordsWithIdentifiers:[extra objectForKey:@"recurrences"]] allValues] lastObject];
+    ok=testCalendars==1 && [testEvents count]==3 && [start timeZone]==[NSTimeZone localTimeZone] &&
+      [start hourOfDay]==9 && [zone secondsFromGMTForDate:summer]==0 && [zone secondsFromGMTForDate:winter]==0 && [timeOverrides count]>0 &&
+      [[extra objectForKey:@"exception dates"] count]==3 && [[rule objectForKey:@"count"] intValue]==6;
+    NSEnumerator *overrides=[timeOverrides objectEnumerator]; NSDictionary *instance;
+    while((instance=[overrides nextObject])) if([[instance objectForKey:@"start date"] timeIntervalSinceDate:[instance objectForKey:@"original date"]]!=-3600) ok=NO;
+    if(!ok) NSLog(@"Time fixture details: floating=%@ marker=%d hour=%d customZone=%@ summer=%d winter=%d exclusions=%lu recurrenceCount=%@",start,[start timeZone]==[NSTimeZone localTimeZone],[start hourOfDay],zone,[zone secondsFromGMTForDate:summer],[zone secondsFromGMTForDate:winter],(unsigned long)[[extra objectForKey:@"exception dates"] count],[rule objectForKey:@"count"]);
     goto done;
   }
   if (argc == 2) {

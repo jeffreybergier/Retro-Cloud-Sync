@@ -83,8 +83,19 @@ static inline id RCNativeDefaultValue(NSString *entity, NSString *key)
   }
   return nil;
 }
+static inline BOOL RCNativeFloatingDate(id value)
+{
+  return [value isKindOfClass:[NSCalendarDate class]] && [value timeZone]==[NSTimeZone localTimeZone];
+}
+static inline NSString *RCNativeFloatingWallTime(NSDate *value)
+{
+  return [value descriptionWithCalendarFormat:@"%Y%m%dT%H%M%S" timeZone:[NSTimeZone localTimeZone] locale:nil];
+}
 static inline BOOL RCNativePropertyValuesEqual(NSString *entity, NSString *key, id x, id y)
 {
+  if([entity hasPrefix:@"com.apple.calendars."] && (RCNativeFloatingDate(x) || RCNativeFloatingDate(y)))
+    return RCNativeFloatingDate(x) && RCNativeFloatingDate(y) &&
+        [RCNativeFloatingWallTime(x) isEqual:RCNativeFloatingWallTime(y)];
   id defaultValue=RCNativeDefaultValue(entity,key);
   if (defaultValue) {
     if (RCNativeEmptyValue(x)) x=defaultValue;
@@ -98,7 +109,8 @@ static inline NSSet *RCNativeUnorderedValues(NSArray *values)
 {
   NSMutableSet *result=[NSMutableSet set]; NSEnumerator *it=[values objectEnumerator]; id value;
   while ((value=[it nextObject])) {
-    if ([value isKindOfClass:[NSDate class]]) value=[NSDate dateWithTimeIntervalSinceReferenceDate:[value timeIntervalSinceReferenceDate]];
+    if (RCNativeFloatingDate(value)) value=[@"floating:" stringByAppendingString:RCNativeFloatingWallTime(value)];
+    else if ([value isKindOfClass:[NSDate class]]) value=[NSDate dateWithTimeIntervalSinceReferenceDate:[value timeIntervalSinceReferenceDate]];
     [result addObject:value];
   }
   return result;

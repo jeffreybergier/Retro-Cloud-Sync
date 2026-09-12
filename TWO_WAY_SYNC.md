@@ -48,8 +48,19 @@ iCloud invitation delivery.
 
 Structural edits clone the affected components, retain unrepresented extensions,
 and pass the production forward mapper before entering the outbox. Untouched
-components retain their physical bytes. RDATE/EXRULE, compound recurrence rules,
-email alarms, tasks and unsupported date/timezone representations remain pending.
+components retain their physical bytes. Floating dates retain their native
+floating marker and upload without a Z suffix or TZID. Zoned date edits use the
+original resource's timezone rules, including for exclusions and new detached
+instances, rather than looking up the same name in Tiger's timezone database.
+
+Finite RDATE/EXRULE and differing-timezone series can be imported through the
+bounded projections described in README.md. Their synthesized recurrence/date
+structure is protected from local structural edits. Ordinary text edits can
+upload when the complete projected graph round-trips; for a differing-zone
+series with synthesized instances, this includes consistent whole-series notes.
+An edit to only a synthesized occurrence remains pending. Original RRULE,
+RDATE/EXRULE and VTIMEZONE bytes are retained on upload. Email alarms, tasks and
+other unsupported structures remain pending.
 
 New writable local calendars created after the first feature-enabled sync can
 be created remotely when one calendar home is unambiguous. Existing local and

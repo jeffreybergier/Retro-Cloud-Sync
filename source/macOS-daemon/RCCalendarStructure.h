@@ -88,6 +88,7 @@ static BOOL UpdateAlarm(icalcomponent *alarm,NSDictionary *old,NSDictionary *rec
   NSDate *date=[record objectForKey:@"triggerdate"]; NSNumber *duration=[record objectForKey:@"triggerduration"];
   if(RCNativeEmptyValue(date)) date=nil;
   if(RCNativeEmptyValue(duration)) duration=nil;
+  if(date && RCCalendarFloatingDate(date)) { RCErrorSet(error,1,"Absolute reminders cannot use floating dates"); return NO; }
   if((date!=nil)==(duration!=nil)) { RCErrorSet(error,1,"Alarm needs exactly one trigger"); return NO; }
   if(!old && !ReplaceLine(alarm,@"ACTION",audio ? @"AUDIO" : @"DISPLAY",error)) return NO;
   if(StructuralFieldChanged(old,record,@"triggerdate") || StructuralFieldChanged(old,record,@"triggerduration")) {
