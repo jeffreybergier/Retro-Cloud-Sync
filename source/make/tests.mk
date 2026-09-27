@@ -20,8 +20,10 @@ test-business-mac:
 	@$(MAKE) --no-print-directory test-mac-contacts-syncservices
 	@$(MAKE) --no-print-directory test-mac-calendars-syncservices
 	@$(MAKE) --no-print-directory test-mac-conflicts
+# Full includes contact recovery/conflicts and calendar integration. The
+# fields mode adds photo normalization and partial-receipt scenarios.
 	@$(MAKE) --no-print-directory test-mac-two-way TWO_WAY_TEST_MODE=full
-	@$(MAKE) --no-print-directory test-mac-two-way TWO_WAY_TEST_MODE=calendars
+	@$(MAKE) --no-print-directory test-mac-two-way TWO_WAY_TEST_MODE=fields
 
 .PHONY: test test-business-linux test-ui-mac test-business-mac
 
