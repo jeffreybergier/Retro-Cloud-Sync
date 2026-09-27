@@ -1,5 +1,6 @@
 #include "RCCalDAVMirror.h"
 #include "RCDAVSyncState.h"
+#include "RCDAVStaging.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -42,6 +43,24 @@ static int calendarChanges(const RCDAVResource *changes, size_t count,
   if (count) *(int *)context = 1;
   return 1;
 }
+typedef struct {
+  RCCalendarStore *store;
+  long long calendar;
+  int keep;
+  char *token;
+} RCCalendarFetch;
+static int commitCalendar(int action, const char *href, const char *etag,
+    const unsigned char *body, size_t length, void *context, RCError *error)
+{
+  RCCalendarFetch *fetch = context;
+  if (action == RCDAVStageSeen) {
+    int current;
+    if (!RCCalendarStoreSeen(fetch->store, fetch->calendar, href, etag, &current, error)) return 0;
+    if (current) return 1;
+    RCErrorSet(error, 1, "Calendar mirror changed during download"); return 0;
+  }
+  return RCCalendarStoreSave(fetch->store, fetch->calendar, href, etag, body, length, error);
+}
 int RCCalDAVMirrorFetch(const RCCardDAVMirrorConfig *config, RCCalendarStore *store,
                         RCCardDAVMirrorResult *result, RCError *error)
 {
@@ -61,6 +80,8 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
   RCDAVSyncState state;
   char *token = NULL, *scope = NULL, *next = NULL;
   RCError local, finishError;
+  sqlite3 *stage = NULL;
+  RCCalendarFetch *fetches = NULL;
   if (!error)
     error = &local;
   RCErrorClear(error);
@@ -76,9 +97,11 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
   http.allowedHostSuffix = config->allowedHostSuffix;
   http.userAgent = "RetroCloudSync-CalDAV/0.1";
   client = RCHTTPClientCreate(&http, error);
-  if (!client || !RCCalendarStoreBeginScopedRun(store, start != NULL, error))
-    goto done;
-  started = 1;
+  if (!sqlite3_get_autocommit(store->db)) {
+    RCErrorSet(error, 1, "Calendar download requires an idle mirror transaction"); goto done;
+  }
+  stage = RCDAVStageOpen(error);
+  if (!client || !stage) goto done;
   state.db = store->db; state.account = store->account;
   progress(config, RCLogDebug, "Discovering calendar principal and home");
   if (!RCDAVDiscoverHref(client, config->serviceURL, principalRequest,
@@ -89,11 +112,10 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
                             &collections, &count, error))
     goto done;
   result->collectionCount = (long)count;
+  fetches = calloc(count ? count : 1, sizeof(*fetches));
+  if (!fetches) { RCErrorSet(error, 1, "Could not stage calendar collections"); goto done; }
   for (i = 0; i < count; i++) {
     if (RCCheckCancellation(error)) goto done;
-    long long calendar;
-    if (!RCCalendarStoreCollection(store, &collections[i], &calendar, error))
-      goto done;
     if (!RCDAVSyncStateLoad(&state, collections[i].url, &token, &scope, error)) goto done;
     if (collections[i].supportsSync && token && scope && !strcmp(scope, start ? start : "")) {
       int changed = 0;
@@ -105,10 +127,7 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
       if (status == RCDAVSyncComplete && !changed) {
         /* Preserve the previously complete window. A rolling cutoff or changed
            preference takes the inventory path even if the server is unchanged. */
-        if (!RCCalendarStoreSQL(store, error,
-            "UPDATE calendar_resources SET seen_run=%lld WHERE calendar_id=%lld "
-            "AND remote_missing=0 AND scope_excluded=0", store->run, calendar)) goto done;
-        result->unchangedResourceCount += sqlite3_changes(store->db);
+        fetches[i].keep = 1;
         progress(config, RCLogDebug, "Calendar unchanged; retaining history window");
         goto collection_complete;
       }
@@ -125,12 +144,15 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
     result->listedResourceCount += (long)resourceCount;
     for (j = 0; j < resourceCount; j++) {
       if (RCCheckCancellation(error)) goto done;
-      int current;
+      int current, staged;
       RCHTTPResponse response;
-      if (!RCCalendarStoreSeen(store, calendar, resources[j].url, resources[j].etag,
-                               &current, error))
+      if (!RCDAVMirrorResourceCurrent(store->db, store->account, 1, collections[i].url,
+          resources[j].url, resources[j].etag, &current, error) ||
+          !RCDAVStageHasResource(stage, (long long)i, resources[j].url, &staged, error))
         goto done;
-      if (current) {
+      if (current && !staged) {
+        if (!RCDAVStageSave(stage, (long long)i, RCDAVStageSeen, resources[j].url,
+            resources[j].etag, NULL, 0, error)) goto done;
         result->unchangedResourceCount++;
         continue;
       }
@@ -147,7 +169,7 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
         RCHTTPResponseClear(&response);
         goto done;
       }
-      if (!RCCalendarStoreSave(store, calendar, resources[j].url,
+      if (!RCDAVStageSave(stage, (long long)i, RCDAVStageDownloaded, resources[j].url,
                                response.etag ? response.etag : resources[j].etag,
                                response.body, response.bodyLength, error)) {
         RCHTTPResponseClear(&response);
@@ -162,9 +184,26 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
 collection_complete:
     /* Snapshot token precedes the inventory. Changes during its GETs will be
        reported again next time, rather than skipped by a later token read. */
-    if (!RCDAVSyncStateSave(&state, collections[i].url,
-        next ? next : collections[i].syncToken, start, store->run, error)) goto done;
+    {
+      const char *saved = next ? next : collections[i].syncToken;
+      fetches[i].token = saved ? strdup(saved) : NULL;
+      if (saved && !fetches[i].token) { RCErrorSet(error, 1, "Could not stage calendar token"); goto done; }
+    }
     free(token); free(scope); free(next); token = NULL; scope = NULL; next = NULL;
+  }
+  if (RCCheckCancellation(error) || !RCCalendarStoreBeginScopedRun(store, start != NULL, error)) goto done;
+  started = 1;
+  for (i = 0; i < count; i++) {
+    RCCalendarFetch *fetch = &fetches[i]; fetch->store = store;
+    if (RCCheckCancellation(error) || !RCCalendarStoreCollection(store, &collections[i], &fetch->calendar, error)) goto done;
+    if (fetch->keep) {
+      if (!RCCalendarStoreSQL(store, error,
+          "UPDATE calendar_resources SET seen_run=%lld WHERE calendar_id=%lld "
+          "AND remote_missing=0 AND scope_excluded=0", store->run, fetch->calendar)) goto done;
+      result->unchangedResourceCount += sqlite3_changes(store->db);
+    }
+    if (!RCDAVStageApply(stage, (long long)i, commitCalendar, fetch, error) ||
+        !RCDAVSyncStateSave(&state, collections[i].url, fetch->token, start, store->run, error)) goto done;
   }
   if (!RCDAVSyncStateFinish(&state, store->run, error)) goto done;
   if (RCCheckCancellation(error)) goto done;
@@ -181,6 +220,9 @@ done:
   }
   RCDAVFreeResources(resources, resourceCount);
   RCDAVFreeCollections(collections, count);
+  if (fetches) for (i = 0; i < count; i++) free(fetches[i].token);
+  free(fetches);
+  sqlite3_close(stage);
   free(principal);
   free(home);
   free(token); free(scope); free(next);

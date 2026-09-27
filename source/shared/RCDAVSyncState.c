@@ -35,8 +35,15 @@ int RCDAVSyncStateLoad(RCDAVSyncState *s, const char *url, char **token,
   sqlite3_stmt *q = NULL;
   int step, ok = 1;
   *token = NULL; *scope = NULL;
-  if (!prepare(s, "SELECT token,scope FROM dav_sync_state WHERE account_id=?1 "
-                   "AND collection_url=?2", &q, e)) return 0;
+  /* Reads precede network work and must not open a write transaction or create
+     metadata. An older mirror has no token until its first complete commit. */
+  if (sqlite3_prepare_v2(s->db, "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dav_sync_state'", -1, &q, NULL) != SQLITE_OK) return fail(s, e);
+  step = sqlite3_step(q); sqlite3_finalize(q); q = NULL;
+  if (step == SQLITE_DONE) return 1;
+  if (step != SQLITE_ROW || sqlite3_prepare_v2(s->db,
+      "SELECT token,scope FROM dav_sync_state WHERE account_id=?1 AND collection_url=?2",
+      -1, &q, NULL) != SQLITE_OK) return fail(s, e);
+  sqlite3_bind_int64(q, 1, s->account);
   sqlite3_bind_text(q, 2, url, -1, SQLITE_TRANSIENT);
   step = sqlite3_step(q);
   if (step == SQLITE_ROW) {

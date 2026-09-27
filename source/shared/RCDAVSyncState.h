@@ -2,7 +2,8 @@
 #define RC_DAV_SYNC_STATE_H
 #include "RCError.h"
 #include <AltivecCore/sqlite3.h>
-/* Borrowed account connection. All calls join the mirror's account transaction. */
+/* Borrowed account connection. Load is read-only and may precede network work;
+   Save and Finish require the mirror's atomic account transaction. */
 typedef struct { sqlite3 *db; long long account; } RCDAVSyncState;
 int RCDAVSyncStateLoad(RCDAVSyncState *, const char *url, char **token,
                        char **scope, RCError *);

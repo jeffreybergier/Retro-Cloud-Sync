@@ -1,7 +1,7 @@
 # Shared sync-token protocol and real contact/calendar mirror recovery regressions.
 SYNC_TEST_OUTPUT := $(BUILD_ROOT)/tests/host/sync/RetroCloudDAVSyncTests
 SYNC_TEST_SOURCES := $(SOURCE_ROOT)/tests/portable/DAVSyncTests.c \
-	$(SHARED_SOURCE_ROOT)/RCDAVClient.c $(SHARED_SOURCE_ROOT)/RCDAVSyncState.c \
+	$(SHARED_SOURCE_ROOT)/RCDAVClient.c $(SHARED_SOURCE_ROOT)/RCDAVSyncState.c $(SHARED_SOURCE_ROOT)/RCDAVStaging.c \
 	$(SHARED_SOURCE_ROOT)/RCCardDAVMirror.c $(SHARED_SOURCE_ROOT)/RCCalDAVMirror.c \
 	$(SHARED_SOURCE_ROOT)/RCContactStore.c $(SHARED_SOURCE_ROOT)/RCCalendarStore.c \
 	$(SHARED_SOURCE_ROOT)/RCVCard.c $(SHARED_SOURCE_ROOT)/RCICalendar.c \

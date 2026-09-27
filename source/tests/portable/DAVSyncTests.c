@@ -12,6 +12,8 @@
 #include <sys/wait.h>
 
 static RCError error;
+static sqlite3 *networkMirror;
+static const char *networkMirrorPath;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "Sync test line %d: %s (%s)\n", __LINE__, #x, error.message); exit(1); } } while (0)
 #define ROOT "<d:multistatus xmlns:d='DAV:' xmlns:c='urn:ietf:params:xml:ns:caldav' xmlns:a='urn:ietf:params:xml:ns:carddav'>"
 #define END "</d:multistatus>"
@@ -108,6 +110,13 @@ int RCHTTPClientRequest(RCHTTPClient *c, const char *method, const char *url,
     const char *depth, const char *type, const void *body, size_t length, RCHTTPResponse *r, RCError *e)
 {
   Step *s;
+  if (networkMirror) {
+    sqlite3 *writer = NULL;
+    CHECK(sqlite3_get_autocommit(networkMirror));
+    CHECK(sqlite3_open(networkMirrorPath, &writer) == SQLITE_OK);
+    CHECK(sqlite3_exec(writer, "BEGIN IMMEDIATE;ROLLBACK", NULL, NULL, NULL) == SQLITE_OK);
+    CHECK(sqlite3_close(writer) == SQLITE_OK);
+  }
   (void)c; (void)type; (void)e;
   CHECK(used < queued); s = &steps[used++]; CHECK(!strcmp(method, s->method));
   if (s->sync) {
@@ -215,14 +224,22 @@ static void contactTests(void)
   pid_t child;
   CHECK(fd >= 0); close(fd);
   store = RCContactStoreOpen(path, "alice", &error); CHECK(store);
-  state = RCContactStoreDAVSyncState(store);
+  state = RCContactStoreDAVSyncState(store); networkMirror = state.db; networkMirrorPath = path;
   discovery(0, t1, 0); syncPage(NULL, "urn:page", SELF("/home/book") A, 1); get(cardA, "one");
   syncPage("urn:page", t1, SELF("/home/book/") B, 0); get(cardB, "one");
   CHECK(RCCardDAVMirrorFetch(&config, store, &result, &error)); reset();
   CHECK(result.listedResourceCount == 2 && result.downloadedResourceCount == 2);
   CHECK(tokenIs(state.db, "alice", t1) && scalar(state.db, "SELECT count(*) FROM contacts WHERE remote_missing=0") == 2);
+  /* Download succeeds, then the final token write fails. Neither the newly
+     applied body nor the collection inventory may escape the commit rollback. */
+  CHECK(sqlite3_exec(state.db, "CREATE TEMP TRIGGER fail_token BEFORE INSERT ON dav_sync_state BEGIN SELECT RAISE(ABORT,'synthetic commit failure'); END", NULL, NULL, NULL) == SQLITE_OK);
+  discovery(0, "urn:failed-commit", 0); syncPage(t1, "urn:failed-commit", A2 DELETE_B, 0); get(cardA, "two");
+  CHECK(!RCCardDAVMirrorFetch(&config, store, &result, &error)); reset();
+  CHECK(tokenIs(state.db, "alice", t1));
+  CHECK(scalar(state.db, "SELECT count(*) FROM contacts WHERE remote_missing=0 AND etag='one'") == 2);
+  CHECK(sqlite3_exec(state.db, "DROP TRIGGER fail_token", NULL, NULL, NULL) == SQLITE_OK);
   RCContactStoreClose(store); store = RCContactStoreOpen(path, "alice", &error); CHECK(store);
-  state = RCContactStoreDAVSyncState(store);
+  state = RCContactStoreDAVSyncState(store); networkMirror = state.db; networkMirrorPath = path;
   before = getCount;
   discovery(0, t1, 0); syncPage(t1, t1, SELF("/home/book"), 0);
   CHECK(RCCardDAVMirrorFetch(&config, store, &result, &error)); reset();
@@ -277,16 +294,16 @@ static void contactTests(void)
     _exit(0);
   }
   CHECK(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
-  store = RCContactStoreOpen(path, "alice", &error); CHECK(store); state = RCContactStoreDAVSyncState(store);
+  store = RCContactStoreOpen(path, "alice", &error); CHECK(store); state = RCContactStoreDAVSyncState(store); networkMirror = state.db; networkMirrorPath = path;
   CHECK(tokenIs(state.db, "alice", "urn:5") && scalar(state.db, "SELECT count(*) FROM contacts WHERE etag='crash'") == 0);
   /* Identical collection URLs across accounts cannot share tokens. */
   RCContactStoreClose(store); store = RCContactStoreOpen(path, "bob", &error); CHECK(store);
-  state = RCContactStoreDAVSyncState(store); config.username = "bob";
+  state = RCContactStoreDAVSyncState(store); networkMirror = state.db; networkMirrorPath = path; config.username = "bob";
   discovery(0, "urn:bob", 0); syncPage(NULL, "urn:bob", A, 0); get(cardA, "one");
   CHECK(RCCardDAVMirrorFetch(&config, store, &result, &error)); reset();
   CHECK(tokenIs(state.db, "bob", "urn:bob") && tokenIs(state.db, "alice", "urn:5"));
   RCContactStoreClose(store); store = RCContactStoreOpen(path, "alice", &error); CHECK(store);
-  state = RCContactStoreDAVSyncState(store); config.username = "alice";
+  state = RCContactStoreDAVSyncState(store); networkMirror = state.db; networkMirrorPath = path; config.username = "alice";
   discovery(0, NULL, 1);
   CHECK(RCCardDAVMirrorFetch(&config, store, &result, &error)); reset();
   CHECK(!tokenIs(state.db, "alice", "urn:5") && tokenIs(state.db, "bob", "urn:bob"));
@@ -297,7 +314,7 @@ static void contactTests(void)
   discovery(0, NULL, 0); inventory(A3 C, 0);
   CHECK(RCCardDAVMirrorFetch(&config, store, &result, &error)); reset();
   CHECK(tokenIs(state.db, "alice", NULL));
-  RCContactStoreClose(store); unlink(path);
+  RCContactStoreClose(store); networkMirror = NULL; unlink(path);
 }
 static void calendarTests(void)
 {
@@ -308,16 +325,22 @@ static void calendarTests(void)
   RCCardDAVMirrorResult result;
   const char *wide = "20240906T000000Z", *narrow = "20250906T000000Z";
   CHECK(fd >= 0); close(fd);
-  store = RCCalendarStoreOpen(path, "alice", &error); CHECK(store);
+  store = RCCalendarStoreOpen(path, "alice", &error); CHECK(store); networkMirror = store->db; networkMirrorPath = path;
   /* Baseline token is captured before inventory/GET, never after them. */
   discovery(1, t1, 0); inventory(A, 1); get(event, "two");
   CHECK(RCCalDAVMirrorFetchSince(&config, store, wide, &result, &error)); reset();
   CHECK(tokenIs(store->db, "alice", t1));
+  CHECK(sqlite3_exec(store->db, "CREATE TEMP TRIGGER fail_token BEFORE INSERT ON dav_sync_state BEGIN SELECT RAISE(ABORT,'synthetic commit failure'); END", NULL, NULL, NULL) == SQLITE_OK);
+  discovery(1, "urn:failed-commit", 0); syncPage(t1, "urn:failed-commit", A3, 0); inventory(A3, 1); get(event, "three");
+  CHECK(!RCCalDAVMirrorFetchSince(&config, store, wide, &result, &error)); reset();
+  CHECK(tokenIs(store->db, "alice", t1));
+  CHECK(scalar(store->db, "SELECT count(*) FROM calendar_resources WHERE etag='two' AND remote_missing=0") == 1);
+  CHECK(sqlite3_exec(store->db, "DROP TRIGGER fail_token", NULL, NULL, NULL) == SQLITE_OK);
   before = getCount;
   discovery(1, "urn:2", 0); syncPage(t1, "urn:2", A2, 0); inventory(A2, 1);
   CHECK(RCCalDAVMirrorFetchSince(&config, store, wide, &result, &error)); reset();
   CHECK(getCount == before && tokenIs(store->db, "alice", "urn:2"));
-  RCCalendarStoreClose(store); store = RCCalendarStoreOpen(path, "alice", &error); CHECK(store);
+  RCCalendarStoreClose(store); store = RCCalendarStoreOpen(path, "alice", &error); CHECK(store); networkMirror = store->db; networkMirrorPath = path;
   discovery(1, "urn:2", 0); syncPage("urn:2", "urn:2", "", 0);
   CHECK(RCCalDAVMirrorFetchSince(&config, store, wide, &result, &error)); reset();
   CHECK(result.unchangedResourceCount == 1 && scalar(store->db, "SELECT count(*) FROM available_events") == 1);
@@ -362,7 +385,7 @@ static void calendarTests(void)
   discovery(1, "urn:5", 0); inventory(A2, 0);
   CHECK(RCCalDAVMirrorFetch(&config, store, &result, &error)); reset();
   CHECK(scalar(store->db, "SELECT count(*) FROM available_events") == 1);
-  RCCalendarStoreClose(store); unlink(path);
+  RCCalendarStoreClose(store); networkMirror = NULL; unlink(path);
 }
 int main(void)
 {
