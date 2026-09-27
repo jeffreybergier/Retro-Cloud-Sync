@@ -10,24 +10,7 @@ static inline BOOL RCCalendarFloatingDate(id date)
   return [date isKindOfClass:[NSCalendarDate class]] &&
       [date timeZone]==[NSTimeZone localTimeZone];
 }
-static inline icaltimezone *RCCalendarSourceZone(icalcomponent *root, icalproperty *p)
-{
-  const char *tz=RCICalendarTZID(p);
-  if(!tz) return NULL;
-  icaltimezone *zone=icalcomponent_get_timezone(root,tz);
-  if(!zone) zone=icaltimezone_get_builtin_timezone(tz);
-  if(!zone || zone==icaltimezone_get_utc_timezone()) return zone;
-  icalcomponent *definition=icaltimezone_get_component(zone), *part; int count=0;
-  for(part=icalcomponent_get_first_component(definition,ICAL_ANY_COMPONENT);part;
-      part=icalcomponent_get_next_component(definition,ICAL_ANY_COMPONENT)) {
-    struct icaltimetype start=icalcomponent_get_dtstart(part);
-    if(!icalcomponent_get_first_property(part,ICAL_TZOFFSETFROM_PROPERTY) ||
-        !icalcomponent_get_first_property(part,ICAL_TZOFFSETTO_PROPERTY) ||
-        icaltime_is_null_time(start) || !icaltime_is_valid_time(start)) return NULL;
-    count++;
-  }
-  return count ? zone : NULL;
-}
+#include "RCCalendarProjection.h"
 static inline NSCalendarDate *RCCalendarWallDate(struct icaltimetype t, NSTimeZone *zone)
 {
   return [NSCalendarDate dateWithYear:t.year month:t.month day:t.day

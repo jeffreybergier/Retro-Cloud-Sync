@@ -32,3 +32,16 @@ calendar-dav-test: $(CALENDAR_DAV_TEST)
 .PHONY: calendar-dav-test
 
 $(CALENDAR_TEST_OUTPUT): $(CALENDAR_FIXTURE_ROOT)/CalendarFixtures.h $(CALENDAR_FIXTURE_ROOT)/CalendarTimeFixtures.h
+
+CALENDAR_PROJECTION_TEST := $(BUILD_ROOT)/tests/host/calendars/CalendarProjectionTests
+CALENDAR_PROJECTION_SOURCES := $(SOURCE_ROOT)/tests/portable/CalendarProjectionTests.c \
+  $(SHARED_SOURCE_ROOT)/RCCalendarProjection.c $(SHARED_SOURCE_ROOT)/RCICalendar.c $(SHARED_SOURCE_ROOT)/RCError.c
+$(CALENDAR_PROJECTION_TEST): $(CALENDAR_PROJECTION_SOURCES) $(ICAL_HOST_LIBRARY) \
+  $(wildcard $(SHARED_SOURCE_ROOT)/*.h) $(CALENDAR_FIXTURE_ROOT)/CalendarTimeFixtures.h
+	@mkdir -p "$(dir $@)"
+	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror $(ICAL_HOST_FLAGS) \
+	  -I$(SHARED_SOURCE_ROOT) $(CALENDAR_PROJECTION_SOURCES) $(ICAL_HOST_LIBRARY) -lpthread -o "$@"
+test-host-calendar-projection: $(CALENDAR_PROJECTION_TEST)
+	@"$(CALENDAR_PROJECTION_TEST)"
+test-host-calendars: test-host-calendar-projection
+.PHONY: test-host-calendar-projection
