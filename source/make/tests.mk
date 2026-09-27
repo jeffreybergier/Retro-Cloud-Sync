@@ -2,6 +2,12 @@
 
 test-host: test-host-contacts test-host-calendars test-host-writes test-host-sync
 
+# Header-only rules and shared record layouts are part of these executables.
+# A fast incremental Linux run must not silently reuse a pre-refactor binary.
+$(SHARED_TEST_OUTPUT) $(CONTACT_DAV_TEST_OUTPUT) $(VCARD_TEST_OUTPUT) \
+$(CALENDAR_TEST_OUTPUT) $(CALENDAR_DAV_TEST) $(WRITE_TEST_OUTPUT) \
+$(WRITE_HTTP_OUTPUT) $(SYNC_TEST_OUTPUT): $(wildcard $(SHARED_SOURCE_ROOT)/*.h)
+
 # Public suites. Keep native integration runs sequential even under make -j:
 # Sync Services suites share the logged-in desktop and native record stores.
 test: test-business-linux
