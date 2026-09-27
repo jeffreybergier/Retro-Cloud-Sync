@@ -487,7 +487,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
     return YES;
   }
   if (![contacts isKindOfClass:[NSDictionary class]])
-    { RCLogger(RCLogError, "Account", "Startup", @"Contacts configuration must be a dictionary; daemon cannot start"); return NO; }
+    { RCLogger(RCLogError, "Account", "Startup", @"Contacts configuration must be a dictionary; sync cannot start"); return NO; }
   contactsSyncMode =
       RCSyncModeFromConfiguration(contacts, @"ContactsSyncMode", @"Enabled", YES);
   calendarsSyncMode = RCSyncModeFromConfiguration(contacts, @"CalendarsSyncMode",
@@ -525,7 +525,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
       ![interval isKindOfClass:[NSNumber class]] || [interval unsignedIntValue] < 60 ||
       [interval unsignedIntValue] > 604800 || [username UTF8String] == NULL ||
       [serviceURL UTF8String] == NULL) {
-    RCLogger(RCLogError, "Account", "Startup", @"Account configuration is invalid; daemon cannot start");
+    RCLogger(RCLogError, "Account", "Startup", @"Account configuration is invalid; sync cannot start");
     return NO;
   }
   databasePath = [daemonDirectory stringByAppendingPathComponent:@"Contacts.sqlite"];
@@ -872,15 +872,9 @@ int main(int argc, char *argv[])
   RCStatusStart(configurationPath,configuration);
   if (configuration != nil) {
     if (!RCSyncWorkerStart(&syncWorker, configuration, daemonDirectory, configurationPath)) {
-      RCLogger(RCLogError, "Daemon", "Startup", @"Account worker initialization failed; daemon exiting");
+      RCLogger(RCLogError, "Account", "Startup", @"Sync initialization failed; mail proxy remains available");
       RCStatusFailure(@"Contacts",@"Configuration");
       RCStatusFailure(@"Calendars",@"Configuration");
-      RCStatusStop();
-      RCMailProxyStop(mailProxy);
-      curl_global_cleanup();
-      [configuration release];
-      [processPool release];
-      return 1;
     }
   }
   keepAlivePort = [[NSPort port] retain];

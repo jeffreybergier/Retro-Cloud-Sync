@@ -81,4 +81,37 @@ with tempfile.TemporaryDirectory() as temporary:
     copy(files / 'Configuration.plist', 'Configuration.plist')
     copy(files / 'run.command', 'run.command')
     print(run('cd ' + shlex.quote(remote) + ' && ./run.command'), end='')
+    # Sync startup errors must leave both mail listeners and normal shutdown
+    # available. Invalid settings prevent all Keychain and sync network work.
+    startup = '''#!/bin/sh
+set -eu
+"$(pwd)/DaemonUnderTest" --config "$(pwd)/Configuration.plist" > daemon.log 2>&1 < /dev/null &
+daemon=$!
+trap 'kill -TERM "$daemon" 2>/dev/null || true' EXIT
+sleep 2
+kill -0 "$daemon"
+/usr/bin/python -c 'import socket; a=socket.socket(); a.connect(("127.0.0.1",31143)); a.close(); b=socket.socket(); b.connect(("127.0.0.1",31587)); b.close()'
+cp Status.plist Running.plist
+kill -TERM "$daemon"
+wait "$daemon"
+trap - EXIT
+'''
+    for invalid in ('invalid dictionary',
+                    dict(configuration['Contacts'], ContactsSyncMode='invalid'),
+                    dict(configuration['Contacts'], CalendarHistoryYears=3)):
+        configuration['Contacts'] = invalid
+        (files / 'Configuration.plist').write_bytes(plistlib.dumps(configuration))
+        (files / 'run.command').write_text(startup)
+        copy(files / 'Configuration.plist', 'Configuration.plist')
+        copy(files / 'run.command', 'run.command')
+        run('cd ' + shlex.quote(remote) + ' && ./run.command')
+        copy_result = subprocess.run(['scp', '-O', '-o', 'BatchMode=yes',
+            host + ':' + remote + '/Running.plist', str(root / 'Running.plist')],
+            check=True, timeout=30)
+        running = plistlib.loads((root / 'Running.plist').read_bytes())
+        assert running['Running'] is True
+        for service in ('Contacts', 'Calendars'):
+            assert running[service]['ErrorCode'] == 'Configuration'
+            assert 'LastSuccess' not in running[service]
+    print('Both mail listeners survived malformed sync settings, invalid modes and invalid history.')
 print('Shutdown status and child cleanup passed. Artifacts:', root)
