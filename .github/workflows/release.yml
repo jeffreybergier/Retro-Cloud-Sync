@@ -1,0 +1,144 @@
+name: Build macOS release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    env:
+      BUILD_IMAGE: ghcr.io/jeffreybergier/altivec-intelligence@sha256:c3a8181f6f8fdd4d87857bbfece5d6b9068cac6575662879cd7c2685bae550a9
+      RELEASE_TAG: ${{ github.ref_name }}
+
+    steps:
+      - name: Validate release tag
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a three-part version tag, such as v1.0.0: $RELEASE_TAG" >&2
+            exit 1
+          fi
+
+      - name: Check out tagged source and dependencies
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Verify the checked-out commit
+        run: |
+          set -euo pipefail
+          release_sha="$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")"
+          test "$(git rev-parse HEAD)" = "$release_sha"
+          echo "RELEASE_SHA=$release_sha" >> "$GITHUB_ENV"
+
+      - name: Pull pinned build image
+        run: docker pull "$BUILD_IMAGE"
+
+      - name: Check tag against configured app and daemon versions
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --entrypoint /bin/bash \
+            -e RELEASE_TAG \
+            -v "$GITHUB_WORKSPACE:/repo/user" \
+            -w /repo/user \
+            "$BUILD_IMAGE" \
+            -lc 'altivec-release ci-env "$RELEASE_TAG"' > release.env
+          cat release.env >> "$GITHUB_ENV"
+          cat release.env
+
+      - name: Fetch and verify Apple SDK archives
+        env:
+          ALTIVEC_SDK_MACOS_105_URL: ${{ secrets.ALTIVEC_SDK_MACOS_105_URL }}
+          ALTIVEC_SDK_MACOS_113_URL: ${{ secrets.ALTIVEC_SDK_MACOS_113_URL }}
+          ALTIVEC_SDK_IPHONEOS_84_URL: ${{ secrets.ALTIVEC_SDK_IPHONEOS_84_URL }}
+        run: |
+          set -euo pipefail
+          archive_dir="$RUNNER_TEMP/.altivec-sdk"
+          mkdir -p "$archive_dir"
+          chmod 0700 "$archive_dir"
+          for archive_input in \
+              'ALTIVEC_SDK_MACOS_105_URL|MacOSX10.5.sdk.tar.xz' \
+              'ALTIVEC_SDK_MACOS_113_URL|MacOSX11.3.sdk.tar.xz' \
+              'ALTIVEC_SDK_IPHONEOS_84_URL|iPhoneOS8.4.sdk.tar.gz'; do
+            IFS='|' read -r secret_name filename <<< "$archive_input"
+            archive_url="${!secret_name:-}"
+            if [[ ! "$archive_url" =~ ^https://[^[:space:]]+$ ]]; then
+              echo "${secret_name} must be an HTTPS repository secret." >&2
+              exit 1
+            fi
+            temporary="$archive_dir/$filename.part"
+            curl --fail --location --silent --show-error \
+              --proto '=https' --proto-redir '=https' \
+              --retry 5 --retry-delay 2 --retry-all-errors \
+              --connect-timeout 30 --output "$temporary" "$archive_url"
+            mv "$temporary" "$archive_dir/$filename"
+          done
+          docker run --rm \
+            --entrypoint altivec-sdk \
+            -e ALTIVEC_SDK_ARCHIVE_DIR=/altivec-sdk \
+            -v "$archive_dir:/altivec-sdk:ro" \
+            "$BUILD_IMAGE" preflight
+
+      - name: Build and stage the Mac app ZIP
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --entrypoint /bin/bash \
+            -e IS_SANDBOX=1 \
+            -e ALTIVEC_SDK_ARCHIVE_DIR=/altivec-sdk \
+            -e RELEASE_VERSION \
+            -v "$RUNNER_TEMP/.altivec-sdk:/altivec-sdk:ro" \
+            --mount type=volume,target=/osxcross/legacy/target/SDK \
+            --mount type=volume,target=/osxcross/modern/SDK \
+            -v "$GITHUB_WORKSPACE:/repo/user" \
+            -w /repo/user \
+            "$BUILD_IMAGE" \
+            -lc 'altivec-sdk install && altivec-release build && altivec-release stage "$RELEASE_VERSION"'
+
+      - name: Validate release asset
+        run: |
+          set -euo pipefail
+          asset="dist/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip"
+          test -s "$asset"
+          unzip -t "$asset" >/dev/null
+          RELEASE_ASSET="$asset" python3 - <<'PY'
+          import os
+          import plistlib
+          import zipfile
+
+          with zipfile.ZipFile(os.environ["RELEASE_ASSET"]) as archive:
+              names = set(archive.namelist())
+              required = {
+                  "rCloud.app/Contents/Info.plist",
+                  "rCloud.app/Contents/MacOS/rCloud",
+                  "rCloud.app/Contents/Library/LaunchServices/rcloudd",
+              }
+              missing = required - names
+              if missing:
+                  raise SystemExit("Missing app files: " + ", ".join(sorted(missing)))
+              info = plistlib.loads(archive.read("rCloud.app/Contents/Info.plist"))
+              version = os.environ["RELEASE_VERSION"]
+              for key in ("CFBundleShortVersionString", "CFBundleVersion"):
+                  if info.get(key) != version:
+                      raise SystemExit(f"{key} does not match {version}")
+          PY
+          sha256sum "$asset"
+
+      - name: Publish GitHub release asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset="dist/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip"
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" \
+              --verify-tag --target "$RELEASE_SHA" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" "$asset" --clobber

@@ -12,3 +12,10 @@ make test-ui-mac TEST_HOST=x4-vm
 
 `make test` runs the Linux suite. See [test documentation](source/tests/README.md)
 for dependencies, suite membership, narrower targets and Mac desktop requirements.
+
+GitHub Actions runs `make test-business-linux` once per branch push. A `vMAJOR.MINOR.PATCH`
+tag builds the macOS app ZIP and attaches `Retro-Cloud-Sync-VERSION-macOS.zip`
+to its GitHub Release after checking that the tag and app version match. The
+release workflow needs three repository secrets containing HTTPS URLs for the
+checksum-verified SDK archives: `ALTIVEC_SDK_MACOS_105_URL`,
+`ALTIVEC_SDK_MACOS_113_URL`, and `ALTIVEC_SDK_IPHONEOS_84_URL`.

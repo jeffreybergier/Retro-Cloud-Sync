@@ -1,0 +1,29 @@
+name: Linux tests
+
+on:
+  push:
+    branches:
+      - "**"
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source and dependencies
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential bison cmake flex libcurl4-openssl-dev \
+            libsqlite3-dev libssl-dev libxml2-dev openssl perl python3
+
+      - name: Run Linux business tests
+        run: make test-business-linux
