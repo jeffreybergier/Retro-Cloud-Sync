@@ -15,3 +15,12 @@ test-host-policies: $(POLICY_TEST_ROOT)/PolicyTests $(POLICY_TEST_ROOT)/Connecti
 	@"$(POLICY_TEST_ROOT)/ConnectionTests"
 test-host: test-host-policies
 .PHONY: test-host-policies
+
+SYNC_POLICY_SOURCES := $(SOURCE_ROOT)/tests/portable/SyncPolicyTests.c $(SHARED_SOURCE_ROOT)/RCSyncPolicy.c
+$(POLICY_TEST_ROOT)/SyncPolicyTests: $(SYNC_POLICY_SOURCES) $(SHARED_SOURCE_ROOT)/RCSyncPolicy.h
+	@mkdir -p "$(dir $@)"
+	@$(HOST_CC) -std=c99 -Wall -Wextra -Werror -I$(SHARED_SOURCE_ROOT) $(SYNC_POLICY_SOURCES) -o "$@"
+test-host-sync-policy: $(POLICY_TEST_ROOT)/SyncPolicyTests
+	@"$(POLICY_TEST_ROOT)/SyncPolicyTests"
+test-host-policies: test-host-sync-policy
+.PHONY: test-host-sync-policy

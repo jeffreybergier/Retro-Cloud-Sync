@@ -1,6 +1,7 @@
 #ifndef RC_SYNC_RECORD_EQUALITY_H
 #define RC_SYNC_RECORD_EQUALITY_H
 #import <Foundation/Foundation.h>
+#include "RCSyncPolicy.h"
 
 /* Sync Services may omit empty properties when reconstructing a snapshot.
    Compare semantic records, while retaining the ordering of recurrence arrays
@@ -55,33 +56,9 @@ static inline NSURL *RCNativeAlarmSound(NSDictionary *record, BOOL *valid)
    trigger is not a zero-second trigger, and a missing record is not empty. */
 static inline id RCNativeDefaultValue(NSString *entity, NSString *key)
 {
-  if ([entity isEqual:@"com.apple.calendars.Event"]) {
-    /* The forward mapper supplies this title when SUMMARY is absent. */
-    if ([key isEqual:@"summary"]) return @"Untitled event";
-    if ([key isEqual:@"all day"]) return [NSNumber numberWithBool:NO];
-    if ([key isEqual:@"status"]) return @"none";
-    if ([key isEqual:@"classification"]) return @"public";
-  } else if ([entity isEqual:@"com.apple.calendars.Recurrence"]) {
-    if ([key isEqual:@"interval"]) return [NSNumber numberWithInt:1];
-    if ([key isEqual:@"count"]) return [NSNumber numberWithInt:0];
-    if ([key isEqual:@"weekstartday"]) return @"monday";
-  } else if ([entity isEqual:@"com.apple.calendars.Attendee"]) {
-    if ([key isEqual:@"rsvp"]) return [NSNumber numberWithBool:NO];
-    if ([key isEqual:@"role"]) return @"requiredparticipant";
-    if ([key isEqual:@"status"]) return @"needsaction";
-    if ([key isEqual:@"user type"]) return @"individual";
-  } else if ([entity isEqual:@"com.apple.contacts.Contact"]) {
-    if ([key isEqual:@"display as company"]) return @"person";
-  } else if ([entity isEqual:@"com.apple.contacts.Phone Number"] ||
-      [entity isEqual:@"com.apple.contacts.Email Address"] ||
-      [entity isEqual:@"com.apple.contacts.Street Address"] ||
-      [entity isEqual:@"com.apple.contacts.URL"] ||
-      [entity isEqual:@"com.apple.contacts.Date"] ||
-      [entity isEqual:@"com.apple.contacts.Related Name"] ||
-      [entity isEqual:@"com.apple.contacts.IM"]) {
-    if ([key isEqual:@"type"]) return @"other";
-  }
-  return nil;
+  RCFieldDefault value=RCSyncFieldDefault([entity UTF8String],[key UTF8String]);
+  if(!value.present) return nil;
+  return value.text ? (id)[NSString stringWithUTF8String:value.text] : (id)[NSNumber numberWithInt:value.number];
 }
 static inline BOOL RCNativeFloatingDate(id value)
 {
@@ -115,48 +92,58 @@ static inline NSSet *RCNativeUnorderedValues(NSArray *values)
   }
   return result;
 }
+static inline NSDictionary *RCNativeScopedRecord(NSDictionary *record, NSArray *fields)
+{
+  if (!record || !fields) return record;
+  NSMutableDictionary *result=[NSMutableDictionary dictionary];
+  NSEnumerator *it=[fields objectEnumerator]; NSString *key;
+  while ((key=[it nextObject])) if ([record objectForKey:key])
+    [result setObject:[record objectForKey:key] forKey:key];
+  if ([record objectForKey:@"com.apple.syncservices.RecordEntityName"])
+    [result setObject:[record objectForKey:@"com.apple.syncservices.RecordEntityName"] forKey:@"com.apple.syncservices.RecordEntityName"];
+  return result;
+}
+static inline BOOL RCNativeRecordsEqual(NSDictionary *a, NSDictionary *b);
+static size_t RCRecordCount(RCRecord r) { return [(id)r count]; }
+static void *RCRecordKeys(RCRecord r) { return [(id)r keyEnumerator]; }
+static RCRecord RCRecordNext(void *it) { return [(id)it nextObject]; }
+static RCRecord RCRecordGet(RCRecord r,RCRecord key) { return [(id)r objectForKey:(id)key]; }
+static const char *RCRecordText(RCRecord r) { return [(id)r UTF8String]; }
+static const char *RCRecordEntity(RCRecord r) { return [[(id)r objectForKey:@"com.apple.syncservices.RecordEntityName"] UTF8String]; }
+static int RCRecordPropertyEqual(const char *entity,const char *key,RCRecord a,RCRecord b)
+{
+  return RCNativePropertyValuesEqual(entity ? [NSString stringWithUTF8String:entity] : nil,
+      [NSString stringWithUTF8String:key],(id)a,(id)b);
+}
+static int RCRecordUnorderedEqual(RCRecord a,RCRecord b)
+{
+  return [(id)a isKindOfClass:[NSArray class]] && [(id)b isKindOfClass:[NSArray class]] &&
+      [RCNativeUnorderedValues((id)a) isEqual:RCNativeUnorderedValues((id)b)];
+}
+static int RCRecordAlarmEqual(RCRecord a,RCRecord b)
+{
+  BOOL av,bv; NSURL *as=RCNativeAlarmSound((id)a,&av), *bs=RCNativeAlarmSound((id)b,&bv);
+  if(!av || !bv) return -1;
+  return (!as && !bs) || [as isEqual:bs];
+}
+static int RCRecordTombstone(RCRecord r) { return (id)r==[NSNull null]; }
+static int RCRecordScopedEqual(RCRecord a,RCRecord b,RCRecord fields)
+{
+  return RCNativeRecordsEqual(RCNativeScopedRecord((id)a,(id)fields),RCNativeScopedRecord((id)b,(id)fields));
+}
+static inline const RCRecordAccess *RCNativeRecordAccess(void)
+{
+  static const RCRecordAccess access={RCRecordCount,RCRecordKeys,RCRecordNext,RCRecordGet,
+      RCRecordText,RCRecordEntity,RCRecordPropertyEqual,RCRecordUnorderedEqual,RCRecordAlarmEqual,
+      RCRecordTombstone,RCRecordScopedEqual};
+  return &access;
+}
 static inline BOOL RCNativeRecordsEqual(NSDictionary *a, NSDictionary *b)
 {
-  if (!a || !b) return a==b;
-  NSSet *unordered=[NSSet setWithObjects:@"phone numbers",@"email addresses",@"street addresses",@"URLs",
-      @"events",@"tasks",@"detached events",@"exception dates",@"attendees",@"organizer",@"recurrences",
-      @"display alarms",@"audio alarms",@"mail alarms",nil];
-  NSMutableSet *keys=[NSMutableSet setWithArray:[a allKeys]];
-  [keys addObjectsFromArray:[b allKeys]];
-  NSEnumerator *it=[keys objectEnumerator]; NSString *key;
-  NSString *entity=[a objectForKey:@"com.apple.syncservices.RecordEntityName"];
-  if (![entity isEqual:[b objectForKey:@"com.apple.syncservices.RecordEntityName"]]) entity=nil;
-  if ([entity isEqual:@"com.apple.calendars.AudioAlarm"]) {
-    BOOL av,bv; NSURL *as=RCNativeAlarmSound(a,&av), *bs=RCNativeAlarmSound(b,&bv);
-    if (av && bv) {
-      if (!((!as && !bs) || [as isEqual:bs])) return NO;
-      [keys removeObject:@"sound"]; [keys removeObject:@"com.apple.ical.sound"];
-      it=[keys objectEnumerator];
-    }
-  }
-  while ((key=[it nextObject])) {
-    id x=[a objectForKey:key], y=[b objectForKey:key];
-    if ([[a objectForKey:@"com.apple.syncservices.RecordEntityName"] isEqual:@"com.apple.calendars.Event"] &&
-        [[b objectForKey:@"com.apple.syncservices.RecordEntityName"] isEqual:@"com.apple.calendars.Event"]) {
-      /* iCal owns this bookkeeping; it is not an editable DAV property.
-         Keep it in native truth, without letting it gate PUT/receipt comparisons. */
-      if ([key isEqual:@"com.apple.ical.uid"] || [key isEqual:@"com.apple.ical.sequence"] ||
-          [key isEqual:@"invitationId"] || [key isEqual:@"invitationSequence"] || [key isEqual:@"invitationTimestamp"]) continue;
-    }
-    if (RCNativePropertyValuesEqual(entity,key,x,y)) continue;
-    if ([unordered containsObject:key] && [x isKindOfClass:[NSArray class]] && [y isKindOfClass:[NSArray class]]) {
-      if ([RCNativeUnorderedValues(x) isEqual:RCNativeUnorderedValues(y)]) continue;
-    }
-    return NO;
-  }
-  return YES;
+  return RCRecordsEqual(a,b,RCNativeRecordAccess());
 }
 static inline BOOL RCNativeGraphsEqual(NSDictionary *a, NSDictionary *b)
 {
-  if (!a || !b) return a==b;
-  if ([a count]!=[b count]) return NO;
-  NSEnumerator *it=[a keyEnumerator]; NSString *key;
-  while ((key=[it nextObject])) if (!RCNativeRecordsEqual([a objectForKey:key],[b objectForKey:key])) return NO;
-  return YES;
+  return RCGraphsEqual(a,b,RCNativeRecordAccess());
 }
 #endif

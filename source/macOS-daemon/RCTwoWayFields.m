@@ -1,5 +1,6 @@
 #import "RCTwoWaySync.h"
 #import "RCSyncFieldScope.h"
+#include "RCSyncPolicy.h"
 
 static NSArray *Fields(NSString *names)
 {
@@ -33,26 +34,9 @@ static BOOL RemovedOwner(NSDictionary *old, NSDictionary *base, NSDictionary *tr
 static NSArray *Writable(NSDictionary *old, NSDictionary *record)
 {
   NSString *entity=[record objectForKey:ISyncRecordEntityNameKey] ?: [old objectForKey:ISyncRecordEntityNameKey];
-  NSString *names=nil;
-  if ([entity isEqual:@"com.apple.contacts.Contact"])
-    names=@"first name|last name|middle name|title|suffix|nickname|company name|department|job title|birthday|notes|image|first name yomi|middle name yomi|last name yomi|company name yomi|dates|related names|IMs|primary phone number|primary email address|primary street address|primary URL|display as company|phone numbers|email addresses|street addresses|URLs";
-  else if ([entity hasPrefix:@"com.apple.contacts."]) {
-    if ([entity isEqual:@"com.apple.contacts.Street Address"])
-      names= @"contact|street|city|state|postal code|country|country code|type|label";
-    else if ([entity isEqual:@"com.apple.contacts.Phone Number"] || [entity isEqual:@"com.apple.contacts.Email Address"] || [entity isEqual:@"com.apple.contacts.URL"])
-      names= @"contact|value|type|label";
-    else if ([entity isEqual:@"com.apple.contacts.Date"] || [entity isEqual:@"com.apple.contacts.Related Name"]) names=@"contact|value|type|label";
-    else if ([entity isEqual:@"com.apple.contacts.IM"]) names=@"contact|user|service|type|label";
-  } else if ([entity isEqual:@"com.apple.calendars.Event"]) {
-    names=@"summary|description|location|url|status|classification|calendar|main event|original date|start date|end date|all day|exception dates|detached events|recurrences|attendees|organizer|display alarms|audio alarms";
-  } else if ([entity isEqual:@"com.apple.calendars.Recurrence"])
-    names=@"owner|frequency|interval|count|until|bymonth|bymonthday|byyearday|byweeknumber|bysetpos|bydaydays|bydayfreq|weekstartday";
-  else if ([entity isEqual:@"com.apple.calendars.Attendee"] || [entity isEqual:@"com.apple.calendars.Organizer"])
-    names=@"owner|email|common name|role|status|user type|rsvp";
-  else if ([entity isEqual:@"com.apple.calendars.AudioAlarm"] || [entity isEqual:@"com.apple.calendars.DisplayAlarm"])
-    names=@"owner|description|triggerdate|triggerduration|repeat count|repeat interval|sound|com.apple.ical.sound";
-  NSMutableArray *result=[NSMutableArray arrayWithArray:Fields(names)];
-  if (names) [result addObject:ISyncRecordEntityNameKey];
+  const char *names=RCWritableFieldNames([entity UTF8String]);
+  NSMutableArray *result=[NSMutableArray arrayWithArray:Fields(names ? [NSString stringWithUTF8String:names] : nil)];
+  if(names) [result addObject:ISyncRecordEntityNameKey];
   return result;
 }
 
@@ -73,19 +57,11 @@ static NSArray *KnownFields(NSDictionary *record)
 
 static NSArray *IndependentGroups(NSDictionary *record)
 {
-  NSString *entity=[record objectForKey:ISyncRecordEntityNameKey];
-  if ([entity isEqual:@"com.apple.contacts.Contact"])
-    return [NSArray arrayWithObjects:Fields(@"first name|last name|middle name|title|suffix"),Fields(@"company name|department"),
-        Fields(@"first name yomi"),Fields(@"middle name yomi"),Fields(@"last name yomi"),Fields(@"company name yomi"),Fields(@"notes"),Fields(@"image"),Fields(@"job title"),Fields(@"nickname"),Fields(@"birthday"),Fields(@"display as company"),nil];
-  if ([entity isEqual:@"com.apple.contacts.Street Address"])
-    return [NSArray arrayWithObject:Fields(@"street|city|state|postal code|country")];
-  if ([entity isEqual:@"com.apple.contacts.Phone Number"] || [entity isEqual:@"com.apple.contacts.Email Address"] || [entity isEqual:@"com.apple.contacts.URL"])
-    return [NSArray arrayWithObject:Fields(@"value")];
-  if ([entity isEqual:@"com.apple.calendars.Event"])
-    return [NSArray arrayWithObjects:Fields(@"summary"),Fields(@"description"),Fields(@"location"),Fields(@"url"),Fields(@"status"),Fields(@"classification"),nil];
-  if ([entity isEqual:@"com.apple.calendars.AudioAlarm"])
-    return [NSArray arrayWithObject:Fields(@"sound|com.apple.ical.sound")];
-  return [NSArray array];
+  const char *entity=[[record objectForKey:ISyncRecordEntityNameKey] UTF8String], *names;
+  NSMutableArray *result=[NSMutableArray array]; size_t i;
+  for(i=0;(names=RCIndependentFieldGroup(entity,i));i++)
+    [result addObject:Fields([NSString stringWithUTF8String:names])];
+  return result;
 }
 static NSMutableArray *IntersectFields(NSArray *fields, NSArray *scope)
 {
@@ -108,6 +84,64 @@ static void CopyFields(NSMutableDictionary *graph, NSDictionary *source, NSStrin
    Retry independent atomic groups against the SAME original resource, keeping
    only groups that pass the strict forward/reverse validation. No writes or
    native acknowledgements occur while planning. Structural edits stay together. */
+typedef struct {
+  RCTwoWayEncoder encoder;
+  void *context;
+  NSDictionary *resource, *projected, *base;
+  NSSet *ids;
+  NSMutableDictionary *scopes, *working, *result;
+  NSArray *groups;
+  NSString *root;
+  RCError *error;
+} RCNativeFieldPlan;
+static int EncodeStructure(void *context)
+{
+  RCNativeFieldPlan *c=context; RCErrorClear(c->error);
+  c->result=c->encoder(c->context,c->resource,c->working,c->root,c->error);
+  return c->result!=nil;
+}
+static void RestoreStructure(void *context)
+{
+  RCNativeFieldPlan *c=context;
+  NSEnumerator *records=[c->ids objectEnumerator]; NSString *identifier;
+  while ((identifier=[records nextObject])) {
+    NSDictionary *old=[c->base objectForKey:identifier];
+    if (old) [c->working setObject:old forKey:identifier]; else [c->working removeObjectForKey:identifier];
+    NSArray *prior=[c->scopes objectForKey:identifier];
+    NSMutableArray *allowed=[NSMutableArray array];
+    if (old && [c->projected objectForKey:identifier]) {
+      NSEnumerator *sets=[IndependentGroups(old) objectEnumerator]; NSArray *fields;
+      while ((fields=[sets nextObject])) [allowed addObjectsFromArray:fields];
+      [allowed addObjectsFromArray:Fields(@"com.apple.syncservices.RecordEntityName|contact|owner|calendar|main event|original date")];
+      allowed=IntersectFields(allowed,prior);
+    }
+    [c->scopes setObject:allowed forKey:identifier];
+  }
+}
+static int GroupChanged(void *context,size_t index)
+{
+  RCNativeFieldPlan *c=context; NSArray *group=[c->groups objectAtIndex:index];
+  NSString *identifier=[group objectAtIndex:0]; NSArray *fields=[group objectAtIndex:1];
+  if(![c->working objectForKey:identifier] || ![c->projected objectForKey:identifier]) return 0;
+  NSEnumerator *names=[fields objectEnumerator]; NSString *name;
+  while((name=[names nextObject])) if(!FieldEqual([c->working objectForKey:identifier],[c->projected objectForKey:identifier],name)) return 1;
+  return 0;
+}
+static int EncodeGroup(void *context,size_t index)
+{
+  RCNativeFieldPlan *c=context; NSArray *group=[c->groups objectAtIndex:index];
+  NSMutableDictionary *candidate=[NSMutableDictionary dictionaryWithDictionary:c->working];
+  CopyFields(candidate,c->projected,[group objectAtIndex:0],[group objectAtIndex:1]); RCErrorClear(c->error);
+  NSMutableDictionary *encoded=c->encoder(c->context,c->resource,candidate,c->root,c->error);
+  if(encoded) { c->working=candidate; c->result=encoded; }
+  return encoded!=nil;
+}
+static void RejectGroup(void *context,size_t index)
+{
+  RCNativeFieldPlan *c=context; NSArray *group=[c->groups objectAtIndex:index]; NSString *identifier=[group objectAtIndex:0];
+  NSMutableArray *allowed=[NSMutableArray arrayWithArray:[c->scopes objectForKey:identifier]];
+  [allowed removeObjectsInArray:[group objectAtIndex:1]]; [c->scopes setObject:allowed forKey:identifier];
+}
 static NSMutableDictionary *EncodeIndependent(RCTwoWayEncoder encoder, void *context,
     NSDictionary *resource, NSDictionary *projected, NSDictionary *base, NSSet *ids,
     NSMutableDictionary *scopes, NSString *root, RCError *error)
@@ -128,45 +162,10 @@ static NSMutableDictionary *EncodeIndependent(RCTwoWayEncoder encoder, void *con
       CopyFields(working,base,identifier,allowed);
     }
   }
-  RCErrorClear(error);
-  NSMutableDictionary *result=encoder(context,resource,working,root,error);
-  if (!result) {
-    /* The structural group failed. Restore it intact, including the children
-       of a removed occurrence. Only independent fields remain in the receipt. */
-    records=[ids objectEnumerator];
-    while ((identifier=[records nextObject])) {
-      NSDictionary *old=[base objectForKey:identifier];
-      if (old) [working setObject:old forKey:identifier]; else [working removeObjectForKey:identifier];
-      NSArray *prior=[scopes objectForKey:identifier];
-      NSMutableArray *allowed=[NSMutableArray array];
-      if (old && [projected objectForKey:identifier]) {
-        NSEnumerator *sets=[IndependentGroups(old) objectEnumerator]; NSArray *fields;
-        while ((fields=[sets nextObject])) [allowed addObjectsFromArray:fields];
-        [allowed addObjectsFromArray:Fields(@"com.apple.syncservices.RecordEntityName|contact|owner|calendar|main event|original date")];
-        allowed=IntersectFields(allowed,prior);
-      }
-      [scopes setObject:allowed forKey:identifier];
-    }
-    RCErrorClear(error); result=encoder(context,resource,working,root,error);
-    if (!result) return nil;
-  }
-  NSEnumerator *sets=[groups objectEnumerator]; NSArray *group;
-  while ((group=[sets nextObject])) {
-    identifier=[group objectAtIndex:0]; NSArray *fields=[group objectAtIndex:1];
-    if (![working objectForKey:identifier] || ![projected objectForKey:identifier]) continue;
-    BOOL changed=NO; NSEnumerator *names=[fields objectEnumerator]; NSString *name;
-    while ((name=[names nextObject])) if (!FieldEqual([working objectForKey:identifier],[projected objectForKey:identifier],name)) changed=YES;
-    if (!changed) continue;
-    NSMutableDictionary *candidate=[NSMutableDictionary dictionaryWithDictionary:working];
-    CopyFields(candidate,projected,identifier,fields); RCErrorClear(error);
-    NSMutableDictionary *encoded=encoder(context,resource,candidate,root,error);
-    if (encoded) { working=candidate; result=encoded; }
-    else {
-      NSMutableArray *allowed=[NSMutableArray arrayWithArray:[scopes objectForKey:identifier]];
-      [allowed removeObjectsInArray:fields]; [scopes setObject:allowed forKey:identifier];
-    }
-  }
-  RCErrorClear(error); return result;
+  RCNativeFieldPlan plan={encoder,context,resource,projected,base,ids,scopes,working,nil,groups,root,error};
+  const RCIndependentPlan ops={EncodeStructure,RestoreStructure,GroupChanged,EncodeGroup,RejectGroup};
+  if(!RCPlanIndependentFields([groups count],&ops,&plan)) return nil;
+  RCErrorClear(error); return plan.result;
 }
 
 NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder encoder, void *context,
@@ -182,13 +181,13 @@ NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder encoder, void *context
     NSDictionary *record=[truth objectForKey:[queue objectAtIndex:n]];
     NSEnumerator *keys=[record keyEnumerator]; NSString *key;
     while ((key=[keys nextObject])) {
-      if ([Fields(@"contact|owner|calendar|main event|parent groups") containsObject:key]) continue;
+      if (!RCFollowChildRelationship([key UTF8String],NULL)) continue;
       id value=[record objectForKey:key];
       if (![value isKindOfClass:[NSArray class]]) continue;
       NSEnumerator *items=[value objectEnumerator]; id child;
       while ((child=[items nextObject])) if ([child isKindOfClass:[NSString class]] && [truth objectForKey:child] && ![ids containsObject:child]) {
         NSString *entity=[[truth objectForKey:child] objectForKey:ISyncRecordEntityNameKey];
-        if ([entity isEqual:@"com.apple.calendars.Calendar"] || [entity isEqual:@"com.apple.contacts.Contact"]) continue;
+        if (!RCFollowChildRelationship([key UTF8String],[entity UTF8String])) continue;
         [ids addObject:child]; [queue addObject:child];
       }
     }
@@ -211,12 +210,7 @@ NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder encoder, void *context
     if (!old && [fields containsObject:@"type"]) {
       NSString *entity=[record objectForKey:ISyncRecordEntityNameKey];
       id type=[record objectForKey:@"type"];
-      NSMutableArray *types=[NSMutableArray arrayWithArray:Fields(@"home|work|other")];
-      if ([entity isEqual:@"com.apple.contacts.Phone Number"]) [types addObjectsFromArray:Fields(@"mobile|pager|home fax|work fax")];
-      if ([entity isEqual:@"com.apple.contacts.URL"]) [types addObject:@"home page"];
-      if ([entity isEqual:@"com.apple.contacts.Date"]) [types addObject:@"anniversary"];
-      if ([entity isEqual:@"com.apple.contacts.Related Name"]) [types addObjectsFromArray:Fields(@"father|mother|parent|child|brother|sister|friend|spouse|partner|assistant|manager")];
-      if ([type isKindOfClass:[NSString class]] && [type length] && ![types containsObject:type]) {
+      if ([type isKindOfClass:[NSString class]] && [type length] && !RCContactTypeSupported([entity UTF8String],[type UTF8String])) {
         /* An unfamiliar schema type is not a custom label whose meaning we
            can invent. Create the supported value as 'other'; keep type pending. */
         [selected setObject:@"other" forKey:@"type"]; [fields removeObject:@"type"];
