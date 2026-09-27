@@ -1,10 +1,10 @@
 # Native tests for the NSLog boundary and mail connection diagnostics.
 LOGGING_TEST_ROOT := $(BUILD_ROOT)/tests/macOS/logging
 LOGGING_TEST_SOURCES := $(SOURCE_ROOT)/tests/macOS/logging/LoggerTests.m \
-  $(SOURCE_ROOT)/tests/macOS/logging/MailLoggingTests.c $(DAEMON_SOURCE_ROOT)/RCLogger.m $(DAEMON_SOURCE_ROOT)/RCStatus.m $(SHARED_SOURCE_ROOT)/RCError.c \
+  $(SOURCE_ROOT)/tests/portable/ConnectionTests.c $(DAEMON_SOURCE_ROOT)/RCLogger.m $(DAEMON_SOURCE_ROOT)/RCStatus.m $(SHARED_SOURCE_ROOT)/RCError.c $(SHARED_SOURCE_ROOT)/RCStatusPolicy.c \
   $(SOURCE_ROOT)/tests/macOS/logging/StatusTests.m
-LOGGING_TEST_INPUTS := $(LOGGING_TEST_SOURCES) $(DAEMON_SOURCE_ROOT)/RCMailProxy.c \
-  $(DAEMON_SOURCE_ROOT)/RCLogger.h $(SHARED_SOURCE_ROOT)/RCLogLevel.h
+LOGGING_TEST_INPUTS := $(LOGGING_TEST_SOURCES) $(SHARED_SOURCE_ROOT)/RCConnection.c \
+  $(DAEMON_SOURCE_ROOT)/RCLogger.h $(SHARED_SOURCE_ROOT)/RCLogLevel.h $(wildcard $(SHARED_SOURCE_ROOT)/*.h)
 $(LOGGING_TEST_ROOT)/ppc: $(LOGGING_TEST_INPUTS) $(DAEMON_PPC_ALTIVECCORE)
 	@mkdir -p "$(dir $@)"
 	@MACOSX_DEPLOYMENT_TARGET=10.4 $(PPC_CC) $(COMMON_FLAGS) $(OPT_FLAGS) \

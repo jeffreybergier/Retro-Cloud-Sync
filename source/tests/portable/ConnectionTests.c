@@ -32,7 +32,7 @@ static int TestGetSockOpt(int fd, int level, int name, void *value, socklen_t *l
 #define connect TestConnect
 #define select TestSelect
 #define getsockopt TestGetSockOpt
-#include "../../../macOS-daemon/RCMailProxy.c"
+#include "../../shared/RCConnection.c"
 #undef getaddrinfo
 #undef connect
 #undef select
@@ -57,3 +57,7 @@ int RCMailLoggingTests(void)
   }
   return 1;
 }
+
+#ifdef RC_CONNECTION_TEST_MAIN
+int main(void) { return RCMailLoggingTests() ? 0 : 1; }
+#endif

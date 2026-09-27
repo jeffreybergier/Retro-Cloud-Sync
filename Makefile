@@ -21,6 +21,7 @@ include $(SOURCE_ROOT)/make/libicalvcal-comparison.mk
 include $(SOURCE_ROOT)/make/host-calendars-tests.mk
 include $(SOURCE_ROOT)/make/host-write-tests.mk
 include $(SOURCE_ROOT)/make/host-sync-tests.mk
+include $(SOURCE_ROOT)/make/host-policy-tests.mk
 include $(SOURCE_ROOT)/make/mac-calendars-syncservices-tests.mk
 include $(SOURCE_ROOT)/make/mac-contacts-syncservices-tests.mk
 include $(SOURCE_ROOT)/make/mac-conflict-tests.mk
