@@ -1,6 +1,6 @@
 #include "RCSyncPolicy.h"
 #include <string.h>
-static int Is(const char *a,const char *b) { return a && !strcmp(a,b); }
+static int Is(const char *a,const char *b) { return a && b && !strcmp(a,b); }
 int RCFieldListContains(const char *list,const char *field)
 {
   size_t n;

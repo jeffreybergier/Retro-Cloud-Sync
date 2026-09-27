@@ -109,6 +109,8 @@ static void Defaults(void)
   Pair base[]={{"com.apple.syncservices.RecordEntityName",&event}};
   Pair populated[]={{"com.apple.syncservices.RecordEntityName",&event},{"all day",&zero},{"summary",&title},{"invitationId",&metadata}};
   Value a=MAP(base),b=MAP(populated); CHECK(Records(&a,&b));
+  Value absent={Record,NULL,0,0,NULL,NULL};
+  CHECK(!Records(&a,&absent)); CHECK(!Records(&absent,&a));
   populated[1].value=&one; CHECK(!Records(&a,&b));
   populated[1].value=&zero; populated[1].key="triggerduration"; CHECK(!Records(&a,&b));
   CHECK(!RCSyncFieldDefault("com.apple.calendars.AudioAlarm","triggerduration").present);

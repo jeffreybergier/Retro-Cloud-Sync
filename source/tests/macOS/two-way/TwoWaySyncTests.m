@@ -720,6 +720,8 @@ static void MapperTests(void)
 {
   MappingPoolTests();
   CHECK(RCTwoWayRecordsEqual([NSDictionary dictionary], [NSDictionary dictionaryWithObject:[NSArray array] forKey:@"phone numbers"]));
+  CHECK(!RCTwoWayRecordsEqual([NSDictionary dictionaryWithObject:@"com.apple.calendars.Event" forKey:ISyncRecordEntityNameKey], [NSDictionary dictionary]));
+  CHECK(!RCTwoWayRecordsEqual([NSDictionary dictionary], [NSDictionary dictionaryWithObject:@"com.apple.calendars.Event" forKey:ISyncRecordEntityNameKey]));
   CHECK(!RCTwoWayRecordsEqual([NSDictionary dictionaryWithObject:[NSArray arrayWithObjects:@"monday",@"friday",nil] forKey:@"bydaydays"],
       [NSDictionary dictionaryWithObject:[NSArray arrayWithObjects:@"friday",@"monday",nil] forKey:@"bydaydays"]));
   RCContactStore *contacts=RCContactStoreOpen("MapperContacts.sqlite","synthetic",&error); CHECK(contacts);
