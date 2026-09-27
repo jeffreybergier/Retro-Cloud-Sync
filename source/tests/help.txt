@@ -43,7 +43,7 @@ Static analysis on Linux:
 
 Outputs: build/tests/{host,macOS,experiments}/ and build/probes/macOS/.
 Override the output root with BUILD_ROOT=/path. Remote runs stay under ~/Desktop.
-Old command names remain aliases; see source/tests/README.md for the full map.
+Old command names remain aliases.
 
   make build-mac-two-way-tests     Build offline native two-way tests
   make test-mac-two-way TEST_HOST=x4-vm   Test native collection and synthetic uploads

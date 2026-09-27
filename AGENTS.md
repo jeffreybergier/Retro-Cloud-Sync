@@ -1,41 +1,37 @@
-# Retro Cloud Sync
+# Retro Cloud Sync agent notes
 
-Legacy Mac OS X 10.4+ project. Build from the repository root:
+Legacy Mac OS X 10.4+ app: a local TLS mail proxy plus iCloud CardDAV/CalDAV mirrors through Tiger Sync Services. `source/macOS-app` is the GUI; `source/macOS-daemon` is the embedded `rcloudd`; `source/shared` holds DAV, codecs, SQLite stores and write primitives; `source/tests` has offline regressions and Mac integration suites; `source/probes/macOS` has non-shipped read-only DAV probes; `source/make` has build rules. `source/deps/libical` and `source/deps/libvc` are submodules; initialize with `git submodule update --init --recursive` and patch only the build copies under `build/dependencies`.
 
-```sh
-make release        # app + embedded daemon, ppc/i386
-make debug
-make analyze        # diagnostics to stdout/stderr
-make clean
-```
+## Build and test
 
-Outputs are in `build/`. Override with `BUILD_ROOT=/path`.
+- From repo root: `make release`, `make debug`, `make analyze`, `make clean`, `make help`. Output is `build/` (`BUILD_ROOT` overrides it); release app is `build/macOS-app/release/rCloud.app`, with embedded `rcloudd`. Do not run Mach-O on Linux. Use manual reference counting and Mac OS X 10.5 SDK APIs compatible with the 10.4 deployment target.
+- `make test-host` runs portable offline regressions; narrower targets include `test-host-contacts`, `test-host-calendars`, `test-host-writes`, `test-host-sync`. `make build-mac-tests` builds Mac test tools without running them.
+- Mac tests use `TEST_HOST=x4-vm`: `make test-mac-app`, `test-mac-contacts-syncservices`, `test-mac-calendars-syncservices`, `test-mac-two-way`, `test-mac-conflicts`, `test-mac-logging`. `make test-mac-network` separately needs internet. Stop the production daemon before native Sync Services tests. Remote Mac work stays under `~/Desktop`; GUI/framework tests need a logged-in desktop and Tiger Accessibility (“Enable access for assistive devices”). The app harness can be built/analyzed with `make build-mac-app-tests` / `make analyze-mac-app-tests`.
+- Offline suites use synthetic data and do not validate live iCloud two-way behavior. Use disposable live data for initial integration checks.
 
-The app is `build/macOS-app/release/rCloud.app`. Copy it to a Mac and
-open it; do not run Mach-O binaries on the Linux build host.
+## Objective-C house rules
 
-The app embeds `rcloudd` in `Contents/Library/LaunchServices`.
-Start copies it to `~/Library/Application Support/rCloud`, writes
-`~/Library/LaunchAgents/com.altivecintelligence.rcloudd.plist`, and runs
-`launchctl load`. Stop runs `launchctl unload` and removes the plist. This is a
-per-user LaunchAgent, not a LaunchDaemon.
+- Use explicit accessor messages, not Objective-C dot syntax. All project Objective-C uses manual retain/release; balance ownership, delegate and callback lifetimes, and `[super dealloc]`. Update Cocoa UI only on the main thread.
+- Prefer C in `source/shared` for protocol, database, sync and network logic. Keep Cocoa in app/daemon Objective-C adapters; C files must not import Apple frameworks. Keep UI work bounded: avoid full-table loads or repeated queries while rendering, fetch needed rows with indexed queries or a bounded cache, and measure large-list changes on the target Mac.
+- Drain `NSAutoreleasePool` in bounded batches in long loops that create autoreleased objects. Check both SDK availability and runtime support for newer APIs. Tiger PPC code cannot use blocks. Put compatibility checks and deprecated-API calls in narrow helpers near the relevant Apple-framework boundary; avoid scattered warning suppressions and keep callers clean.
 
-Use `make help` or `source/tests/README.md` for the full suite index.
-Build or run the native Accessibility test harness with:
+## Runtime and data
 
-```sh
-make build-mac-app-tests
-make analyze-mac-app-tests
-make test-mac-app TEST_HOST=x4-vm
-```
+- App Start installs the daemon in `~/Library/Application Support/rCloud` and loads the per-user `~/Library/LaunchAgents/com.altivecintelligence.rcloudd.plist`; Stop unloads it. Config, `Status.plist`, `Contacts.sqlite`, and `Calendar.sqlite` live in the same application-support directory. Passwords belong only in the login Keychain; never log credentials or record bodies. The daemon log is `~/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log`.
+- Contacts and Calendars independently use `Disabled`, `OneWay`, or opt-in `TwoWay`; existing one-way configurations must never start uploading on upgrade. Mail continues independently of sync failures. One-way publishes complete retained mirrors to Sync Services and never uploads local edits. Accounts have separate mirrors, identities, journals and publication generations; account changes must not erase prior local data.
+- Complete DAV inventories/downloads commit atomically. Failed, interrupted or malformed responses preserve the previous mirror; malformed resources retain original bytes and last usable projections. DAV sync tokens are account/collection scoped and commit with downloaded data, not partial pages. Publication advances only after Sync Services completes. A new account without a complete inventory must not publish an empty graph.
+- Calendar history (`Contacts.CalendarHistoryYears`: 0/1/2, default 2) is filtered by server queries. `scope_excluded` is distinct from `remote_missing`: leaving the window never proves deletion. Keep resource identities and pending writes when pruning bodies after successful publication. Preserve raw `.ics`/vCard data and unknown properties; unsupported events/fields remain cached or pending rather than silently simplified. Tiger's calendar projection has finite recurrence/timezone bounds.
+- Status is daemon-owned and atomically written to mode-0600 `Status.plist`; a failed download, cached import, unsupported mapping or pending upload must not advance success time. Shutdown is cooperative: abort transfers, roll back incomplete work, retain uncertain writes for restart verification and cancel Sync Services on its owning thread.
 
-Portable tests run with `make test-host`; all Mac test tools build with
-`make build-mac-tests`. The HTTPS check runs separately with
-`make test-mac-network TEST_HOST=x4-vm`. Old command names remain aliases.
+## Two-way write invariants
 
-The harness is not shipped. It launches the app, presses Start/Stop, verifies
-the status label, process, files, and cleanup, and captures screenshots on
-failure. Tiger must have “Enable access for assistive devices” enabled.
+- `RCTwoWaySync` collects supported native changes; account workers serialize sessions and writes. Journal exact native receipts and immutable represented field scopes. Run network activity outside SQLite transactions and Sync Services sessions. Supported fields may upload independently while unsupported fields stay pending; never accept unrelated native changes as part of a partial receipt.
+- Publication bases (`write_bases`) use the exact published raw body, strong ETag and generation; downloads alone do not advance them. A retained older usable body must keep its matching older ETag. Updates/deletes require that base and use `If-Match`; creates use a stable href and `If-None-Match: *`. Never replace a queued operation's base or retry an old body against a newer ETag. Preserve untouched wire lines, parameters, photos, extensions and calendar components.
+- Journal operations are durable and idempotent by local change ID. Mark uncertain before network work; GET the fixed href to verify after lost responses. A changed remote version or create collision is a conflict. `applied` means remote success verified; acknowledge only after mirror checkpoint and exact native acceptance. Replays must not duplicate uploads or accept newer local edits.
+- Whole-resource DELETE requires an explicit native deletion of a known complete graph and a strong ETag. Missing downloads, forced resets, child deletion or calendar scope exclusion never authorize DELETE. Verify absence and accept only saved tombstones. Keep pending operations isolated during partial publication; partial sessions do not advance full publication or permit history pruning.
+- Resolve conflicts through the existing Sync Services client and production reverse mapper. Save immutable successor operations from canonical decisions; preserve unsupported or ambiguous identities for attention. Never guess changed UIDs or contact child identities, blindly overwrite, or discard uncertain operations. `rcloudd --inspect-recovery DATABASE` is read-only; `--export-recovery DATABASE NEW-SNAPSHOT` creates a mode-0600 consistent backup without overwriting.
+- Contacts schema 4; Calendars schema 3 upgrades schema 2 in place. Older test schemas have no migration. Calendar moves and collection creation require destination/identity verification; unsupported recurrence structures and scheduling details remain pending.
 
-Use manual reference counting and Mac OS X 10.5 SDK APIs compatible with the
-10.4 deployment target. Remote Mac work must stay under `~/Desktop`.
+## Logging
+
+Use the shared C/Objective-C logger (`RCLogger.m`) and its `INFO`/`WARN`/`ERROR`/`DEBUG` service/phase context. Keep messages bounded, single-line UTF-8 and free of credentials, private bodies and raw framework exception text. Distinguish download, local apply, verified remote write and final acknowledgement. Recovery CLI stdout is command output, not daemon logging. `RETROCLOUDSYNC_LOG_LEVEL=DEBUG` enables detail; the GUI's 1 MiB tail is only a display limit, not disk rotation.
