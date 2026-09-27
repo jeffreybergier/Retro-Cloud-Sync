@@ -1,5 +1,12 @@
 Retro Cloud Sync: tests and diagnostics (invoke make from the Linux build host)
 
+Three public suites (see source/tests/README.md):
+  make test-business-linux              Portable business logic; also make test
+  make test-business-mac TEST_HOST=x4-vm Native business integration, sequential
+  make test-ui-mac TEST_HOST=x4-vm       Application UI and lifecycle interaction
+  Mac business integration includes contacts AND calendar two-way scenarios.
+  Internet diagnostics remain opt-in: make test-mac-network TEST_HOST=x4-vm.
+
 Run offline host tests:
   make test-host                         All normal portable regression tests
   make test-host-contacts                vCard parser, contact store, simulated CardDAV

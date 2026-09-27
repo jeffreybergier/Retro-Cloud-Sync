@@ -2,6 +2,23 @@
 
 test-host: test-host-contacts test-host-calendars test-host-writes test-host-sync
 
+# Public suites. Keep native integration runs sequential even under make -j:
+# Sync Services suites share the logged-in desktop and native record stores.
+test: test-business-linux
+test-business-linux: test-host
+test-ui-mac:
+	@$(MAKE) --no-print-directory test-mac-app
+test-business-mac:
+	@$(MAKE) --no-print-directory test-mac-logging
+	@$(MAKE) --no-print-directory test-mac-shutdown
+	@$(MAKE) --no-print-directory test-mac-contacts-syncservices
+	@$(MAKE) --no-print-directory test-mac-calendars-syncservices
+	@$(MAKE) --no-print-directory test-mac-conflicts
+	@$(MAKE) --no-print-directory test-mac-two-way TWO_WAY_TEST_MODE=full
+	@$(MAKE) --no-print-directory test-mac-two-way TWO_WAY_TEST_MODE=calendars
+
+.PHONY: test test-business-linux test-ui-mac test-business-mac
+
 build-mac-tests: build-mac-logging-tests build-mac-network-tests build-mac-app-tests build-mac-contacts-syncservices-tests \
 	build-mac-calendars-syncservices-tests build-mac-vcard-tests build-mac-conflict-tests build-mac-two-way-tests
 
