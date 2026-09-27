@@ -13,6 +13,8 @@ Run offline host tests:
   make test-host-calendars               Calendar codec/store and simulated CalDAV
   make test-host-writes                  Write recovery, field preservation and local TLS tests
   make test-host-sync                    DAV tokens, pagination, recovery and calendar windows
+  make test-host-policies                Photos, status, connections, fields and receipts
+  make test-host-calendar-projection     Finite recurrence and custom timezone projection
 
 Build Mac tools without running them (PPC/i386):
   make build-mac-tests                   All normal Mac test tools and fixtures
@@ -32,6 +34,7 @@ Build and run on the Mac (TEST_HOST defaults to x4-vm):
   make test-mac-contacts-syncservices TEST_HOST=x4-vm
   make test-mac-calendars-syncservices TEST_HOST=x4-vm
   make test-mac-conflicts TEST_HOST=x4-vm Contact reconciliation and exact acknowledgement
+  make test-mac-mappers TEST_HOST=x4-vm   Foundation mapper adapters; no native sessions/GUI
   Sync Services suites use synthetic local records, offline; stop the daemon first.
   The app suite starts/stops the service with isolated account settings.
   App and Sync Services suites require the desktop and Accessibility.

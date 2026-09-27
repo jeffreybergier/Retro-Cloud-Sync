@@ -3,6 +3,7 @@ set -euo pipefail
 test_host="${TEST_HOST:-x4-vm}"
 case "${TWO_WAY_TEST_MODE:-full}" in
   full) test_arg= ;;
+  mappers) test_arg=--mappers ;;
   calendars) test_arg=--calendars ;;
   calendar-exceptions) test_arg=--calendar-exceptions ;;
   calendar-time) test_arg=--calendar-time ;;
@@ -11,13 +12,22 @@ case "${TWO_WAY_TEST_MODE:-full}" in
   recovery) test_arg=--recovery ;;
   edit-delete) test_arg=--edit-delete ;;
   contact-publication) test_arg=--contact-publication ;;
-  *) echo 'TWO_WAY_TEST_MODE must be full, calendars, calendar-exceptions, calendar-time, fields, recovery, conflict-replay, edit-delete, or contact-publication' >&2; exit 1 ;;
+  *) echo 'TWO_WAY_TEST_MODE must be full, mappers, calendars, calendar-exceptions, calendar-time, fields, recovery, conflict-replay, edit-delete, or contact-publication' >&2; exit 1 ;;
 esac
 run_name="RetroCloudSync-TwoWayTests-$(date +%Y%m%d-%H%M%S)-$$"
 remote="Desktop/$run_name"
 local_artifacts="${BUILD_ROOT:?}/tests/macOS/two-way/$run_name"
 mkdir -p "$local_artifacts"
 ssh -o LogLevel=ERROR "$test_host" "mkdir -p '$remote'"
+if [ "$test_arg" = --mappers ]; then
+  scp -o LogLevel=ERROR "$BUILD_ROOT/tests/macOS/two-way/TwoWaySyncTests" "$test_host:$remote/"
+  result=0
+  ssh -o LogLevel=ERROR "$test_host" "cd '$remote' && ./TwoWaySyncTests --mappers" \
+    > "$local_artifacts/mappers.log" 2>&1 || result=$?
+  cat "$local_artifacts/mappers.log"
+  echo "Logs: $local_artifacts"
+  exit "$result"
+fi
 scp -o LogLevel=ERROR "$BUILD_ROOT/tests/macOS/two-way/TwoWaySyncTests" \
   "$BUILD_ROOT/tests/macOS/contacts-syncservices/RetroCloudContactsSyncServicesVerifier" \
   "${PROJECT_ROOT:?}/source/tests/macOS/two-way/run-on-mac.command" \

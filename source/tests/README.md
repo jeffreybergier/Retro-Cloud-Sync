@@ -6,7 +6,7 @@ and `test-mac-*` commands remain supported.
 
 | Suite | Command | Membership |
 | --- | --- | --- |
-| Linux business logic | `make test-business-linux` | Native C parsing, stores, DAV mirrors/tokens, journals, conflict recovery, resource patching and local HTTP/TLS |
+| Linux business logic | `make test-business-linux` | Native C parsing, stores, DAV mirrors/tokens, journals, conflict recovery, resource patching, local HTTP/TLS, photos, status, connection diagnostics, field/receipt policies and calendar projection |
 | macOS business integration | `make test-business-mac TEST_HOST=x4-vm` | Logging/status, shutdown, contacts/calendars Sync Services, conflict sessions, contacts and calendar two-way sync |
 | macOS UI | `make test-ui-mac TEST_HOST=x4-vm` | Preferences, Accessibility, validation feedback, Start/Stop and installed service interaction |
 
@@ -40,10 +40,37 @@ cross-compiler. Mac test binaries must not be executed on Linux. The vendored
 libical/libvc libraries are built natively from initialized submodules; upstream
 library test suites are not included in the application suite.
 
+## Portable coverage and retained adapters
+
+The Linux suite runs 12 programs. The original eight cover parser/store/mirror,
+DAV token, write safety and local TLS regressions. Four additional programs run
+the extracted production code directly:
+
+| Program | Production code / behavior |
+| --- | --- |
+| `ConnectionTests` | `RCConnection`: injected DNS, refused connection and timeout diagnostics; also compiled into the Mac logging harness |
+| `PolicyTests` | `RCPhotoCodec` binary/base64/media rules; `RCStatusPolicy` account-scoped pending counts and success/error/stopping decisions |
+| `CalendarProjectionTests` | `RCCalendarProjection`: finite RDATE/EXRULE sets, leap/boundary dates, authoritative custom DST projections and unsupported-rule rejection |
+| `SyncPolicyTests` | `RCSyncPolicy`: supported fields/defaults, ordered vs unordered comparisons, receipt scopes/tombstones and independent-group retry planning |
+
+The Mac daemon calls these same C functions. Record access callbacks borrow
+Foundation objects; the Linux policy fixtures supply plain C records. Native
+value equality, sound URL normalization, keyed archives, forward/reverse mapper
+object construction and Sync Services remain covered by the Mac mapper and
+integration tests. `make test-mac-mappers TEST_HOST=x4-vm` runs just those mapper
+checks over SSH, without a Sync Services session or desktop automation. The
+two-way integration runners also retain these assertions.
+
+Calendar projection receives a native-timezone-offset callback. Linux tests
+simulate matching/missing platform rules and compare all 40 occurrences in the
+custom DST fixture. Mac tests verify actual Foundation offsets, floating-date
+markers, archive round trips, and native calendar publication. No Foundation
+replacement or Sync Services emulator is required on Linux.
+
 ## Standalone Linux prerequisites
 
 Initialize dependencies with `git submodule update --init --recursive`. On
-Debian/Ubuntu the native suite needs `build-essential cmake flex bison python3
+Debian/Ubuntu the native suite needs `build-essential cmake flex bison perl python3
 openssl libsqlite3-dev libxml2-dev libcurl4-openssl-dev` (and Git, tar and patch).
 It uses system SQLite/curl headers and libraries and does not need Apple SDKs,
 the cross-compilers, or AltivecCore. The Mac suites still require the project's

@@ -24,3 +24,9 @@ test-mac-two-way: build-mac-two-way-tests
 	@TEST_HOST="$(TEST_HOST)" TWO_WAY_TEST_MODE="$(TWO_WAY_TEST_MODE)" BUILD_ROOT="$(BUILD_ROOT)" PROJECT_ROOT="$(PROJECT_ROOT)" \
 	  /bin/bash "$(SOURCE_ROOT)/tests/macOS/two-way/run-remote.sh"
 .PHONY: build-mac-two-way-tests test-mac-two-way
+
+# Pure native mapper/adaptor checks: no Sync Services session or GUI automation.
+test-mac-mappers: build-mac-two-way-tests
+	@TEST_HOST="$(TEST_HOST)" TWO_WAY_TEST_MODE=mappers BUILD_ROOT="$(BUILD_ROOT)" PROJECT_ROOT="$(PROJECT_ROOT)" \
+	  /bin/bash "$(SOURCE_ROOT)/tests/macOS/two-way/run-remote.sh"
+.PHONY: test-mac-mappers
