@@ -28,8 +28,10 @@ remote `fixture-marker.txt`). If unrelated conflicts are present, filter the
 review to the test's Contacts conflict, save that choice, then quit the resolver
 without choosing values for unrelated records. The test verifies convergence on
 the system's chosen value. Interrupted runs may leave registered test clients;
-retain their artifact directory and use its `TwoWaySyncTests --cleanup` in the
-logged-in desktop session before retrying. Cleanup uses that run's marker.
+retain their artifact directory and run `bash run-on-mac.command --cleanup`
+there in the logged-in desktop session before retrying. This keeps the test's
+Sync Alert helper active during cleanup, which uses that run's marker. Save the
+original logs first, since the wrapper writes a new `two-way.log`.
 
 `make test-mac-network` is an opt-in internet/TLS diagnostic. Credentialed iCloud
 probes and `compare-host-libicalvcal` are also separate from the three suites.
