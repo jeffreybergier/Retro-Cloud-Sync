@@ -278,7 +278,19 @@ static void ContactCreationPolicyTests(int scenario)
     /* Migration is scoped to the active account, not every saved account. */
     CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO two_way_excluded VALUES(%lld,'other-account')",j.account+1));
     remoteBodies=[NSMutableDictionary dictionary]; remoteETags=[NSMutableDictionary dictionary]; mutations=0;
+    if (upgrading) {
+      /* Fail after mingling, while collecting the local creation. A failed
+         exchange must not advertise a completed publication or consume edits. */
+      CHECK(RCTwoWaySQL(&j,&error,"CREATE TEMP TRIGGER fail_native_journal BEFORE INSERT ON write_operations BEGIN SELECT RAISE(ABORT,'synthetic journal failure'); END"));
+      CHECK(!RCTwoWayExchange(&c,&error));
+      CHECK(!c.didPublish && !c.didPublishAll);
+      CHECK(Scalar(&j,"SELECT count(*) FROM two_way_publications")==0);
+      CHECK(Scalar(&j,"SELECT count(*) FROM write_operations")==0);
+      CHECK(RCTwoWaySQL(&j,&error,"DROP TRIGGER fail_native_journal"));
+    }
     CHECK(RCTwoWayExchange(&c,&error));
+    CHECK(c.didPublish && c.didPublishAll);
+    CHECK(Scalar(&j,"SELECT count(*) FROM two_way_publications")==1);
     CHECK(Scalar(&j,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
     CHECK(Scalar(&j,"SELECT count(*) FROM two_way_excluded")==1);
     CHECK(Scalar(&j,"SELECT count(*) FROM two_way_excluded WHERE record_id='other-account'")==1);

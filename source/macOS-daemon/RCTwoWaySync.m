@@ -656,8 +656,7 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
       if ([published objectForKey:key]) [checkpoint setObject:[published objectForKey:key] forKey:key];
       else [checkpoint removeObjectForKey:key];
     }
-    if (!SavePublished(j,checkpoint,error)) goto done;
-    c->didPublish=YES; c->didPublishAll=[busy count]==0;
+    BOOL publishedAll=[busy count]==0;
     NSMutableSet *localDeletes=[NSMutableSet set];
     NSEnumerator *changes=[session changeEnumeratorForEntityNames:pullEntities]; ISyncChange *changeRecord;
     while ((changeRecord=[changes nextObject])) if ([changeRecord type]==ISyncChangeTypeDelete)
@@ -768,9 +767,13 @@ BOOL RCTwoWayExchange(RCTwoWayContext *c, RCError *error)
           !SaveResource(j,operation,creating ? desired : resource,error) ||
           !RCTwoWaySQL(j,error,"DELETE FROM two_way_attention WHERE account_id=%lld AND record_id=%Q AND reason<>'unsupported-fields';COMMIT",j->account,[root UTF8String])) goto done;
     }
-    /* No refusal and no acceptance before verified remote success. Cancellation
-       commits neither pending nor unrelated native changes. */
+    /* Mingling completed the push. Close the pull without accepting or refusing
+       pending native changes, so they remain available on the next session.
+       Only checkpoint publication after all work and session closure succeed. */
+    RCSessionCheck();
     [session cancelSyncing]; session=nil;
+    if (!SavePublished(j,checkpoint,error)) goto done;
+    c->didPublish=YES; c->didPublishAll=publishedAll;
     ok=YES; goto done;
   sqlError:
     RCErrorSet(error,1,"Could not read two-way account state");
