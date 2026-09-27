@@ -1,3 +1,4 @@
+#import "RCAutorelease.h"
 #import "RCSyncConflictSession.h"
 #import "RCLogger.h"
 #import "RCCalendarSyncServicesBridge.h"
@@ -561,25 +562,30 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
       goto sqlError;
     sqlite3_bind_int64(q, 1, store->account);
     while ((step = sqlite3_step(q)) == SQLITE_ROW) {
-      RCSessionCheck();
-      NSString *id = [@"calendar-"
-          stringByAppendingString:String((const char *)sqlite3_column_text(q, 1))];
-      NSMutableDictionary *record = Record(@"Calendar");
-      NSString *title = String((const char *)sqlite3_column_text(q, 2));
-      /* Calendar identity is title + read-only in Tiger. Include a stable short
-         suffix so equal remote titles cannot merge with each other. */
-      [record setObject:RCCalendarNativeTitle(RCCalendarStoreWriteJournal(store),id,title) forKey:@"title"];
-      Text(record, @"notes", (const char *)sqlite3_column_text(q, 3));
-      /* iCal turns imported calendars into writable local calendars. Declaring
-         read-only here changes its identity on the next iCal sync and duplicates
-         the calendar. One-way behavior is enforced by the push-only client. */
-      [record setObject:[NSNumber numberWithBool:NO] forKey:@"read only"];
-      [record setObject:[NSMutableArray array] forKey:@"events"];
-      Link(record, @"tasks", nil);
-      [calendarRecords
-          setObject:id
-             forKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q, 0)]];
-      [records setObject:record forKey:id];
+      NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+      @try {
+        RCSessionCheck();
+        NSString *id = [@"calendar-"
+            stringByAppendingString:String((const char *)sqlite3_column_text(q, 1))];
+        NSMutableDictionary *record = Record(@"Calendar");
+        NSString *title = String((const char *)sqlite3_column_text(q, 2));
+        /* Calendar identity is title + read-only in Tiger. Include a stable short
+           suffix so equal remote titles cannot merge with each other. */
+        [record setObject:RCCalendarNativeTitle(RCCalendarStoreWriteJournal(store),id,title) forKey:@"title"];
+        Text(record, @"notes", (const char *)sqlite3_column_text(q, 3));
+        /* iCal turns imported calendars into writable local calendars. Declaring
+           read-only here changes its identity on the next iCal sync and duplicates
+           the calendar. One-way behavior is enforced by the push-only client. */
+        [record setObject:[NSNumber numberWithBool:NO] forKey:@"read only"];
+        [record setObject:[NSMutableArray array] forKey:@"events"];
+        Link(record, @"tasks", nil);
+        [calendarRecords
+            setObject:id
+               forKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q, 0)]];
+        [records setObject:record forKey:id];
+      } @catch(id exception) {
+        RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+      } @finally { [resourcePool release]; }
     }
     if (step != SQLITE_DONE)
       goto sqlError;
@@ -595,58 +601,68 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
       goto sqlError;
     sqlite3_bind_int64(q, 1, store->account);
     while ((step = sqlite3_step(q)) == SQLITE_ROW) {
-      RCSessionCheck();
-      long long resource = sqlite3_column_int64(q, 0);
-      NSString *calendarID = [calendarRecords
-          objectForKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q, 1)]];
-      RCError mappingError;
-      NSMutableDictionary *mapped = nil;
-      NSMutableDictionary *update = [NSMutableDictionary
-          dictionaryWithObject:[NSNumber numberWithLongLong:resource]
-                        forKey:@"resource"];
-      RCErrorClear(&mappingError);
-      if (sqlite3_column_type(q, 4) != SQLITE_NULL)
-        RCErrorSet(&mappingError, 1, "%s", sqlite3_column_text(q, 4));
-      else
-        mapped = MapResource(store, resource, calendarID, sqlite3_column_blob(q, 2),
-                             (size_t)sqlite3_column_bytes(q, 2), &mappingError);
-      if (mapped) {
-        [update setObject:String((const char *)sqlite3_column_text(q, 5)) ?: @""
-                   forKey:@"etag"];
-        [update setObject:[NSData dataWithBytes:sqlite3_column_blob(q, 2)
-                                         length:(NSUInteger)sqlite3_column_bytes(q, 2)]
-                   forKey:@"raw"];
-        [update setObject:@"exported" forKey:@"status"];
-      } else {
-        [update setObject:String(mappingError.message) forKey:@"error"];
-        if (sqlite3_column_type(q, 3) != SQLITE_NULL) {
-          RCError oldError;
-          mapped = MapResource(store, resource, calendarID, sqlite3_column_blob(q, 3),
-                               (size_t)sqlite3_column_bytes(q, 3), &oldError);
-          if (!mapped) {
-            RCErrorSet(
-                error, 1,
-                "Could not reconstruct previously exported calendar resource %lld",
-                resource);
-            goto done;
+      NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+      @try {
+        RCSessionCheck();
+        long long resource = sqlite3_column_int64(q, 0);
+        NSString *calendarID = [calendarRecords
+            objectForKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q, 1)]];
+        RCError mappingError;
+        NSMutableDictionary *mapped = nil;
+        NSMutableDictionary *update = [NSMutableDictionary
+            dictionaryWithObject:[NSNumber numberWithLongLong:resource]
+                          forKey:@"resource"];
+        RCErrorClear(&mappingError);
+        if (sqlite3_column_type(q, 4) != SQLITE_NULL)
+          RCErrorSet(&mappingError, 1, "%s", sqlite3_column_text(q, 4));
+        else
+          mapped = MapResource(store, resource, calendarID, sqlite3_column_blob(q, 2),
+                               (size_t)sqlite3_column_bytes(q, 2), &mappingError);
+        if (mapped) {
+          [update setObject:String((const char *)sqlite3_column_text(q, 5)) ?: @""
+                     forKey:@"etag"];
+          [update setObject:[NSData dataWithBytes:sqlite3_column_blob(q, 2)
+                                           length:(NSUInteger)sqlite3_column_bytes(q, 2)]
+                     forKey:@"raw"];
+          [update setObject:@"exported" forKey:@"status"];
+        } else {
+          [update setObject:String(mappingError.message) forKey:@"error"];
+          if (sqlite3_column_type(q, 3) != SQLITE_NULL) {
+            RCError oldError;
+            mapped = MapResource(store, resource, calendarID, sqlite3_column_blob(q, 3),
+                                 (size_t)sqlite3_column_bytes(q, 3), &oldError);
+            if (!mapped) {
+              RCErrorSet(
+                  error, 1,
+                  "Could not reconstruct previously exported calendar resource %lld",
+                  resource);
+              goto done;
+            }
+          }
+          [update setObject:mapped ? @"retained previous" : @"unsupported"
+                     forKey:@"status"];
+          RCLogger(RCLogWarning, "Calendars", "Apply", @"Calendar resource %lld: %s (%@)", resource, mappingError.message,
+                [update objectForKey:@"status"]);
+        }
+        [updates addObject:update];
+        if (mapped) {
+          NSEnumerator *keys = [mapped keyEnumerator];
+          NSString *key;
+          while ((key = [keys nextObject])) {
+            NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+            @try {
+              NSDictionary *r = [mapped objectForKey:key];
+              if ([[r objectForKey:ISyncRecordEntityNameKey] isEqual:Entity(@"Event")])
+                [[[records objectForKey:calendarID] objectForKey:@"events"] addObject:key];
+              [records setObject:r forKey:key];
+            } @catch(id exception) {
+              RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+            } @finally { [resourcePool release]; }
           }
         }
-        [update setObject:mapped ? @"retained previous" : @"unsupported"
-                   forKey:@"status"];
-        RCLogger(RCLogWarning, "Calendars", "Apply", @"Calendar resource %lld: %s (%@)", resource, mappingError.message,
-              [update objectForKey:@"status"]);
-      }
-      [updates addObject:update];
-      if (mapped) {
-        NSEnumerator *keys = [mapped keyEnumerator];
-        NSString *key;
-        while ((key = [keys nextObject])) {
-          NSDictionary *r = [mapped objectForKey:key];
-          if ([[r objectForKey:ISyncRecordEntityNameKey] isEqual:Entity(@"Event")])
-            [[[records objectForKey:calendarID] objectForKey:@"events"] addObject:key];
-          [records setObject:r forKey:key];
-        }
-      }
+      } @catch(id exception) {
+        RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+      } @finally { [resourcePool release]; }
     }
     if (step != SQLITE_DONE)
       goto sqlError;
@@ -685,13 +701,18 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
       [session clientWantsToPushAllRecordsForEntityNames:entities];
       keys = [records keyEnumerator];
       while ((key = [keys nextObject])) {
-        NSDictionary *record = [records objectForKey:key];
-        if (![session shouldPushChangesForEntityName:
-                          [record objectForKey:ISyncRecordEntityNameKey]]) {
-          RCErrorSet(error, 1, "Sync Services did not permit the calendar push");
-          goto done;
-        }
-        RCSessionPush(session,record,key);
+        NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+        @try {
+          NSDictionary *record = [records objectForKey:key];
+          if (![session shouldPushChangesForEntityName:
+                            [record objectForKey:ISyncRecordEntityNameKey]]) {
+            RCErrorSet(error, 1, "Sync Services did not permit the calendar push");
+            goto done;
+          }
+          RCSessionPush(session,record,key);
+        } @catch(id exception) {
+          RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+        } @finally { [resourcePool release]; }
       }
       keys = [entities objectEnumerator];
       while ((key = [keys nextObject]))
@@ -730,19 +751,24 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
                              -1, &q, NULL) != SQLITE_OK)
         goto sqlError;
       while ((update = [it nextObject])) {
-        NSData *raw = [update objectForKey:@"raw"];
-        sqlite3_reset(q);
-        sqlite3_clear_bindings(q);
-        if (raw)
-          sqlite3_bind_blob(q, 1, [raw bytes], (int)[raw length], SQLITE_TRANSIENT);
-        sqlite3_bind_text(q, 2, [[update objectForKey:@"status"] UTF8String], -1,
-                          SQLITE_TRANSIENT);
-        sqlite3_bind_text(q, 3, [[update objectForKey:@"error"] UTF8String], -1,
-                          SQLITE_TRANSIENT);
-        sqlite3_bind_int64(q, 4, [[update objectForKey:@"resource"] longLongValue]);
-        sqlite3_bind_text(q, 5, [[update objectForKey:@"etag"] UTF8String], -1, SQLITE_TRANSIENT);
-        if (sqlite3_step(q) != SQLITE_DONE)
-          goto sqlError;
+        NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+        @try {
+          NSData *raw = [update objectForKey:@"raw"];
+          sqlite3_reset(q);
+          sqlite3_clear_bindings(q);
+          if (raw)
+            sqlite3_bind_blob(q, 1, [raw bytes], (int)[raw length], SQLITE_TRANSIENT);
+          sqlite3_bind_text(q, 2, [[update objectForKey:@"status"] UTF8String], -1,
+                            SQLITE_TRANSIENT);
+          sqlite3_bind_text(q, 3, [[update objectForKey:@"error"] UTF8String], -1,
+                            SQLITE_TRANSIENT);
+          sqlite3_bind_int64(q, 4, [[update objectForKey:@"resource"] longLongValue]);
+          sqlite3_bind_text(q, 5, [[update objectForKey:@"etag"] UTF8String], -1, SQLITE_TRANSIENT);
+          if (sqlite3_step(q) != SQLITE_DONE)
+            goto sqlError;
+        } @catch(id exception) {
+          RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+        } @finally { [resourcePool release]; }
       }
       sqlite3_finalize(q);
       q = NULL;

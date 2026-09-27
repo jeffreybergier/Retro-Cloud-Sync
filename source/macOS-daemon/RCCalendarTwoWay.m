@@ -1,3 +1,4 @@
+#import "RCAutorelease.h"
 #import "RCLogger.h"
 #import "RCTwoWayNative.h"
 #import "RCCalendarSyncClient.h"
@@ -564,13 +565,18 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
   if (sqlite3_prepare_v2(j.db,"SELECT id,sync_id,display_name,description FROM calendars WHERE account_id=? AND remote_missing=0",-1,&q,NULL)!=SQLITE_OK) goto failed;
   sqlite3_bind_int64(q,1,j.account);
   while ((step=sqlite3_step(q))==SQLITE_ROW) {
-    if(RCCheckCancellation(error)) goto failed;
-    NSString *id=[@"calendar-" stringByAppendingString:S((const char *)sqlite3_column_text(q,1))];
-    NSMutableDictionary *record=[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",ISyncRecordEntityNameKey,
-        RCCalendarNativeTitle(j,id,S((const char *)sqlite3_column_text(q,2))),@"title",
-        [NSNumber numberWithBool:NO],@"read only",[NSMutableArray array],@"events",[NSArray array],@"tasks",nil];
-    if (sqlite3_column_type(q,3)!=SQLITE_NULL) [record setObject:S((const char *)sqlite3_column_text(q,3)) forKey:@"notes"];
-    [graph setObject:record forKey:id]; [calendarIDs setObject:id forKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q,0)]];
+    NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+    @try {
+      if(RCCheckCancellation(error)) goto failed;
+      NSString *id=[@"calendar-" stringByAppendingString:S((const char *)sqlite3_column_text(q,1))];
+      NSMutableDictionary *record=[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",ISyncRecordEntityNameKey,
+          RCCalendarNativeTitle(j,id,S((const char *)sqlite3_column_text(q,2))),@"title",
+          [NSNumber numberWithBool:NO],@"read only",[NSMutableArray array],@"events",[NSArray array],@"tasks",nil];
+      if (sqlite3_column_type(q,3)!=SQLITE_NULL) [record setObject:S((const char *)sqlite3_column_text(q,3)) forKey:@"notes"];
+      [graph setObject:record forKey:id]; [calendarIDs setObject:id forKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q,0)]];
+    } @catch(id exception) {
+      RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+    } @finally { [resourcePool release]; }
   }
   if (step!=SQLITE_DONE) goto failed;
   sqlite3_finalize(q); q=NULL;
@@ -579,25 +585,30 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
       "AND r.remote_missing=0 AND r.scope_excluded=0",-1,&q,NULL)!=SQLITE_OK) goto failed;
   sqlite3_bind_int64(q,1,j.account);
   while ((step=sqlite3_step(q))==SQLITE_ROW) {
-    if(RCCheckCancellation(error)) goto failed;
-    long long id=sqlite3_column_int64(q,0); NSString *calendar=[calendarIDs objectForKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q,1)]];
-    NSData *body=[NSData dataWithBytes:sqlite3_column_blob(q,3) length:sqlite3_column_bytes(q,3)];
-    NSString *etag=S((const char *)sqlite3_column_text(q,4)); RCError mappingError; RCErrorClear(&mappingError);
-    NSDictionary *mapped=sqlite3_column_type(q,7)==SQLITE_NULL ? RCCalendarNativeGraph(store,id,calendar,body,&mappingError) : nil;
-    if (!mapped && sqlite3_column_type(q,5)!=SQLITE_NULL) {
-      body=[NSData dataWithBytes:sqlite3_column_blob(q,5) length:sqlite3_column_bytes(q,5)]; etag=S((const char *)sqlite3_column_text(q,6));
-      mapped=RCCalendarNativeGraph(store,id,calendar,body,&mappingError);
-      if (!mapped) { RCErrorSet(error,1,"Could not reconstruct retained calendar graph"); goto failed; }
-    }
-    if (!mapped) { RCLogger(RCLogWarning, "Calendars", "Apply", @"Two-way calendar resource %lld is unsupported: %s",id,sqlite3_column_type(q,7)!=SQLITE_NULL ? (const char *)sqlite3_column_text(q,7) : mappingError.message); continue; }
-    NSString *root=nil; NSDictionary *paths=Paths(store,id,body,mapped,&root,error);
-    if (!paths || !root) goto failed;
-    [resources addObject:[NSDictionary dictionaryWithObjectsAndKeys:[NSString stringWithFormat:@"resource-%lld",id],@"key",root,@"root",
-        S((const char *)sqlite3_column_text(q,2)),@"href",etag,@"etag",body,@"body",mapped,@"graph",paths,@"paths",
-        [NSNumber numberWithLongLong:generation],@"revision",nil]];
-    [graph addEntriesFromDictionary:mapped]; NSEnumerator *it=[mapped keyEnumerator]; NSString *key;
-    while ((key=[it nextObject])) if ([[[mapped objectForKey:key] objectForKey:ISyncRecordEntityNameKey] isEqual:eventEntity])
-      [[[graph objectForKey:calendar] objectForKey:@"events"] addObject:key];
+    NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+    @try {
+      if(RCCheckCancellation(error)) goto failed;
+      long long id=sqlite3_column_int64(q,0); NSString *calendar=[calendarIDs objectForKey:[NSNumber numberWithLongLong:sqlite3_column_int64(q,1)]];
+      NSData *body=[NSData dataWithBytes:sqlite3_column_blob(q,3) length:sqlite3_column_bytes(q,3)];
+      NSString *etag=S((const char *)sqlite3_column_text(q,4)); RCError mappingError; RCErrorClear(&mappingError);
+      NSDictionary *mapped=sqlite3_column_type(q,7)==SQLITE_NULL ? RCCalendarNativeGraph(store,id,calendar,body,&mappingError) : nil;
+      if (!mapped && sqlite3_column_type(q,5)!=SQLITE_NULL) {
+        body=[NSData dataWithBytes:sqlite3_column_blob(q,5) length:sqlite3_column_bytes(q,5)]; etag=S((const char *)sqlite3_column_text(q,6));
+        mapped=RCCalendarNativeGraph(store,id,calendar,body,&mappingError);
+        if (!mapped) { RCErrorSet(error,1,"Could not reconstruct retained calendar graph"); goto failed; }
+      }
+      if (!mapped) { RCLogger(RCLogWarning, "Calendars", "Apply", @"Two-way calendar resource %lld is unsupported: %s",id,sqlite3_column_type(q,7)!=SQLITE_NULL ? (const char *)sqlite3_column_text(q,7) : mappingError.message); continue; }
+      NSString *root=nil; NSDictionary *paths=Paths(store,id,body,mapped,&root,error);
+      if (!paths || !root) goto failed;
+      [resources addObject:[NSDictionary dictionaryWithObjectsAndKeys:[NSString stringWithFormat:@"resource-%lld",id],@"key",root,@"root",
+          S((const char *)sqlite3_column_text(q,2)),@"href",etag,@"etag",body,@"body",mapped,@"graph",paths,@"paths",
+          [NSNumber numberWithLongLong:generation],@"revision",nil]];
+      [graph addEntriesFromDictionary:mapped]; NSEnumerator *it=[mapped keyEnumerator]; NSString *key;
+      while ((key=[it nextObject])) if ([[[mapped objectForKey:key] objectForKey:ISyncRecordEntityNameKey] isEqual:eventEntity])
+        [[[graph objectForKey:calendar] objectForKey:@"events"] addObject:key];
+    } @catch(id exception) {
+      RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+    } @finally { [resourcePool release]; }
   }
   if (step!=SQLITE_DONE) goto failed;
   sqlite3_finalize(q); q=NULL;
@@ -607,18 +618,23 @@ int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description
     if (!RCTwoWaySQL(&j,error,"BEGIN IMMEDIATE")) return 0;
     NSEnumerator *it=[resources objectEnumerator]; NSDictionary *r;
     while ((r=[it nextObject])) {
-      sqlite3_stmt *update=NULL;
-      BOOL ok=sqlite3_prepare_v2(j.db,"UPDATE calendar_resources SET export_ical=?,export_etag=?,export_status='exported',export_error=NULL "
-          "WHERE href=? AND calendar_id IN(SELECT id FROM calendars WHERE account_id=?)",-1,&update,NULL)==SQLITE_OK;
-      if (ok) {
-        NSData *body=[r objectForKey:@"body"];
-        sqlite3_bind_blob(update,1,[body bytes],(int)[body length],SQLITE_TRANSIENT);
-        sqlite3_bind_text(update,2,[[r objectForKey:@"etag"] UTF8String],-1,SQLITE_TRANSIENT);
-        sqlite3_bind_text(update,3,[[r objectForKey:@"href"] UTF8String],-1,SQLITE_TRANSIENT);
-        sqlite3_bind_int64(update,4,j.account); ok=sqlite3_step(update)==SQLITE_DONE;
-      }
-      sqlite3_finalize(update);
-      if (!ok) { RCTwoWaySQL(&j,NULL,"ROLLBACK"); RCErrorSet(error,1,"Could not checkpoint two-way calendar publication"); return 0; }
+      NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+      @try {
+        sqlite3_stmt *update=NULL;
+        BOOL ok=sqlite3_prepare_v2(j.db,"UPDATE calendar_resources SET export_ical=?,export_etag=?,export_status='exported',export_error=NULL "
+            "WHERE href=? AND calendar_id IN(SELECT id FROM calendars WHERE account_id=?)",-1,&update,NULL)==SQLITE_OK;
+        if (ok) {
+          NSData *body=[r objectForKey:@"body"];
+          sqlite3_bind_blob(update,1,[body bytes],(int)[body length],SQLITE_TRANSIENT);
+          sqlite3_bind_text(update,2,[[r objectForKey:@"etag"] UTF8String],-1,SQLITE_TRANSIENT);
+          sqlite3_bind_text(update,3,[[r objectForKey:@"href"] UTF8String],-1,SQLITE_TRANSIENT);
+          sqlite3_bind_int64(update,4,j.account); ok=sqlite3_step(update)==SQLITE_DONE;
+        }
+        sqlite3_finalize(update);
+        if (!ok) { RCTwoWaySQL(&j,NULL,"ROLLBACK"); RCErrorSet(error,1,"Could not checkpoint two-way calendar publication"); return 0; }
+      } @catch(id exception) {
+        RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+      } @finally { [resourcePool release]; }
     }
     if (!RCCalendarStoreSnapshotWriteBases(store,generation,error) ||
         !RCTwoWaySQL(&j,error,"UPDATE accounts SET published_generation=%lld WHERE id=%lld;COMMIT",generation,j.account)) {

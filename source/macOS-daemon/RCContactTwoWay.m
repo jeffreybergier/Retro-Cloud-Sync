@@ -1,3 +1,4 @@
+#import "RCAutorelease.h"
 #import "RCContactPhoto.h"
 #import "RCTwoWayNative.h"
 #import "RCContactSyncClient.h"
@@ -467,17 +468,22 @@ int RCSyncServicesTwoWayContacts(RCContactStore *store,const char *description,l
       "AND c.remote_missing=0 AND c.usable_vcard IS NOT NULL ORDER BY c.id",-1,&q,NULL)!=SQLITE_OK) goto failed;
   sqlite3_bind_int64(q,1,j.account);
   while ((step=sqlite3_step(q))==SQLITE_ROW) {
-    if(RCCheckCancellation(error)) goto failed;
-    NSString *key=S((const char *)sqlite3_column_text(q,1)), *root=[@"contact-" stringByAppendingString:key];
-    NSData *body=[NSData dataWithBytes:sqlite3_column_blob(q,4) length:sqlite3_column_bytes(q,4)];
-    NSDictionary *mapped=RCContactNativeGraph(store,sqlite3_column_int64(q,0),[key UTF8String],body,error);
-    if (!mapped) goto failed;
-    NSDictionary *paths=RCContactNativePaths(body,mapped,root,error);
-    if (!paths) goto failed;
-    [graph addEntriesFromDictionary:mapped];
-    [resources addObject:[NSDictionary dictionaryWithObjectsAndKeys:key,@"key",root,@"root",S((const char *)sqlite3_column_text(q,2)),@"href",
-        S((const char *)sqlite3_column_text(q,3)),@"etag",body,@"body",mapped,@"graph",paths,@"paths",
-        [NSNumber numberWithLongLong:generation],@"revision",nil]];
+    NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+    @try {
+      if(RCCheckCancellation(error)) goto failed;
+      NSString *key=S((const char *)sqlite3_column_text(q,1)), *root=[@"contact-" stringByAppendingString:key];
+      NSData *body=[NSData dataWithBytes:sqlite3_column_blob(q,4) length:sqlite3_column_bytes(q,4)];
+      NSDictionary *mapped=RCContactNativeGraph(store,sqlite3_column_int64(q,0),[key UTF8String],body,error);
+      if (!mapped) goto failed;
+      NSDictionary *paths=RCContactNativePaths(body,mapped,root,error);
+      if (!paths) goto failed;
+      [graph addEntriesFromDictionary:mapped];
+      [resources addObject:[NSDictionary dictionaryWithObjectsAndKeys:key,@"key",root,@"root",S((const char *)sqlite3_column_text(q,2)),@"href",
+          S((const char *)sqlite3_column_text(q,3)),@"etag",body,@"body",mapped,@"graph",paths,@"paths",
+          [NSNumber numberWithLongLong:generation],@"revision",nil]];
+    } @catch(id exception) {
+      RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+    } @finally { [resourcePool release]; }
   }
   if (step!=SQLITE_DONE) goto failed;
   sqlite3_finalize(q); q=NULL;

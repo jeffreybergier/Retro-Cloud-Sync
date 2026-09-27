@@ -1,3 +1,4 @@
+#import "RCAutorelease.h"
 #import "RCSyncConflictSession.h"
 #import "RCTwoWayNative.h"
 #import "RCContactPhoto.h"
@@ -254,7 +255,7 @@ static int RCPushChild(RCSyncExportContext *context, long long contactIdentifier
   return 1;
 }
 
-static int RCExportContact(long long contactIdentifier,
+static int RCExportContactInPool(long long contactIdentifier,
                            const char *storedSyncIdentifier,
                            const unsigned char *rawVCard,
                            size_t rawVCardLength, void *opaqueContext,
@@ -390,6 +391,20 @@ static int RCExportContact(long long contactIdentifier,
   return 1;
 }
 
+/* The graph retains its records; drain mapping temporaries once per contact. */
+static int RCExportContact(long long identifier, const char *syncIdentifier,
+    const unsigned char *body, size_t length, void *context, RCError *error)
+{
+  NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
+  int result;
+  @try {
+    result=RCExportContactInPool(identifier,syncIdentifier,body,length,context,error);
+  } @catch(id exception) {
+    RCDrainPoolPreservingException(&pool,exception); @throw;
+  } @finally { [pool release]; }
+  return result;
+}
+
 static int RCSyncServicesPushContactsForClient(
     RCContactStore *store, const char *clientDescriptionPath,
     NSString *clientIdentifier, long *recordCount, RCError *error)
@@ -457,13 +472,18 @@ static int RCSyncServicesPushContactsForClient(
       NSEnumerator *keys = [context.records keyEnumerator];
       NSString *key;
       while ((key = [keys nextObject]) != nil) {
-        NSDictionary *record = [context.records objectForKey:key];
-        if (![session shouldPushChangesForEntityName:
-                [record objectForKey:ISyncRecordEntityNameKey]]) {
-          RCErrorSet(error, 1, "Sync Services did not permit the contact push");
-          goto finished;
-        }
-        RCSessionPush(session,record,key);
+        NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+        @try {
+          NSDictionary *record = [context.records objectForKey:key];
+          if (![session shouldPushChangesForEntityName:
+                  [record objectForKey:ISyncRecordEntityNameKey]]) {
+            RCErrorSet(error, 1, "Sync Services did not permit the contact push");
+            goto finished;
+          }
+          RCSessionPush(session,record,key);
+        } @catch(id exception) {
+          RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+        } @finally { [resourcePool release]; }
       }
     }
     {
@@ -486,10 +506,15 @@ static int RCSyncServicesPushContactsForClient(
             [session changeEnumeratorForEntityNames:pullEntities];
         ISyncChange *change;
         while ((change = [changes nextObject]) != nil) {
-          if ([change type] != ISyncChangeTypeDelete) {
-            [session clientRefusedChangesForRecordWithIdentifier:
-                [change recordIdentifier]];
-          }
+          NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+          @try {
+            if ([change type] != ISyncChangeTypeDelete) {
+              [session clientRefusedChangesForRecordWithIdentifier:
+                  [change recordIdentifier]];
+            }
+          } @catch(id exception) {
+            RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+          } @finally { [resourcePool release]; }
         }
       }
       [session clientCommittedAcceptedChanges];

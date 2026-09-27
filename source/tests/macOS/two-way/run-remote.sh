@@ -5,12 +5,13 @@ case "${TWO_WAY_TEST_MODE:-full}" in
   full) test_arg= ;;
   calendars) test_arg=--calendars ;;
   calendar-exceptions) test_arg=--calendar-exceptions ;;
+  calendar-time) test_arg=--calendar-time ;;
   fields) test_arg=--fields ;;
   conflict-replay) test_arg=--conflict-replay ;;
   recovery) test_arg=--recovery ;;
   edit-delete) test_arg=--edit-delete ;;
   contact-publication) test_arg=--contact-publication ;;
-  *) echo 'TWO_WAY_TEST_MODE must be full, calendars, calendar-exceptions, fields, recovery, conflict-replay, edit-delete, or contact-publication' >&2; exit 1 ;;
+  *) echo 'TWO_WAY_TEST_MODE must be full, calendars, calendar-exceptions, calendar-time, fields, recovery, conflict-replay, edit-delete, or contact-publication' >&2; exit 1 ;;
 esac
 run_name="RetroCloudSync-TwoWayTests-$(date +%Y%m%d-%H%M%S)-$$"
 remote="Desktop/$run_name"

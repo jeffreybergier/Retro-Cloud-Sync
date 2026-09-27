@@ -1,3 +1,4 @@
+#import "RCAutorelease.h"
 #import "RCSyncRecordEquality.h"
 #import "RCCalendarOperations.h"
 #import "RCTwoWayNative.h"
@@ -168,48 +169,53 @@ BOOL RCCalendarRunOperations(RCWriteJournal *j,RCHTTPClient *http,RCError *error
   }
   sqlite3_finalize(q); NSEnumerator *it=[actions objectEnumerator]; NSDictionary *a; BOOL all=YES;
   while((a=[it nextObject])) {
-    if (RCCheckCancellation(error)) return NO;
-    NSString *target=[a objectForKey:@"target"], *native=[a objectForKey:@"native"];
-    BOOL done=NO,conflict=NO; RCHTTPResponse response; RCHTTPResponseInit(&response);
-    if([[a objectForKey:@"kind"] isEqual:@"create"]) {
-      NSString *marker=[a objectForKey:@"marker"];
-      done=Created(http,target,marker,error);
-      if(!done) {
-        NSString *xml=[NSString stringWithFormat:@"<c:mkcalendar xmlns:c='urn:ietf:params:xml:ns:caldav' xmlns:d='DAV:' xmlns:r='urn:retrocloudsync'><d:set><d:prop><d:displayname>%@</d:displayname><c:calendar-description>%@</c:calendar-description><r:creation-id>%@</r:creation-id></d:prop></d:set></c:mkcalendar>",EscapeXML([a objectForKey:@"title"]),EscapeXML([a objectForKey:@"notes"]),marker];
-        NSData *body=[xml dataUsingEncoding:NSUTF8StringEncoding];
-        RCHTTPClientConditionalRequest(http,"MKCALENDAR",[target UTF8String],"application/xml",[body bytes],[body length],NULL,1,&response,error);
+    NSAutoreleasePool *resourcePool=[[NSAutoreleasePool alloc] init];
+    @try {
+      if (RCCheckCancellation(error)) return NO;
+      NSString *target=[a objectForKey:@"target"], *native=[a objectForKey:@"native"];
+      BOOL done=NO,conflict=NO; RCHTTPResponse response; RCHTTPResponseInit(&response);
+      if([[a objectForKey:@"kind"] isEqual:@"create"]) {
+        NSString *marker=[a objectForKey:@"marker"];
         done=Created(http,target,marker,error);
-      }
-      if(done) {
-        NSString *syncID=marker;
-        done=RCTwoWaySQL(j,error,"BEGIN IMMEDIATE;INSERT OR IGNORE INTO calendars(account_id,url,sync_id,display_name,description) VALUES(%lld,%Q,%Q,%Q,%Q);INSERT OR REPLACE INTO two_way_aliases SELECT %lld,'calendar-'||sync_id,%Q FROM calendars WHERE account_id=%lld AND url=%Q;UPDATE calendar_actions SET state='done' WHERE account_id=%lld AND native_id=%Q;COMMIT",j->account,[target UTF8String],[syncID UTF8String],[[a objectForKey:@"title"] UTF8String],[[a objectForKey:@"notes"] UTF8String],j->account,[native UTF8String],j->account,[target UTF8String],j->account,[native UTF8String]);
-      }
-    } else {
-      NSString *source=[a objectForKey:@"source"]; NSData *body=[a objectForKey:@"body"];
-      RCHTTPResponse before; RCHTTPResponseInit(&before);
-      BOOL read=Get(http,source,&before,error) && Get(http,target,&response,error);
-      if(read && before.statusCode==200 && response.statusCode==404) {
-        if(![String(before.etag) isEqual:[a objectForKey:@"etag"]] || before.bodyLength!=[body length] || memcmp(before.body,[body bytes],[body length])) conflict=YES;
-        else {
-          RCHTTPClientMove(http,[source UTF8String],[target UTF8String],[[a objectForKey:@"etag"] UTF8String],&response,error);
-          read=Get(http,source,&before,error) && Get(http,target,&response,error);
+        if(!done) {
+          NSString *xml=[NSString stringWithFormat:@"<c:mkcalendar xmlns:c='urn:ietf:params:xml:ns:caldav' xmlns:d='DAV:' xmlns:r='urn:retrocloudsync'><d:set><d:prop><d:displayname>%@</d:displayname><c:calendar-description>%@</c:calendar-description><r:creation-id>%@</r:creation-id></d:prop></d:set></c:mkcalendar>",EscapeXML([a objectForKey:@"title"]),EscapeXML([a objectForKey:@"notes"]),marker];
+          NSData *body=[xml dataUsingEncoding:NSUTF8StringEncoding];
+          RCHTTPClientConditionalRequest(http,"MKCALENDAR",[target UTF8String],"application/xml",[body bytes],[body length],NULL,1,&response,error);
+          done=Created(http,target,marker,error);
         }
+        if(done) {
+          NSString *syncID=marker;
+          done=RCTwoWaySQL(j,error,"BEGIN IMMEDIATE;INSERT OR IGNORE INTO calendars(account_id,url,sync_id,display_name,description) VALUES(%lld,%Q,%Q,%Q,%Q);INSERT OR REPLACE INTO two_way_aliases SELECT %lld,'calendar-'||sync_id,%Q FROM calendars WHERE account_id=%lld AND url=%Q;UPDATE calendar_actions SET state='done' WHERE account_id=%lld AND native_id=%Q;COMMIT",j->account,[target UTF8String],[syncID UTF8String],[[a objectForKey:@"title"] UTF8String],[[a objectForKey:@"notes"] UTF8String],j->account,[native UTF8String],j->account,[target UTF8String],j->account,[native UTF8String]);
+        }
+      } else {
+        NSString *source=[a objectForKey:@"source"]; NSData *body=[a objectForKey:@"body"];
+        RCHTTPResponse before; RCHTTPResponseInit(&before);
+        BOOL read=Get(http,source,&before,error) && Get(http,target,&response,error);
+        if(read && before.statusCode==200 && response.statusCode==404) {
+          if(![String(before.etag) isEqual:[a objectForKey:@"etag"]] || before.bodyLength!=[body length] || memcmp(before.body,[body bytes],[body length])) conflict=YES;
+          else {
+            RCHTTPClientMove(http,[source UTF8String],[target UTF8String],[[a objectForKey:@"etag"] UTF8String],&response,error);
+            read=Get(http,source,&before,error) && Get(http,target,&response,error);
+          }
+        }
+        if(read && before.statusCode==404 && response.statusCode==200 && RCWriteETagIsStrong(response.etag) && response.bodyLength==[body length] && !memcmp(response.body,[body bytes],[body length])) {
+          NSRange slash=[target rangeOfString:@"/" options:NSBackwardsSearch];
+          NSString *collection=[[target substringToIndex:slash.location+1] copy];
+          done=RCTwoWaySQL(j,error,"BEGIN IMMEDIATE;UPDATE calendar_resources SET href=%Q,calendar_id=(SELECT id FROM calendars WHERE account_id=%lld AND url=%Q),etag=%Q,export_etag=%Q WHERE href=%Q AND calendar_id IN(SELECT id FROM calendars WHERE account_id=%lld)",[target UTF8String],j->account,[collection UTF8String],response.etag,response.etag,[source UTF8String],j->account);
+          if(done && sqlite3_changes(j->db)==1)
+            done=RCTwoWaySQL(j,error,"DELETE FROM calendar_actions WHERE account_id=%lld AND native_id=%Q;COMMIT",j->account,[native UTF8String]);
+          else { done=NO; RCTwoWaySQL(j,NULL,"ROLLBACK"); RCErrorSet(error,1,"Moved calendar resource requires mirror recovery"); }
+          [collection release];
+        } else if(read && response.statusCode==200 && before.statusCode==200) conflict=YES;
+        RCHTTPResponseClear(&before);
       }
-      if(read && before.statusCode==404 && response.statusCode==200 && RCWriteETagIsStrong(response.etag) && response.bodyLength==[body length] && !memcmp(response.body,[body bytes],[body length])) {
-        NSRange slash=[target rangeOfString:@"/" options:NSBackwardsSearch];
-        NSString *collection=[[target substringToIndex:slash.location+1] copy];
-        done=RCTwoWaySQL(j,error,"BEGIN IMMEDIATE;UPDATE calendar_resources SET href=%Q,calendar_id=(SELECT id FROM calendars WHERE account_id=%lld AND url=%Q),etag=%Q,export_etag=%Q WHERE href=%Q AND calendar_id IN(SELECT id FROM calendars WHERE account_id=%lld)",[target UTF8String],j->account,[collection UTF8String],response.etag,response.etag,[source UTF8String],j->account);
-        if(done && sqlite3_changes(j->db)==1)
-          done=RCTwoWaySQL(j,error,"DELETE FROM calendar_actions WHERE account_id=%lld AND native_id=%Q;COMMIT",j->account,[native UTF8String]);
-        else { done=NO; RCTwoWaySQL(j,NULL,"ROLLBACK"); RCErrorSet(error,1,"Moved calendar resource requires mirror recovery"); }
-        [collection release];
-      } else if(read && response.statusCode==200 && before.statusCode==200) conflict=YES;
-      RCHTTPResponseClear(&before);
-    }
-    RCHTTPResponseClear(&response);
-    if(!sqlite3_get_autocommit(j->db)) RCTwoWaySQL(j,NULL,"ROLLBACK");
-    if(conflict) RCTwoWaySQL(j,error,"UPDATE calendar_actions SET state='conflict' WHERE account_id=%lld AND native_id=%Q;INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,'calendar-move-conflict')",j->account,[native UTF8String],j->account,[native UTF8String]);
-    if(!done) all=NO;
+      RCHTTPResponseClear(&response);
+      if(!sqlite3_get_autocommit(j->db)) RCTwoWaySQL(j,NULL,"ROLLBACK");
+      if(conflict) RCTwoWaySQL(j,error,"UPDATE calendar_actions SET state='conflict' WHERE account_id=%lld AND native_id=%Q;INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,'calendar-move-conflict')",j->account,[native UTF8String],j->account,[native UTF8String]);
+      if(!done) all=NO;
+    } @catch(id exception) {
+      RCDrainPoolPreservingException(&resourcePool,exception); @throw;
+    } @finally { [resourcePool release]; }
   }
   if(!all && (!error || !error->code)) RCErrorSet(error,1,"Calendar creation or move awaits server verification");
   if(all) RCErrorClear(error);

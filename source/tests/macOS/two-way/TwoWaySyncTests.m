@@ -26,6 +26,65 @@ static NSMutableDictionary *remoteCollections;
 static NSString *marker;
 #define CHECK(x) do { RCErrorClear(&error); if (!(x)) [NSException raise:@"TestFailure" format:@"line %d: %s: %s",__LINE__,#x,error.message]; } while(0)
 
+/* A graph lookup creates an autoreleased temporary, like the real mappers.
+   Track live temporaries independently of Foundation's allocator/RSS cache. */
+static unsigned int livePoolProbes, peakPoolProbes;
+@interface RCPoolProbe : NSObject
+@end
+@implementation RCPoolProbe
+- (id)init { self=[super init]; if(self) { livePoolProbes++; if(livePoolProbes>peakPoolProbes) peakPoolProbes=livePoolProbes; } return self; }
+- (void)dealloc { livePoolProbes--; [super dealloc]; }
+@end
+@interface RCPoolProbeGraph : NSDictionary {
+  NSDictionary *records_;
+  unsigned int reads_, failAt_;
+}
+- (id)initWithRecords:(NSDictionary *)records failAt:(unsigned int)failAt;
+@end
+@implementation RCPoolProbeGraph
+- (id)initWithRecords:(NSDictionary *)records failAt:(unsigned int)failAt
+{ self=[super init]; if(self) { records_=[records retain]; failAt_=failAt; } return self; }
+- (void)dealloc { [records_ release]; [super dealloc]; }
+- (NSUInteger)count { return [records_ count]; }
+- (NSEnumerator *)keyEnumerator { return [records_ keyEnumerator]; }
+- (id)objectForKey:(id)key {
+  [[[RCPoolProbe alloc] init] autorelease];
+  if(++reads_==failAt_) [NSException raise:@"SyntheticMappingFailure" format:@"Pool cleanup fixture"];
+  return [records_ objectForKey:key];
+}
+@end
+
+static void MappingPoolTests(void)
+{
+  NSMutableDictionary *records=[NSMutableDictionary dictionary];
+  unsigned int i;
+  for(i=0;i<1024;i++) {
+    NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
+    NSString *key=[NSString stringWithFormat:@"record-%u",i];
+    [records setObject:[NSDictionary dictionaryWithObjectsAndKeys:key,@"name",
+        [NSArray arrayWithObject:@"old-child"],@"children",nil] forKey:key];
+    [pool release];
+  }
+  NSDictionary *aliases=[NSDictionary dictionaryWithObject:@"new-child" forKey:@"old-child"];
+  RCPoolProbeGraph *input=[[RCPoolProbeGraph alloc] initWithRecords:records failAt:0];
+  peakPoolProbes=0;
+  NSDictionary *output=RCTwoWayRemap(input,aliases);
+  CHECK(livePoolProbes==0 && peakPoolProbes==1 && [output count]==1024);
+  for(i=0;i<1024;i++) {
+    NSString *key=[NSString stringWithFormat:@"record-%u",i];
+    CHECK([[[output objectForKey:key] objectForKey:@"name"] isEqual:key]);
+    CHECK([[[output objectForKey:key] objectForKey:@"children"] isEqual:[NSArray arrayWithObject:@"new-child"]]);
+  }
+  [input release];
+  input=[[RCPoolProbeGraph alloc] initWithRecords:records failAt:10];
+  BOOL caught=NO;
+  @try { RCTwoWayRemap(input,aliases); }
+  @catch(NSException *exception) { caught=[[exception name] isEqual:@"SyntheticMappingFailure"]; }
+  [input release];
+  CHECK(caught && livePoolProbes==0);
+  puts("PASS: Large graph mapping drains per-record temporaries, retains output and cleans up on exceptions");
+}
+
 /* Deliberately replaces the HTTP transport at link time. This executable has
    no live server path and never obtains credentials. */
 void RCHTTPResponseInit(RCHTTPResponse *r) { memset(r,0,sizeof(*r)); }
@@ -659,6 +718,7 @@ static void ExpandedContactTests(RCContactStore *store)
 
 static void MapperTests(void)
 {
+  MappingPoolTests();
   CHECK(RCTwoWayRecordsEqual([NSDictionary dictionary], [NSDictionary dictionaryWithObject:[NSArray array] forKey:@"phone numbers"]));
   CHECK(!RCTwoWayRecordsEqual([NSDictionary dictionaryWithObject:[NSArray arrayWithObjects:@"monday",@"friday",nil] forKey:@"bydaydays"],
       [NSDictionary dictionaryWithObject:[NSArray arrayWithObjects:@"friday",@"monday",nil] forKey:@"bydaydays"]));
@@ -1357,7 +1417,7 @@ static void CalendarExceptionIntegration(RCTwoWayContext *c,ISyncClient *local,R
   puts("PASS: Native recurrence, reminder timing and attendee edits upload, acknowledge and replay without duplicate PUTs");
   CalendarTimeIntegration(c,local,store);
 }
-static void CalendarTests(BOOL exceptionsOnly)
+static void CalendarTests(int subsetMode)
 {
   ISyncManager *manager=[ISyncManager sharedManager]; ISyncClient *local=nil,*server=nil;
   RCCalendarStore *store=NULL;
@@ -1377,10 +1437,13 @@ static void CalendarTests(BOOL exceptionsOnly)
     store=RCCalendarStoreOpen("TwoWayCalendar.sqlite","synthetic",&error); CHECK(store);
     RCWriteJournal j=RCCalendarStoreWriteJournal(store);
     CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO calendars(account_id,url,sync_id,display_name) VALUES(%lld,'https://fixture.invalid/calendar/','fixture','Fixture')",j.account));
-    if (exceptionsOnly) {
+    if (subsetMode) {
       remoteBodies=[NSMutableDictionary dictionary]; remoteETags=[NSMutableDictionary dictionary]; mutations=0;
       RCTwoWayContext subset={j,@"com.altivecintelligence.tw.test.cal.server",description,@"com.apple.calendars.Event",[NSArray array],CalendarGraph([NSArray array]),RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
-      @try { CalendarExceptionIntegration(&subset,local,store); }
+      @try {
+        if (subsetMode==2) CalendarTimeIntegration(&subset,local,store);
+        else CalendarExceptionIntegration(&subset,local,store);
+      }
       @finally { server=[manager clientWithIdentifier:subset.clientIdentifier]; }
       goto calendarDone;
     }
@@ -1410,11 +1473,18 @@ static void CalendarTests(BOOL exceptionsOnly)
        The uploaded revision is durable in the journal but is no longer current. */
     NSString *originalTitle=[marker stringByAppendingString:@"-new"];
     NSString *remoteTitle=[originalTitle stringByAppendingString:@" (remote edit)"];
-    NSMutableString *newBody=[NSMutableString stringWithString:[[[NSString alloc] initWithData:[remoteBodies objectForKey:newHref] encoding:NSUTF8StringEncoding] autorelease]];
-    [newBody replaceOccurrencesOfString:originalTitle withString:remoteTitle options:0 range:NSMakeRange(0,[newBody length])];
+    /* Long fixture markers fold across physical content lines. Patch the
+       SUMMARY property so the simulated remote edit cannot silently be a no-op. */
+    NSData *uploaded=[remoteBodies objectForKey:newHref];
+    RCResourceEdit remoteEdit={1,"SUMMARY",NULL,0,[remoteTitle UTF8String],NULL,NULL,NULL};
+    unsigned char *editedBytes=NULL; size_t editedLength=0;
+    CHECK(RCResourcePatch(RCResourceCalendar,[uploaded bytes],[uploaded length],&remoteEdit,1,&editedBytes,&editedLength,&error));
+    NSMutableString *newBody=[NSMutableString stringWithString:[[[NSString alloc] initWithBytes:editedBytes length:editedLength encoding:NSUTF8StringEncoding] autorelease]];
+    free(editedBytes);
     [remoteBodies setObject:[newBody dataUsingEncoding:NSUTF8StringEncoding] forKey:newHref];
     [remoteETags setObject:@"\"newer-remote-revision\"" forKey:newHref];
     NSDictionary *created=CalendarResource(store,2,[remoteBodies objectForKey:newHref],newHref,[remoteETags objectForKey:newHref]);
+    CHECK([[[[created objectForKey:@"graph"] objectForKey:[created objectForKey:@"root"]] objectForKey:@"summary"] isEqual:remoteTitle]);
     NSMutableString *replaced=[NSMutableString stringWithString:newBody];
     [replaced replaceOccurrencesOfString:@"UID:" withString:@"UID:different-object-" options:0 range:NSMakeRange(0,[replaced length])];
     NSDictionary *different=CalendarResource(store,2,[replaced dataUsingEncoding:NSUTF8StringEncoding],newHref,@"\"different-object\"");
@@ -1531,7 +1601,9 @@ static void CalendarTests(BOOL exceptionsOnly)
     puts("PASS: Concurrent remote edit prevents stale DELETE; the system's delete/edit decision completes conditionally");
     CalendarExceptionIntegration(&c,local,store);
   calendarDone: ;
-
+  } @catch(NSException *exception) {
+    fprintf(stderr,"Calendar scenario failed (%s): %s\n",[[exception name] UTF8String],error.message);
+    @throw;
   } @finally {
     Cleanup(local); Cleanup(server); if(local) [manager unregisterClient:local]; if(server) [manager unregisterClient:server];
     RCCalendarStoreClose(store);
@@ -1590,10 +1662,10 @@ int main(int argc,char **argv)
       CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
       ContactCreationPolicyTests(YES); status=0; goto done;
     }
-    if (argc==2 && (!strcmp(argv[1],"--calendars") || !strcmp(argv[1],"--calendar-exceptions"))) {
+    if (argc==2 && (!strcmp(argv[1],"--calendars") || !strcmp(argv[1],"--calendar-exceptions") || !strcmp(argv[1],"--calendar-time"))) {
       marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
       CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
-      CalendarTests(!strcmp(argv[1],"--calendar-exceptions")); status=0; goto done;
+      CalendarTests(!strcmp(argv[1],"--calendar-time") ? 2 : !strcmp(argv[1],"--calendar-exceptions")); status=0; goto done;
     }
     marker=[NSString stringWithContentsOfFile:@"fixture-marker.txt" encoding:NSUTF8StringEncoding error:NULL];
     if (argc==2 && !strcmp(argv[1],"--cleanup")) {
