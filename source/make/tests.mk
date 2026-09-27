@@ -1,4 +1,4 @@
-# Public test commands and compatibility aliases. Every Mac build happens on Linux.
+# Test dependencies and compatibility aliases. Every Mac build happens on Linux.
 
 test-host: test-host-contacts test-host-calendars test-host-writes test-host-sync
 
@@ -8,24 +8,9 @@ $(SHARED_TEST_OUTPUT) $(CONTACT_DAV_TEST_OUTPUT) $(VCARD_TEST_OUTPUT) \
 $(CALENDAR_TEST_OUTPUT) $(CALENDAR_DAV_TEST) $(WRITE_TEST_OUTPUT) \
 $(WRITE_HTTP_OUTPUT) $(SYNC_TEST_OUTPUT): $(wildcard $(SHARED_SOURCE_ROOT)/*.h)
 
-# Public suites. Keep native integration runs sequential even under make -j:
-# Sync Services suites share the logged-in desktop and native record stores.
+# Compatibility alias for the portable suite.
 test: test-business-linux
-test-business-linux: test-host
-test-ui-mac:
-	@$(MAKE) --no-print-directory test-mac-app
-test-business-mac:
-	@$(MAKE) --no-print-directory test-mac-logging
-	@$(MAKE) --no-print-directory test-mac-shutdown
-	@$(MAKE) --no-print-directory test-mac-contacts-syncservices
-	@$(MAKE) --no-print-directory test-mac-calendars-syncservices
-	@$(MAKE) --no-print-directory test-mac-conflicts
-# Full includes contact recovery/conflicts and calendar integration. The
-# fields mode adds photo normalization and partial-receipt scenarios.
-	@$(MAKE) --no-print-directory test-mac-two-way TWO_WAY_TEST_MODE=full
-	@$(MAKE) --no-print-directory test-mac-two-way TWO_WAY_TEST_MODE=fields
-
-.PHONY: test test-business-linux test-ui-mac test-business-mac
+.PHONY: test
 
 build-mac-tests: build-mac-logging-tests build-mac-network-tests build-mac-app-tests build-mac-contacts-syncservices-tests \
 	build-mac-calendars-syncservices-tests build-mac-vcard-tests build-mac-conflict-tests build-mac-two-way-tests

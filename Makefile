@@ -6,6 +6,46 @@ PROJECT_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 SOURCE_ROOT := $(PROJECT_ROOT)/source
 BUILD_ROOT ?= $(PROJECT_ROOT)/build
 
+# Primary commands. Run these from the repository root.
+# The Mac suites cross-compile here and run on TEST_HOST (default: x4-vm).
+release:
+	@echo "--- Building Retro Cloud Sync Release (-O3) ---"
+	@$(MAKE) --no-print-directory CONFIG=release BUILD_ROOT="$(BUILD_ROOT)" \
+		build-all
+
+debug:
+	@echo "--- Building Retro Cloud Sync Debug (-O0) ---"
+	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
+		build-all
+
+clean:
+	@case "$(BUILD_ROOT)" in \
+		""|"/"|"$(PROJECT_ROOT)") \
+			echo " [!] ERROR: Refusing unsafe BUILD_ROOT: $(BUILD_ROOT)"; \
+			exit 1 ;; \
+	esac
+	@echo "Cleaning build artifacts at $(BUILD_ROOT)..."
+	@rm -rf "$(BUILD_ROOT)"
+
+test-business-linux: test-host
+
+# Run native integration suites sequentially, including under make -j.
+test-business-mac:
+	@$(MAKE) --no-print-directory test-mac-logging
+	@$(MAKE) --no-print-directory test-mac-shutdown
+	@$(MAKE) --no-print-directory test-mac-contacts-syncservices
+	@$(MAKE) --no-print-directory test-mac-calendars-syncservices
+	@$(MAKE) --no-print-directory test-mac-conflicts
+	@$(MAKE) --no-print-directory test-mac-two-way TWO_WAY_TEST_MODE=full
+	@$(MAKE) --no-print-directory test-mac-two-way TWO_WAY_TEST_MODE=fields
+
+test-ui-mac:
+	@$(MAKE) --no-print-directory test-mac-app
+
+.PHONY: release debug clean test-business-linux test-business-mac test-ui-mac
+
+# Advanced and internal build rules follow. The six commands above are the
+# supported entry points; the included files also expose narrower diagnostics.
 include $(SOURCE_ROOT)/make/legacy-mac.mk
 include $(SOURCE_ROOT)/make/libical.mk
 include $(SOURCE_ROOT)/make/libvc.mk
@@ -27,16 +67,6 @@ include $(SOURCE_ROOT)/make/mac-contacts-syncservices-tests.mk
 include $(SOURCE_ROOT)/make/mac-conflict-tests.mk
 include $(SOURCE_ROOT)/make/mac-logging-tests.mk
 include $(SOURCE_ROOT)/make/tests.mk
-
-release:
-	@echo "--- Building Retro Cloud Sync Release (-O3) ---"
-	@$(MAKE) --no-print-directory CONFIG=release BUILD_ROOT="$(BUILD_ROOT)" \
-		build-all
-
-debug:
-	@echo "--- Building Retro Cloud Sync Debug (-O0) ---"
-	@$(MAKE) --no-print-directory CONFIG=debug BUILD_ROOT="$(BUILD_ROOT)" \
-		build-all
 
 app-release:
 	@echo "--- Building macOS App Release (-O3) ---"
@@ -139,20 +169,11 @@ analyze: validate-analyzer $(ICAL_I386_LIBRARY) $(LIBVC_I386_LIBRARY)
 		-I"$(ALTIVECCOCOA_ROOT)/include" \
 		$(ALL_SOURCE_PATHS)
 
-clean:
-	@case "$(BUILD_ROOT)" in \
-		""|"/"|"$(PROJECT_ROOT)") \
-			echo " [!] ERROR: Refusing unsafe BUILD_ROOT: $(BUILD_ROOT)"; \
-			exit 1 ;; \
-	esac
-	@echo "Cleaning build artifacts at $(BUILD_ROOT)..."
-	@rm -rf "$(BUILD_ROOT)"
-
-.PHONY: release debug app-release app-debug daemon-release daemon-debug \
+.PHONY: app-release app-debug daemon-release daemon-debug \
 	build-mac-carddav-probe build-mac-carddav-probe-debug \
 	shared-release shared-debug build-mac-app-tests build-mac-app-tests-debug analyze-mac-app-tests test-mac-app \
 	test-host-contacts \
 	build-mac-contacts-syncservices-tests analyze-mac-contacts-syncservices-tests test-mac-contacts-syncservices \
-	build-all analyze clean
+	build-all analyze
 
 include $(SOURCE_ROOT)/make/mac-two-way-tests.mk
