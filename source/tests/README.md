@@ -22,6 +22,15 @@ runs native suites sequentially, including when invoked with `make -j`; do not
 run another UI/native suite concurrently on the same Mac. Remote artifacts stay
 under `~/Desktop`, with collected logs under `build/tests/macOS`.
 
+The full two-way test can pause for native Conflict Resolver review. Resolve only
+the contact bearing the current run's `RetroCloudTwoWay-` marker (saved in the
+remote `fixture-marker.txt`). If unrelated conflicts are present, filter the
+review to the test's Contacts conflict, save that choice, then quit the resolver
+without choosing values for unrelated records. The test verifies convergence on
+the system's chosen value. Interrupted runs may leave registered test clients;
+retain their artifact directory and use its `TwoWaySyncTests --cleanup` in the
+logged-in desktop session before retrying. Cleanup uses that run's marker.
+
 `make test-mac-network` is an opt-in internet/TLS diagnostic. Credentialed iCloud
 probes and `compare-host-libicalvcal` are also separate from the three suites.
 Offline fixtures do not establish live iCloud compatibility.
