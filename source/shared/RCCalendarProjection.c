@@ -221,7 +221,11 @@ int RCCalendarPrepareProjection(icalcomponent *root,RCCalendarNativeOffset nativ
   if(count && !events) { RCErrorSet(error,1,"Could not allocate calendar projection"); return 0; }
   /* Snapshot originals: projection can append detached components to root. */
   for(event=icalcomponent_get_first_component(root,ICAL_VEVENT_COMPONENT);event;
-      event=icalcomponent_get_next_component(root,ICAL_VEVENT_COMPONENT)) events[n++]=event;
+      event=icalcomponent_get_next_component(root,ICAL_VEVENT_COMPONENT)) {
+    if(n>=count) { free(events); RCErrorSet(error,1,"Calendar changed during projection"); return 0; }
+    events[n++]=event;
+  }
+  count=n;
   for(n=0;n<count;n++) if(!RCExpandFiniteRecurrence(events[n],error)) { free(events); return 0; }
   for(n=0;n<count;n++) if(!ProjectTimezone(root,events[n],nativeOffset,context,error)) { free(events); return 0; }
   free(events); return 1;
