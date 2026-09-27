@@ -13,6 +13,7 @@
   NSTask *applicationTask_;
   AXUIElementRef applicationElement_;
   AXUIElementRef windowElement_;
+  BOOL isolatedAccount_;
 }
 
 // Initializes a runner for the app bundle at |applicationPath|.

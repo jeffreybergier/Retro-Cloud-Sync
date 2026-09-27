@@ -244,6 +244,16 @@ static BOOL ConfigurationMatches(NSString *path,
     }
   }
 
+  /* Views cache configuration and the saved account when they are created.
+     Reload them against the fixture, without editing the user's preferences
+     or Keychain. The argument-domain override lasts only for this process. */
+  [self cleanUp];
+  isolatedAccount_ = YES;
+  if (![self launchApplication] || ![self waitForWindowWithTimeout:10.0]) {
+    PrintFail(@"Could not relaunch with the isolated account configuration");
+    goto cleanup;
+  }
+
   if (![self pressControlNamed:@"Mail" segment:0] ||
       ![self waitForElementNamed:@"Incoming Mail (IMAP)" timeout:5.0]) {
     PrintFail(@"Could not open the Mail preferences panel");
@@ -474,9 +484,9 @@ static BOOL ConfigurationMatches(NSString *path,
       PrintPass(@"Sync radio changes save with a blank Apple ID and restore correctly");
     }
   }
-  if (![self pressControlNamed:@"Daemon" segment:0] ||
+  if (![self pressControlNamed:@"Status" segment:0] ||
       ![self waitForStatus:@"Stopped" timeout:5.0]) {
-    PrintFail(@"Could not return to the Daemon preferences panel");
+    PrintFail(@"Could not return to the Status preferences panel");
     goto cleanup;
   }
   PrintPass(@"Daemon preferences panel reopened");
@@ -532,7 +542,7 @@ static BOOL ConfigurationMatches(NSString *path,
     }
   }
   PrintPass(@"Daemon Log preferences panel opened");
-  if (![self pressControlNamed:@"Daemon" segment:0] ||
+  if (![self pressControlNamed:@"Status" segment:0] ||
       ![self waitForStatus:@"Running" timeout:5.0]) {
     PrintFail(@"Could not return to the running Daemon preferences panel");
     goto cleanup;
@@ -595,7 +605,7 @@ cleanup:
   if (!succeeded) {
     [self captureScreenshotNamed:@"failure.png"];
     [self dumpElement:windowElement_ depth:0];
-    [self pressControlNamed:@"Daemon" segment:0];
+    [self pressControlNamed:@"Status" segment:0];
     [self pressControlNamed:@"Stop" segment:1];
   }
   [self cleanUp];
@@ -857,6 +867,10 @@ cleanup:
 
   applicationTask_ = [[NSTask alloc] init];
   [applicationTask_ setLaunchPath:executablePath];
+  if (isolatedAccount_) {
+    [applicationTask_ setArguments:[NSArray arrayWithObjects:
+        @"-RCKeychainSavedAppleID", @"", nil]];
+  }
   [applicationTask_ setStandardOutput:[NSFileHandle fileHandleWithNullDevice]];
   [applicationTask_ setStandardError:[NSFileHandle fileHandleWithNullDevice]];
   [applicationTask_ launch];
