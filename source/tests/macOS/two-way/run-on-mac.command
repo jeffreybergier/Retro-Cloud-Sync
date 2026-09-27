@@ -41,7 +41,9 @@ baseline=1
 on run argv
   set artifactDirectory to item 1 of argv
   set reviewCaptured to false
-  repeat 1800 times
+  -- Full integration can exceed thirty minutes on a populated Tiger desktop.
+  -- The shell's EXIT trap owns this helper and stops it when the run finishes.
+  repeat
     try
       tell application "System Events"
         if exists process "syncuid" then
