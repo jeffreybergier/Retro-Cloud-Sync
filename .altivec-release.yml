@@ -1,0 +1,25 @@
+app_name: Retro-Cloud-Sync
+tag_prefix: v
+
+version:
+  source: source/macOS-app/Resources/Info.plist
+  source_key: CFBundleShortVersionString
+  plists:
+    - path: source/macOS-app/Resources/Info.plist
+      keys:
+        - CFBundleShortVersionString
+        - CFBundleVersion
+    - path: source/macOS-daemon/Info.plist
+      keys:
+        - CFBundleVersion
+
+release:
+  commit_message: "chore: bump version to {version}"
+
+targets:
+  - name: macOS
+    workdir: .
+    build:
+      - make release
+    artifact: build/macOS-app/release/rCloud.zip
+    asset_name: Retro-Cloud-Sync-{version}-macOS.zip
