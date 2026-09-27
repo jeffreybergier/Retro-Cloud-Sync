@@ -11,7 +11,7 @@ $(WRITE_TEST_OUTPUT): $(WRITE_TEST_SOURCES) $(ICAL_HOST_LIBRARY) $(LIBVC_HOST_LI
 	$(SHARED_SOURCE_ROOT)/RCResourcePatch.h $(SHARED_SOURCE_ROOT)/RCConflictRecovery.h
 	@mkdir -p "$(dir $@)"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror $(ICAL_HOST_FLAGS) $(LIBVC_FLAGS) \
-		-I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include $(WRITE_TEST_SOURCES) \
+		-I$(SHARED_SOURCE_ROOT) $(WRITE_TEST_SOURCES) \
 		$(ICAL_HOST_LIBRARY) $(LIBVC_HOST_LIBRARY) -lsqlite3 -lpthread -o "$@"
 test-host-writes: $(WRITE_TEST_OUTPUT)
 	@"$(WRITE_TEST_OUTPUT)"
@@ -24,7 +24,7 @@ WRITE_HTTP_SOURCES := $(SOURCE_ROOT)/tests/portable/WriteHTTPTests.c \
 $(WRITE_HTTP_OUTPUT): $(WRITE_HTTP_SOURCES) $(SHARED_SOURCE_ROOT)/RCHTTPClient.h
 	@mkdir -p "$(dir $@)"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror -Wno-deprecated-declarations \
-		-I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include $(WRITE_HTTP_SOURCES) \
+		-I$(SHARED_SOURCE_ROOT) $(WRITE_HTTP_SOURCES) \
 		-lcurl -lsqlite3 -o "$@"
 test-host-writes: test-host-write-http
 test-host-write-http: $(WRITE_HTTP_OUTPUT)

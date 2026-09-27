@@ -1,7 +1,7 @@
 #ifndef RC_DAV_STAGING_H
 #define RC_DAV_STAGING_H
 #include "RCError.h"
-#include <AltivecCore/sqlite3.h>
+#include "RCSQLite.h"
 #include <stddef.h>
 
 enum { RCDAVStageSeen, RCDAVStageDownloaded, RCDAVStageDeleted };

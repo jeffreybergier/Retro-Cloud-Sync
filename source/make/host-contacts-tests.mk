@@ -14,7 +14,7 @@ $(SHARED_TEST_OUTPUT): $(SHARED_TEST_SOURCES) $(LIBVC_HOST_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@echo "  > building native shared-layer tests"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror \
-		$(LIBVC_FLAGS) -I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include \
+		$(LIBVC_FLAGS) -I$(SHARED_SOURCE_ROOT) \
 		$(SHARED_TEST_SOURCES) $(LIBVC_HOST_LIBRARY) -lpthread -lsqlite3 -o "$@"
 
 .PHONY: shared-test-run
@@ -28,7 +28,7 @@ CONTACT_DAV_TEST_SOURCES := $(SOURCE_ROOT)/tests/portable/CardDAVMirrorTests.c \
 $(CONTACT_DAV_TEST_OUTPUT): $(CONTACT_DAV_TEST_SOURCES) $(LIBVC_HOST_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror \
-		$(LIBVC_FLAGS) -I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include -I/usr/include/libxml2 \
+		$(LIBVC_FLAGS) -I$(SHARED_SOURCE_ROOT) -I/usr/include/libxml2 \
 		$(CONTACT_DAV_TEST_SOURCES) $(LIBVC_HOST_LIBRARY) -lpthread -lsqlite3 -lxml2 -o "$@"
 
 shared-test-run: contact-dav-test

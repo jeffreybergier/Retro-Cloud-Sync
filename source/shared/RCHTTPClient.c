@@ -1,7 +1,11 @@
 #include "RCHTTPClient.h"
 #include "RCWriteJournal.h"
 
+#ifdef __APPLE__
 #include <AltivecCore/curl/curl.h>
+#else
+#include <curl/curl.h>
+#endif
 
 #include <ctype.h>
 #include <limits.h>

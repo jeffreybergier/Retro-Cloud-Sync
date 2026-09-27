@@ -2,7 +2,7 @@
 #define RC_WRITE_JOURNAL_H
 
 #include "RCError.h"
-#include <AltivecCore/sqlite3.h>
+#include "RCSQLite.h"
 #include <stddef.h>
 
 /* Borrowed connection, confined to the owning account worker. Network operations

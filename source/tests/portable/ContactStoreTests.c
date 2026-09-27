@@ -1,7 +1,7 @@
 #include "RCContactStore.h"
 #include "RCVCard.h"
 
-#include <AltivecCore/sqlite3.h>
+#include "RCSQLite.h"
 
 #include <stdio.h>
 #include <stdlib.h>

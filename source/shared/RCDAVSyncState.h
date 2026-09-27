@@ -1,7 +1,7 @@
 #ifndef RC_DAV_SYNC_STATE_H
 #define RC_DAV_SYNC_STATE_H
 #include "RCError.h"
-#include <AltivecCore/sqlite3.h>
+#include "RCSQLite.h"
 /* Borrowed account connection. Load is read-only and may precede network work;
    Save and Finish require the mirror's atomic account transaction. */
 typedef struct { sqlite3 *db; long long account; } RCDAVSyncState;

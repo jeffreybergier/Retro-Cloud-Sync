@@ -39,3 +39,12 @@ Tests under `portable` are compiled with the native compiler, never the Apple
 cross-compiler. Mac test binaries must not be executed on Linux. The vendored
 libical/libvc libraries are built natively from initialized submodules; upstream
 library test suites are not included in the application suite.
+
+## Standalone Linux prerequisites
+
+Initialize dependencies with `git submodule update --init --recursive`. On
+Debian/Ubuntu the native suite needs `build-essential cmake flex bison python3
+openssl libsqlite3-dev libxml2-dev libcurl4-openssl-dev` (and Git, tar and patch).
+It uses system SQLite/curl headers and libraries and does not need Apple SDKs,
+the cross-compilers, or AltivecCore. The Mac suites still require the project's
+Altivec cross-toolchain and SDK setup.

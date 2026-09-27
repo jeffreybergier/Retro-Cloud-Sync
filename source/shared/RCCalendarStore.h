@@ -3,7 +3,7 @@
 #include "RCDAVClient.h"
 #include "RCICalendar.h"
 #include "RCWriteJournal.h"
-#include <AltivecCore/sqlite3.h>
+#include "RCSQLite.h"
 /* One connection belongs to one account worker. SQL is also used by the native
    mapper; never hand this connection to another thread. */
 typedef struct {

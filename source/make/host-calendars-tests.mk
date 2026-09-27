@@ -11,7 +11,7 @@ CALENDAR_FIXTURE_SOURCES := $(CALENDAR_FIXTURE_ROOT)/CalendarFixtureGenerator.c 
 $(CALENDAR_TEST_OUTPUT): $(CALENDAR_TEST_SOURCES) $(ICAL_HOST_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror $(ICAL_HOST_FLAGS) \
-		-I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include $(CALENDAR_TEST_SOURCES) $(ICAL_HOST_LIBRARY) \
+		-I$(SHARED_SOURCE_ROOT) $(CALENDAR_TEST_SOURCES) $(ICAL_HOST_LIBRARY) \
 		-lsqlite3 -lpthread -o "$@"
 test-host-calendars: $(CALENDAR_TEST_OUTPUT)
 	@"$(CALENDAR_TEST_OUTPUT)"
@@ -24,7 +24,7 @@ CALENDAR_DAV_SOURCES := $(SOURCE_ROOT)/tests/portable/CalDAVMirrorTests.c \
 $(CALENDAR_DAV_TEST): $(CALENDAR_DAV_SOURCES) $(ICAL_HOST_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror $(ICAL_HOST_FLAGS) \
-		-I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include -I/usr/include/libxml2 \
+		-I$(SHARED_SOURCE_ROOT) -I/usr/include/libxml2 \
 		$(CALENDAR_DAV_SOURCES) $(ICAL_HOST_LIBRARY) -lsqlite3 -lxml2 -lpthread -o "$@"
 test-host-calendars: calendar-dav-test
 calendar-dav-test: $(CALENDAR_DAV_TEST)

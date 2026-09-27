@@ -1,5 +1,5 @@
 #include "RCCardDAVMirror.h"
-#include <AltivecCore/sqlite3.h>
+#include "RCSQLite.h"
 #include <libxml/uri.h>
 #include <libxml/xmlmemory.h>
 #include <stdio.h>

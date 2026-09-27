@@ -1,5 +1,5 @@
 #include "RCHTTPClient.h"
-#include <AltivecCore/curl/curl.h>
+#include <curl/curl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

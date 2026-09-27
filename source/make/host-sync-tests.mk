@@ -9,7 +9,7 @@ SYNC_TEST_SOURCES := $(SOURCE_ROOT)/tests/portable/DAVSyncTests.c \
 $(SYNC_TEST_OUTPUT): $(SYNC_TEST_SOURCES) $(wildcard $(SHARED_SOURCE_ROOT)/*.h) $(ICAL_HOST_LIBRARY) $(LIBVC_HOST_LIBRARY)
 	@mkdir -p "$(dir $@)"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror $(ICAL_HOST_FLAGS) $(LIBVC_FLAGS) \
-		-I$(SHARED_SOURCE_ROOT) -I$(ALTIVECCORE_ROOT)/include -I/usr/include/libxml2 \
+		-I$(SHARED_SOURCE_ROOT) -I/usr/include/libxml2 \
 		$(SYNC_TEST_SOURCES) $(ICAL_HOST_LIBRARY) $(LIBVC_HOST_LIBRARY) -lsqlite3 -lxml2 -lpthread -o "$@"
 test-host-sync: $(SYNC_TEST_OUTPUT)
 	@"$(SYNC_TEST_OUTPUT)"

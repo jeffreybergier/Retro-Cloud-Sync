@@ -1,6 +1,6 @@
 #include "RCContactStore.h"
 
-#include <AltivecCore/sqlite3.h>
+#include "RCSQLite.h"
 
 #include <stdlib.h>
 #include <string.h>
