@@ -681,9 +681,17 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
       NSEnumerator *keys;
       NSString *key;
       NSMutableArray *pull = [NSMutableArray array];
-      if (![manager isEnabled] || ![entities count]) {
-        RCErrorSet(error, 1,
-                   "Calendar Sync Services or its client description is unavailable");
+      if (![manager isEnabled]) {
+        NSError *reason = [manager respondsToSelector:@selector(syncDisabledReason)]
+            ? [manager performSelector:@selector(syncDisabledReason)] : nil;
+        if (reason != nil)
+          RCErrorSet(error, 1, "Calendar Sync Services is disabled or unavailable (reason %ld)",
+                     (long)[reason code]);
+        else RCErrorSet(error, 1, "Calendar Sync Services is disabled or unavailable");
+        goto done;
+      }
+      if (![entities count]) {
+        RCErrorSet(error, 1, "Calendar Sync Services client description is unavailable");
         goto done;
       }
       client = [manager registerClientWithIdentifier:clientID

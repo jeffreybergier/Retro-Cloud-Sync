@@ -2,6 +2,13 @@
 
 Legacy Mac OS X mail proxy and contacts/calendar synchronization.
 
+Contacts and Calendars currently publish through Apple's Sync Services. On
+the tested OS X 10.9.5 host (`x9-local`), Sync Services rejects this client
+before registration (disabled reason 1002), so these modes cannot apply their
+mirrors to the local apps. The mail proxy runs independently. Mavericks support
+for Contacts and Calendar will require a separate native integration; resetting
+the Sync Services database does not restore this bridge.
+
 Run tests from the Linux build container:
 
 ```sh

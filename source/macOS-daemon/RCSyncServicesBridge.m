@@ -449,7 +449,12 @@ static int RCSyncServicesPushContactsForClient(
     [context.records setDictionary:aliased];
     manager = [ISyncManager sharedManager];
     if (![manager isEnabled]) {
-      RCErrorSet(error, 1, "Sync Services is disabled or unavailable");
+      NSError *reason = [manager respondsToSelector:@selector(syncDisabledReason)]
+          ? [manager performSelector:@selector(syncDisabledReason)] : nil;
+      if (reason != nil)
+        RCErrorSet(error, 1, "Sync Services is disabled or unavailable (reason %ld)",
+                   (long)[reason code]);
+      else RCErrorSet(error, 1, "Sync Services is disabled or unavailable");
       return 0;
     }
     client = [manager registerClientWithIdentifier:clientIdentifier
