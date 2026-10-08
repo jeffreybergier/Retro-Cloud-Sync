@@ -10,7 +10,10 @@ including LLVM's x86_64 linker so Tiger selects the legacy Intel slice.
 Contacts and Calendars use Sync Services through OS X 10.8. From 10.9 onward,
 they use AddressBook.framework and EventKit.framework. The new frameworks are
 absent from the PPC/i386 slices. Grant Contacts and Calendars access when macOS
-asks. System iCloud sign-in is unnecessary; DAV credentials remain in Keychain.
+asks. The daemon requests access for enabled services at startup, before any
+DAV downloads; a pending Calendar approval resumes the same poll. Denial skips
+only the affected service. System iCloud sign-in is unnecessary; DAV credentials
+remain in Keychain.
 The mail proxy continues independently.
 
 The native backend owns an account-specific Contacts group and local calendars.

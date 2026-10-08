@@ -6,6 +6,12 @@
 /* The cutoff is explicit, not inferred from whether Sync Services happens to work. */
 BOOL RCUsesNativeStoresForVersion(int major, int minor);
 BOOL RCUsesNativeStores(void);
+/* Called by the account worker at startup, before credentials or network work.
+   Request Calendar first because AddressBook may wait for the user's response. */
+void RCNativeRequestAccess(BOOL contacts, BOOL calendars);
+/* Wait only while approval is pending; denial fails this service, and shutdown
+   interrupts the Calendar wait. No native records are read or written here. */
+BOOL RCNativeWaitForAccess(BOOL contacts, RCError *error);
 int RCNativeSyncContacts(RCContactStore *, BOOL, long *, RCError *);
 int RCNativeSyncCalendars(RCCalendarStore *, BOOL, long *, RCError *);
 BOOL RCNativeExchange(RCTwoWayContext *, BOOL, RCError *);

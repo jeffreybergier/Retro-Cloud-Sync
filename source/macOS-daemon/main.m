@@ -251,6 +251,10 @@ static void *RCSyncWorkerMain(void *context)
   RCSyncWorker *worker = (RCSyncWorker *)context;
   unsigned long poll = 0;
 
+  NSAutoreleasePool *accessPool=[[NSAutoreleasePool alloc] init];
+  RCNativeRequestAccess(worker->contactsEnabled,worker->calendarsEnabled);
+  [accessPool release];
+
   /* This per-user LaunchAgent runs in the graphical login session. Keep
      Keychain interaction enabled: on Leopard, disabling it can reject even
      an unlocked item's pre-authorized reader with errSecAuthFailed. */
@@ -290,6 +294,13 @@ static void *RCSyncWorkerMain(void *context)
     if (worker->contactsEnabled && !RCStopRequested) {
       RCLoggerSetContext("Contacts", poll);
       RCErrorClear(&error);
+      if(RCUsesNativeStores() && !RCNativeWaitForAccess(YES,&error)) {
+        if(!RCStopRequested) {
+          RCStatusFailure(@"Contacts",@"Access");
+          RCLogger(RCLogWarning,"Contacts","Access",@"Sync skipped: %s",error.message);
+        }
+        goto contacts_finished;
+      }
       store = RCContactStoreOpen(worker->databasePath, worker->username, &error);
       if (store == NULL) {
         RCStatusFailure(@"Contacts",@"Database");
@@ -369,6 +380,13 @@ contacts_finished:
       RCCalendarStore *calendarStore;
       RCLoggerSetContext("Calendars", poll);
       RCErrorClear(&error);
+      if(RCUsesNativeStores() && !RCNativeWaitForAccess(NO,&error)) {
+        if(!RCStopRequested) {
+          RCStatusFailure(@"Calendars",@"Access");
+          RCLogger(RCLogWarning,"Calendars","Access",@"Sync skipped: %s",error.message);
+        }
+        goto calendar_skipped;
+      }
       calendarStore =
           RCCalendarStoreOpen(worker->calendarDatabasePath, worker->username, &error);
       if (calendarStore == NULL) {
@@ -441,6 +459,7 @@ calendar_finished:
         RCCalendarStoreClose(calendarStore);
       }
     }
+calendar_skipped:
     if (RCStopRequested) {
       RCICloudCredentialsClearPassword(password,passwordLength);
       [pool release];

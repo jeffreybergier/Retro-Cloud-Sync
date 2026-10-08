@@ -1,5 +1,6 @@
 #import "RCNativeSync.h"
 #import "RCAutorelease.h"
+#import "RCLogger.h"
 #import "RCSyncFieldScope.h"
 #import "RCCalendarTime.h"
 #if defined(__LP64__)
@@ -20,24 +21,81 @@ BOOL RCUsesNativeStores(void)
 /* Only modern slices use EventKit. Ask once while permission is pending;
    repeated store initialization with the deprecated 10.8 initializer queues
    repeated dialogs on Mavericks. Never inspect an unauthorized empty store. */
+static EKEventStore *eventRequester=nil;
+static BOOL eventRequested=NO;
 static BOOL RCEventAccess(RCError *error)
 {
-  static EKEventStore *requester=nil;
   EKAuthorizationStatus status=[EKEventStore authorizationStatusForEntityType:EKEntityTypeEvent];
   if(status==EKAuthorizationStatusAuthorized) return YES;
   if(status==EKAuthorizationStatusNotDetermined) {
     @synchronized([EKEventStore class]) {
-      if(!requester) {
-        requester=[[EKEventStore alloc] init];
-        [requester requestAccessToEntityType:EKEntityTypeEvent completion:^(BOOL granted,NSError *failure) {
-          (void)granted; (void)failure;
-          @synchronized([EKEventStore class]) { [requester release]; requester=nil; }
-        }];
+      if(!eventRequested) {
+        eventRequested=YES;
+        eventRequester=[[EKEventStore alloc] init];
+        @try {
+          [eventRequester requestAccessToEntityType:EKEntityTypeEvent completion:^(BOOL granted,NSError *failure) {
+            (void)granted; (void)failure;
+            @synchronized([EKEventStore class]) { [eventRequester release]; eventRequester=nil; }
+          }];
+        } @catch(NSException *exception) {
+          [eventRequester release]; eventRequester=nil; @throw;
+        }
       }
     }
   }
   RCErrorSet(error,1,"Calendar access is pending or denied; allow rCloud in Privacy > Calendars");
   return NO;
+}
+BOOL RCNativeWaitForAccess(BOOL contacts,RCError *error)
+{
+  RCErrorClear(error);
+  if(RCCheckCancellation(error)) return NO;
+  if(!RCUsesNativeStores()) return YES;
+  @try {
+    if(contacts) {
+      if([ABAddressBook addressBook]) return !RCCheckCancellation(error);
+      RCErrorSet(error,1,"Contacts access is unavailable; allow rCloud in Privacy > Contacts");
+      return NO;
+    }
+    for(;;) {
+      if(RCCheckCancellation(error)) return NO;
+      RCErrorClear(error);
+      if(RCEventAccess(error)) return YES;
+      BOOL pending;
+      @synchronized([EKEventStore class]) { pending=eventRequester!=nil; }
+      // A completed denial or failed request is not retried in a tight loop.
+      if(!pending) {
+        // Approval may have arrived between the status read and callback check.
+        if([EKEventStore authorizationStatusForEntityType:EKEntityTypeEvent]==EKAuthorizationStatusAuthorized) {
+          RCErrorClear(error); return YES;
+        }
+        return NO;
+      }
+      // This runs on the account worker; the daemon's main run loop stays live.
+      [NSThread sleepForTimeInterval:0.1];
+    }
+  } @catch(NSException *exception) {
+    (void)exception; RCErrorSet(error,1,"Could not request native privacy access"); return NO;
+  }
+}
+void RCNativeRequestAccess(BOOL contacts,BOOL calendars)
+{
+  if(!RCUsesNativeStores() || RCStopRequested) return;
+  RCError error; RCErrorClear(&error);
+  @try {
+    if(calendars) {
+      RCLogger(RCLogInfo,"Calendars","Access",@"Checking Calendar access at startup");
+      RCEventAccess(&error);
+    }
+    if(contacts && !RCStopRequested) {
+      RCLogger(RCLogInfo,"Contacts","Access",@"Checking Contacts access at startup");
+      if(!RCNativeWaitForAccess(YES,&error) && !RCStopRequested)
+        RCLogger(RCLogWarning,"Contacts","Access",@"%s",error.message);
+    }
+  } @catch(NSException *exception) {
+    (void)exception;
+    RCLogger(RCLogWarning,"Account","Access",@"Native permission request failed; each service will check access before downloading");
+  }
 }
 static BOOL EKSave(EKEventStore *store,SEL selector,id item,BOOL event,RCError *error)
 {
@@ -659,4 +717,6 @@ failed:
 #else
 BOOL RCUsesNativeStoresForVersion(int major,int minor) { return major>10 || (major==10 && minor>=9); }
 BOOL RCUsesNativeStores(void) { return NO; }
+void RCNativeRequestAccess(BOOL contacts,BOOL calendars) { (void)contacts; (void)calendars; }
+BOOL RCNativeWaitForAccess(BOOL contacts,RCError *error) { (void)contacts; RCErrorClear(error); return !RCCheckCancellation(error); }
 #endif
