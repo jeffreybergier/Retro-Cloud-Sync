@@ -25,8 +25,12 @@ Unrelated local contacts and calendars are excluded.
 Native calendar publication supports ordinary events and display alarms.
 One-way mode also imports basic recurrence rules. Two-way recurring series stay
 pending because EventKit cannot supply their complete exception set; the backend
-must not upload or delete a series based only on its master event. Invitation/scheduling data, detached occurrences, exception
-dates, non-Monday recurrence week starts, and audio/mail/repeating alarms remain
+must not upload or delete a series based only on its master event. Invitations
+import as ordinary local events without attendees or organizers. Their complete
+participant data stays in the durable publication base and is preserved in
+uploads of supported local edits. EventKit cannot edit participants or RSVP;
+deleting a local invitation remains pending rather than deleting it from iCloud.
+Detached occurrences, exception dates, non-Monday recurrence week starts, and audio/mail/repeating alarms remain
 cached for attention if they cannot be represented safely. Pending writes and
 conflicts preserve local edits; the native backend does not invoke the obsolete
 Sync Services conflict UI. Native calendar renames/moves require attention;

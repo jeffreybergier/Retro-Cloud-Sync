@@ -886,11 +886,34 @@ int RCTwoWayRunWrites(RCWriteJournal *j, RCHTTPClient *http, const char *type, R
 #if defined(__LP64__)
 /* The native stores supply a durable local baseline instead of Sync Services'
    truth database. Reuse the same lossless encoder, ETag journal and receipts. */
+static BOOL RCNativeParticipantsUnchanged(NSDictionary *base,
+    NSDictionary *truth,NSString *root,RCError *error)
+{
+  NSDictionary *graph=[base objectForKey:@"graph"];
+  NSString *links[]={@"attendees",@"organizer"};
+  for(int k=0;k<2;k++) {
+    NSArray *before=[[graph objectForKey:root] objectForKey:links[k]] ?: [NSArray array];
+    NSArray *after=[[truth objectForKey:root] objectForKey:links[k]] ?: [NSArray array];
+    if(![before isEqual:after]) goto unsafe;
+    NSEnumerator *it=[before objectEnumerator]; NSString *identifier;
+    while((identifier=[it nextObject]))
+      if(!RCTwoWayRecordsEqual([graph objectForKey:identifier],
+          [truth objectForKey:identifier])) goto unsafe;
+  }
+  return YES;
+unsafe:
+  /* Also defer whole-event deletion: the local invitation is only a projection,
+     so its removal must not delete an unseen invitation from iCloud. */
+  RCErrorSet(error,1,"EventKit cannot upload invitation deletion or participant changes");
+  return NO;
+}
 static BOOL RCNativeQueue(RCTwoWayContext *c,NSDictionary *base,NSDictionary *truth,
     NSString *root,RCNativeStore *native,NSDictionary *observed,RCError *error)
 {
   RCWriteJournal *j=&c->journal; BOOL creating=base==nil, deleting=[truth objectForKey:root]==nil;
   if(creating && deleting) { RCErrorSet(error,1,"Unowned native deletion has no publication base"); return NO; }
+  if([c->rootEntity isEqual:@"com.apple.calendars.Event"] &&
+      !RCNativeParticipantsUnchanged(base,truth,root,error)) return NO;
   NSMutableDictionary *desired=deleting ? Deletion(base,truth) :
       RCTwoWayEncodeFields(c->encode,c->context,base,truth,root,error);
   if(!desired) { if(!error->code) RCErrorSet(error,1,"Native edit cannot be represented safely"); return NO; }

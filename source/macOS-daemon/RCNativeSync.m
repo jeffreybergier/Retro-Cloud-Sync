@@ -397,6 +397,9 @@ static NSDictionary *EKRead(id event,NSDictionary *resource)
     [graph setObject:r forKey:key]; [alarms addObject:key]; n++;
   }
   [record setObject:alarms forKey:@"display alarms"];
+  /* Attendee/organizer links and children deliberately stay out of this native
+     snapshot. RCChangedGraph retains them from the full publication base;
+     their absence in EventKit is not a user edit or a participant deletion. */
   /* Capture unsupported local changes too, so they cannot be mistaken for a
      complete deletion or silently accepted by an upload receipt. */
   if([[event valueForKey:@"attendees"] count]) Put(record,@"native attendees",[NSNumber numberWithUnsignedInteger:[[event valueForKey:@"attendees"] count]]);
@@ -406,8 +409,8 @@ static BOOL EKCanWrite(NSDictionary *resource,RCError *error)
 {
   NSDictionary *graph=[resource objectForKey:@"graph"], *r=[graph objectForKey:[resource objectForKey:@"root"]];
   if([[r objectForKey:@"detached events"] count] || [[r objectForKey:@"exception dates"] count] || [[r objectForKey:@"main event"] count] ||
-      [[r objectForKey:@"attendees"] count] || [[r objectForKey:@"organizer"] count] || [[r objectForKey:@"audio alarms"] count] || [[r objectForKey:@"mail alarms"] count]) {
-    RCErrorSet(error,1,"EventKit publication needs unsupported exception, invitation or alarm fields; retained for attention"); return NO;
+      [[r objectForKey:@"audio alarms"] count] || [[r objectForKey:@"mail alarms"] count]) {
+    RCErrorSet(error,1,"EventKit publication needs unsupported exception or alarm fields; retained for attention"); return NO;
   }
   NSEnumerator *it=[[r objectForKey:@"recurrences"] objectEnumerator]; NSString *key;
   while((key=[it nextObject])) {
@@ -699,7 +702,11 @@ failed:
           NSMutableDictionary *observed=[NSMutableDictionary dictionaryWithDictionary:[snapshot objectForKey:key] ?: [NSDictionary dictionary]];
           NSEnumerator *f=[fields objectEnumerator]; NSString *field;
           while((field=[f nextObject])) { Put(record,field,[value objectForKey:field]); Put(observed,field,[[raw objectForKey:key] objectForKey:field]); }
-          [base setObject:record forKey:key]; [snapshot setObject:observed forKey:key];
+          [base setObject:record forKey:key];
+          /* Wire-only children (notably invitation participants) have no native
+             snapshot. An empty placeholder would look like a deleted native
+             record on the next read and remove it from the full wire graph. */
+          Put(snapshot,key,[raw objectForKey:key] ? observed : nil);
         } else { [base setObject:value forKey:key]; Put(snapshot,key,[raw objectForKey:key]); }
       }
     }

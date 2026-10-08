@@ -113,3 +113,12 @@ native fixtures were removed. Rebuilt apps signed with the same development
 identity reused the privacy grants without prompts. The legacy mapper suite and
 portable Linux business suite also passed; Apple Silicon runtime behavior and
 live iCloud writes were not exercised.
+
+Invitation regressions use synthetic attendees and organizers with RSVP/status
+and private parameters, including folded wire lines. They compare the entire
+queued `.ics` body after native edits and database reopening, exercise one-way
+to two-way switching, verified acknowledgement/replay, remote participant
+updates, and a concurrent remote update pinned to the original ETag. Native
+invitation deletion must stay pending without queuing a cloud DELETE. Remote
+outcomes are simulated in the journal; the portable write-safety suite separately
+checks conditional HTTP writes and precondition conflicts.

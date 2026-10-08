@@ -86,6 +86,106 @@ static void Cleanup(RCWriteJournal j,BOOL contacts)
   }
   for(NSString *identifier in containers) { EKCalendar *calendar=[events calendarWithIdentifier:identifier]; if(calendar) [events removeCalendar:calendar commit:YES error:NULL]; }
 }
+/* Exercise the real native projection, durable baseline, reverse mapper and
+   queued wire body. No participant data is fabricated in the EventKit copy. */
+static void InvitationTests(NSString *directory)
+{
+  NSString *path=[directory stringByAppendingPathComponent:@"invitations.sqlite"];
+  RCCalendarStore *store=RCCalendarStoreOpen([path fileSystemRepresentation],
+      "offline-invitation-test",&error); CHECK(store);
+  @try {
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+    NSString *body=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//rCloud offline//EN\r\n"
+        @"BEGIN:VEVENT\r\nUID:offline-invitation\r\nDTSTART:20261012T090000Z\r\nDTEND:20261012T100000Z\r\n"
+        @"SUMMARY:Offline invitation\r\nDESCRIPTION:Original notes\r\nLOCATION:Original room\r\n"
+        @"ORGANIZER;CN=Fixture Host;X-PRIVATE=host:mailto:host@example.invalid\r\n"
+        @"ATTENDEE;CN=Fixture One;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;\r\n"
+        @" RSVP=TRUE;X-PRIVATE=one:mailto:one@example.invalid\r\n"
+        @"ATTENDEE;CN=Fixture Two;ROLE=OPT-PARTICIPANT;PARTSTAT=TENTATIVE;RSVP=FALSE:mailto:two@example.invalid\r\n"
+        @"X-PRIVATE-FIXTURE:preserve\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    CalendarSeed(store,Data(body),"\"invite-1\""); SyncCalendar(store,NO,YES);
+    NSDictionary *row=FirstRow(j); CHECK(row);
+    NSString *eventID=[row objectForKey:@"id"];
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
+    EKEvent *event=[events eventWithIdentifier:eventID];
+    CHECK(event && [[event title] isEqual:@"Offline invitation"]);
+    CHECK([[event attendees] count]==0 && [event organizer]==nil);
+    SyncCalendar(store,NO,YES); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+    puts("PASS: Invitation imports without native participants; one-way and switching to two-way queue no writes");
+
+    // Reopen the journal as after a daemon restart, then edit supported fields.
+    RCCalendarStoreClose(store); store=NULL;
+    store=RCCalendarStoreOpen([path fileSystemRepresentation],"offline-invitation-test",&error); CHECK(store);
+    j=RCCalendarStoreWriteJournal(store);
+    [event setTitle:@"Locally edited invitation"]; [event setLocation:nil];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    long long operation=0; CHECK(RCWriteJournalNext(&j,2000000000,&operation,&error)); CHECK(operation>0);
+    RCWriteOperation o; CHECK(RCWriteJournalGet(&j,operation,&o,&error));
+    NSString *expected=[[body stringByReplacingOccurrencesOfString:@"SUMMARY:Offline invitation"
+        withString:@"SUMMARY:Locally edited invitation"]
+        stringByReplacingOccurrencesOfString:@"LOCATION:Original room\r\n" withString:@""];
+    CHECK(!strcmp(o.kind,"update") && !strcmp(o.baseETag,"\"invite-1\""));
+    CHECK([[NSData dataWithBytes:o.baseBody length:o.baseLength] isEqual:Data(body)]);
+    CHECK([[NSData dataWithBytes:o.desiredBody length:o.desiredLength] isEqual:Data(expected)]);
+    RCWriteOperationClear(&o);
+    NSData *confirmed=ConfirmWrite(j); CalendarSeed(store,confirmed,"\"confirmed\"");
+    SyncCalendar(store,YES,YES); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==1);
+    puts("PASS: Invitation edits preserve exact attendee/organizer lines, parameters and folding after reopen and acknowledgement");
+
+    // A remote participant change updates the durable base even though there
+    // is no visible native participant change. Later local edits must retain it.
+    body=[expected stringByReplacingOccurrencesOfString:@"PARTSTAT=TENTATIVE" withString:@"PARTSTAT=DECLINED"];
+    body=[body stringByReplacingOccurrencesOfString:@"END:VEVENT"
+        withString:@"ATTENDEE;CN=Fixture Three;PARTSTAT=ACCEPTED:mailto:three@example.invalid\r\nEND:VEVENT"];
+    CalendarSeed(store,Data(body),"\"invite-2\""); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
+
+    // Deleting an incomplete local invitation must not delete it from iCloud.
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK(event);
+    CHECK([events removeEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='unsupported-native-edit'")==1);
+    SyncCalendar(store,NO,YES); // Restore the local copy from the retained mirror.
+    eventID=[FirstRow(j) objectForKey:@"id"];
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK(event);
+    puts("PASS: Local invitation deletion stays pending and never queues a cloud DELETE");
+
+    RCCalendarStoreClose(store); store=NULL;
+    store=RCCalendarStoreOpen([path fileSystemRepresentation],"offline-invitation-test",&error); CHECK(store);
+    j=RCCalendarStoreWriteJournal(store);
+    [event setNotes:@"Second local edit"];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    NSString *newRemote=[body stringByReplacingOccurrencesOfString:@"PARTSTAT=DECLINED" withString:@"PARTSTAT=ACCEPTED"];
+    CalendarSeed(store,Data(newRemote),"\"invite-3\""); SyncCalendar(store,YES,NO);
+    CHECK(RCWriteJournalNext(&j,2000000000,&operation,&error)); CHECK(operation>0);
+    CHECK(RCWriteJournalGet(&j,operation,&o,&error));
+    expected=[body stringByReplacingOccurrencesOfString:@"DESCRIPTION:Original notes" withString:@"DESCRIPTION:Second local edit"];
+    CHECK(!strcmp(o.baseETag,"\"invite-2\""));
+    CHECK([[NSData dataWithBytes:o.baseBody length:o.baseLength] isEqual:Data(body)]);
+    CHECK([[NSData dataWithBytes:o.desiredBody length:o.desiredLength] isEqual:Data(expected)]);
+    RCWriteOperationClear(&o);
+    // Simulate the writer's conditional-write conflict and verification GET.
+    CHECK(RCWriteJournalBeginAttempt(&j,operation,2000000000,&error));
+    NSData *remote=Data(newRemote);
+    CHECK(RCWriteJournalRecordResult(&j,operation,"conflict",200,"\"invite-3\"",[remote bytes],[remote length],&error));
+    SyncCalendar(store,YES,NO); SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==2);
+    CHECK(RCWriteJournalGet(&j,operation,&o,&error));
+    CHECK(!strcmp(o.state,"conflict") && !strcmp(o.baseETag,"\"invite-2\""));
+    CHECK([[NSData dataWithBytes:o.desiredBody length:o.desiredLength] isEqual:Data(expected)]);
+    RCWriteOperationClear(&o);
+    puts("PASS: Remote participant updates survive later edits; concurrent changes retain the immutable ETag base and remain in conflict");
+  } @finally {
+    if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
+  }
+}
 int main(int argc,char **argv)
 {
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init]; setbuf(stdout,NULL); int result=1;
@@ -189,7 +289,8 @@ int main(int argc,char **argv)
     SyncCalendar(calendars,YES,NO);
     CHECK(Count(ej,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
     [calendarID release];
-    puts("PASS: Locally created contacts/events queue once across repeated exchanges"); result=0;
+    puts("PASS: Locally created contacts/events queue once across repeated exchanges");
+    InvitationTests(directory); result=0;
   } @catch(NSException *exception) { fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]); }
   @try { if(contacts) Cleanup(RCContactStoreWriteJournal(contacts),YES); if(calendars) Cleanup(RCCalendarStoreWriteJournal(calendars),NO); }
   @catch(NSException *exception) { fprintf(stderr,"Cleanup needs retry: %s\n",[[exception name] UTF8String]); result=1; }
