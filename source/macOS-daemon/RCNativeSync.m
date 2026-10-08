@@ -805,7 +805,8 @@ failed:
 }
 /* Before audio support, the ordinal reader could label Mavericks' implicit
    Basso default as display and shift a real reminder to a synthetic key. Only
-   migrate the exact unchanged legacy receipt: no native or wire data is saved. */
+   migrate the exact unchanged legacy receipt, even without source reminders:
+   no native or wire data is saved. */
 - (NSDictionary *)repairLegacyCalendarSnapshot:(NSDictionary *)saved error:(RCError *)error;
 {
   NSString *root=[saved objectForKey:@"root"];
@@ -813,7 +814,7 @@ failed:
   NSDictionary *source=[base objectForKey:root], *old=[snapshot objectForKey:root];
   NSArray *sourceKeys=[source objectForKey:@"display alarms"], *oldKeys=[old objectForKey:@"display alarms"];
   NSUInteger count=[sourceKeys count];
-  if(![[source objectForKey:@"all day"] boolValue] || !count ||
+  if(![[source objectForKey:@"all day"] boolValue] ||
       [[source objectForKey:@"audio alarms"] count] || [[source objectForKey:@"recurrences"] count] ||
       [oldKeys count]!=count+1 || [[old objectForKey:@"audio alarms"] count] || [snapshot count]!=count+2)
     return saved;
