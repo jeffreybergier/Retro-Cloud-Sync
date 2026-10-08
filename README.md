@@ -27,14 +27,16 @@ alarms with relative or absolute triggers. Sounds use the matching installed
 system sound, or Basso (another installed sound if Basso is unavailable). Missing
 or custom attachments are retained unchanged for uploads; fallback selection
 does not change the cloud alarm. Explicit local sound changes can upload.
-One-way mode also imports basic recurrence rules. Two-way recurring series stay
+One-way mode also imports basic recurrence rules. Recurring masters with `EXDATE`
+import without exclusions locally, so excluded occurrences appear in Mavericks.
+The full original exclusions remain in the retained cloud data. Two-way recurring series stay
 pending because EventKit cannot supply their complete exception set; the backend
 must not upload or delete a series based only on its master event. Invitations
 import as ordinary local events without attendees or organizers. Their complete
 participant data stays in the durable publication base and is preserved in
 uploads of supported local edits. EventKit cannot edit participants or RSVP;
 deleting a local invitation remains pending rather than deleting it from iCloud.
-Detached occurrences, exception dates, non-Monday recurrence week starts, and mail/repeating alarms remain
+Detached occurrences, non-recurring exception structures, non-Monday recurrence week starts, and mail/repeating alarms remain
 cached for attention if they cannot be represented safely. Pending writes and
 conflicts preserve local edits; the native backend does not invoke the obsolete
 Sync Services conflict UI. Native calendar renames/moves require attention;

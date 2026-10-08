@@ -565,9 +565,9 @@ static NSDictionary *EKRead(id event,NSDictionary *resource,BOOL recovering,
   }
   [record setObject:recurrences forKey:@"recurrences"];
   if(!EKReadAlarms(event,resource,record,graph,recovering,error)) return nil;
-  /* Attendee/organizer links and children deliberately stay out of this native
-     snapshot. RCChangedGraph retains them from the full publication base;
-     their absence in EventKit is not a user edit or a participant deletion. */
+  /* Attendee/organizer links, children and exception dates deliberately stay
+     out of this native snapshot. RCChangedGraph retains them from the full publication base;
+     their absence in EventKit is not a user edit or a cloud deletion. */
   /* Capture unsupported local changes too, so they cannot be mistaken for a
      complete deletion or silently accepted by an upload receipt. */
   if([[event valueForKey:@"attendees"] count]) Put(record,@"native attendees",[NSNumber numberWithUnsignedInteger:[[event valueForKey:@"attendees"] count]]);
@@ -594,7 +594,11 @@ static BOOL EKRepairDefaultAlarm(EKEventStore *store,id event,
 static BOOL EKCanWrite(NSDictionary *resource,RCError *error)
 {
   NSDictionary *graph=[resource objectForKey:@"graph"], *r=[graph objectForKey:[resource objectForKey:@"root"]];
-  if([[r objectForKey:@"detached events"] count] || [[r objectForKey:@"exception dates"] count] || [[r objectForKey:@"main event"] count] ||
+  /* Project a recurring master without its EXDATE exclusions. The full wire
+     base retains them; native two-way series edits/deletions remain deferred.
+     Detached components and non-recurring exception structures stay pending. */
+  if([[r objectForKey:@"detached events"] count] ||
+      ([[r objectForKey:@"exception dates"] count] && ![[r objectForKey:@"recurrences"] count]) || [[r objectForKey:@"main event"] count] ||
       [[r objectForKey:@"mail alarms"] count]) {
     RCErrorSet(error,1,"EventKit publication needs unsupported exception or alarm fields; retained for attention"); return NO;
   }

@@ -459,6 +459,66 @@ static void LegacyDefaultDisplayTests(NSString *directory,NSUInteger reminders)
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
 }
+static void ExcludedOccurrenceTests(NSString *directory,BOOL allDay)
+{
+  NSString *account=allDay ? @"offline-date-exclusions" : @"offline-time-exclusions";
+  NSString *path=[directory stringByAppendingPathComponent:[account stringByAppendingString:@".sqlite"]];
+  RCCalendarStore *store=RCCalendarStoreOpen([path fileSystemRepresentation],[account UTF8String],&error); CHECK(store);
+  @try {
+    NSString *dates=allDay ? @"DTSTART;VALUE=DATE:20301012\r\nDTEND;VALUE=DATE:20301013\r\nEXDATE;VALUE=DATE:20301013,\r\n 20301014\r\n" :
+        @"DTSTART;TZID=Asia/Tokyo:20301012T090000\r\nDTEND;TZID=Asia/Tokyo:20301012T100000\r\nEXDATE;TZID=Asia/Tokyo:20301013T090000,\r\n 20301014T090000\r\n";
+    NSString *body=[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//rCloud offline//EN\r\nBEGIN:VEVENT\r\nUID:offline-exclusions\r\n%@SUMMARY:Offline excluded occurrences\r\nRRULE:FREQ=DAILY;COUNT=4\r\nX-PRIVATE-FIXTURE:preserve\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",dates];
+    if(!allDay) body=[body stringByReplacingOccurrencesOfString:@"BEGIN:VEVENT"
+        withString:@"BEGIN:VTIMEZONE\r\nTZID:Asia/Tokyo\r\nBEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nTZOFFSETFROM:+0900\r\nTZOFFSETTO:+0900\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT"];
+    CalendarSeed(store,Data(body),"\"exclusions-1\""); SyncCalendar(store,NO,YES);
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store); NSDictionary *row=FirstRow(j);
+    NSString *root=[[row objectForKey:@"resource"] objectForKey:@"root"], *eventID=[row objectForKey:@"id"];
+    NSDictionary *resource=[row objectForKey:@"resource"];
+    CHECK([[[resource objectForKey:@"graph"] objectForKey:root] objectForKey:@"exception dates"]);
+    CHECK([[[[resource objectForKey:@"graph"] objectForKey:root] objectForKey:@"exception dates"] count]==2);
+    CHECK([[resource objectForKey:@"body"] isEqual:Data(body)]);
+    CHECK([[[CalendarSnapshot(j,root) objectForKey:root] objectForKey:@"exception dates"] count]==0);
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease]; EKEvent *event=[events eventWithIdentifier:eventID];
+    CHECK(event && [[event recurrenceRules] count]==1);
+    NSPredicate *predicate=[events predicateForEventsWithStartDate:[[event startDate] dateByAddingTimeInterval:-86400]
+        endDate:[[event startDate] dateByAddingTimeInterval:5*86400] calendars:[NSArray arrayWithObject:[event calendar]]];
+    CHECK([[events eventsMatchingPredicate:predicate] count]==4);
+    SyncCalendar(store,NO,YES); CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    RCCalendarStoreClose(store); store=RCCalendarStoreOpen([path fileSystemRepresentation],[account UTF8String],&error); CHECK(store);
+    j=RCCalendarStoreWriteJournal(store); SyncCalendar(store,NO,YES);
+    CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
+    printf("PASS: %s EXDATE series imports all native occurrences, preserves exact exclusions and replays after reopen without duplicate events\n",allDay ? "All-day" : "Time-zone");
+
+    // Recurring-series writes remain blocked, including supported title edits.
+    // A master-only native copy cannot prove edits to excluded occurrences.
+    [events reset]; event=[events eventWithIdentifier:eventID]; [event setTitle:@"Local excluded-series edit"];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO); SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-needs-review'")==1);
+    CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event title] isEqual:@"Local excluded-series edit"]);
+    CHECK([events removeEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO); CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
+    puts("PASS: Local series edits/deletions stay pending and never upload EXDATE removal or delete the cloud series");
+
+    // A new remote exclusion set must replace the retained base, even though
+    // neither set is represented in the native copy.
+    NSString *updated=[body stringByReplacingOccurrencesOfString:allDay ? @"20301014\r\n" : @"20301014T090000\r\n"
+        withString:allDay ? @"20301015\r\n" : @"20301015T090000\r\n"];
+    CalendarSeed(store,Data(updated),"\"exclusions-2\""); SyncCalendar(store,NO,YES);
+    CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(updated)]);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    SyncCalendar(store,YES,NO); CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    puts("PASS: Remote exclusion updates retain exact folded EXDATE data without generating any cloud writes");
+  } @finally {
+    if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
+  }
+}
 static void AudioAlarmTests(NSString *directory)
 {
   NSString *path=[directory stringByAppendingPathComponent:@"audio-alarms.sqlite"];
@@ -611,6 +671,7 @@ int main(int argc,char **argv)
       if(attempt==0) printf("WAITING FOR CALENDAR ACCESS: %s\n",error.message);
       if(attempt==599) CHECK(NO); [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1]];
     }
+    ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES);
     AllDayAlarmTests(directory); LegacyDefaultDisplayTests(directory,2); LegacyDefaultDisplayTests(directory,1); LegacyDefaultDisplayTests(directory,0);
     row=FirstRow(ej); CHECK(row); NSString *eventID=[[row objectForKey:@"id"] copy];
     EKEventStore *events=[[[EKEventStore alloc] init] autorelease];

@@ -123,6 +123,11 @@ invitation deletion must stay pending without queuing a cloud DELETE. Remote
 outcomes are simulated in the journal; the portable write-safety suite separately
 checks conditional HTTP writes and precondition conflicts.
 
+EXDATE regressions cover all-day and time-zone recurring masters with multiple
+folded exclusions. They verify all occurrences appear locally, exact original
+wire data survives publication/reopen and remote exclusion updates, and local
+series edits/deletions never upload exclusion removal or a cloud DELETE.
+
 Audio regressions cover mixed display/audio alarms, relative/absolute triggers,
 system-file and named sounds, custom and absent-attachment fallbacks, one-way
 recurring imports, and new local audio alarms. They check exact wire preservation
