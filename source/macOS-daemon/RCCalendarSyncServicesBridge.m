@@ -320,7 +320,7 @@ static int Alarms(RCCalendarStore *store, icalcomponent *root, icalcomponent *ev
     trigger = icalproperty_get_trigger(p);
     if (!icaltime_is_null_time(trigger.time)) {
       if(!icaltime_is_utc(trigger.time)) { RCErrorSet(error,1,"Absolute reminders must use UTC"); return 0; }
-      NSCalendarDate *date = Date(root, p, trigger.time, NO, error);
+      NSCalendarDate *date = Date(root, p, trigger.time, NULL, error);
       if (!date)
         return 0;
       [a setObject:date forKey:@"triggerdate"];
@@ -442,7 +442,7 @@ static NSMutableDictionary *MapResource(RCCalendarStore *store, long long resour
         RCErrorSet(error, 1, "Ranged recurrence exceptions are not yet supported");
         goto done;
       }
-      original = Date(root, p, icalproperty_get_recurrenceid(p), NO, error);
+      original = Date(root, p, icalproperty_get_recurrenceid(p), NULL, error);
       if (!original)
         goto done;
       if (icalcomponent_get_status(event) == ICAL_STATUS_CANCELLED) {
@@ -500,7 +500,7 @@ static NSMutableDictionary *MapResource(RCCalendarStore *store, long long resour
     }
     for (p = icalcomponent_get_first_property(event, ICAL_EXDATE_PROPERTY); p;
          p = icalcomponent_get_next_property(event, ICAL_EXDATE_PROPERTY)) {
-      NSCalendarDate *date = Date(root, p, icalproperty_get_exdate(p), NO, error);
+      NSCalendarDate *date = Date(root, p, icalproperty_get_exdate(p), NULL, error);
       if (!date)
         goto done;
       [exceptions addObject:date];

@@ -193,9 +193,8 @@ static NSString *RCStatusDate(id value)
 
   if (!succeeded) {
     [self setServiceStatus:@"Error" severity:@"red" paused:NO];
-    NSRunAlertPanel(@"Retro Cloud Sync",
-        errorMessage != nil ? errorMessage : @"Unknown service error",
-        @"OK", nil, nil);
+    NSRunAlertPanel(@"Retro Cloud Sync", @"%@", @"OK", nil, nil,
+        errorMessage != nil ? errorMessage : @"Unknown service error");
     [self setServiceStatus:@"Error" severity:@"red" paused:NO];
   } else {
     serviceRunning_ = !serviceRunning_;

@@ -2,17 +2,56 @@
 
 Legacy Mac OS X mail proxy and contacts/calendar synchronization.
 
-Contacts and Calendars currently publish through Apple's Sync Services. On
-the tested OS X 10.9.5 host (`x9-local`), Sync Services rejects this client
-before registration (disabled reason 1002), so these modes cannot apply their
-mirrors to the local apps. The mail proxy runs independently. Mavericks support
-for Contacts and Calendar will require a separate native integration; resetting
-the Sync Services database does not restore this bridge.
+The app and daemon are quad-fat binaries: PPC and i386 use the 10.5 SDK
+(minimum OS 10.4); x86_64 and arm64 use the 11.3 SDK (minimum OS 10.9
+and 11.0 respectively). This follows ENIL's Altivec Intelligence arrangement,
+including LLVM's x86_64 linker so Tiger selects the legacy Intel slice.
+
+Contacts and Calendars use Sync Services through OS X 10.8. From 10.9 onward,
+they use AddressBook.framework and EventKit.framework. The new frameworks are
+absent from the PPC/i386 slices. Grant Contacts and Calendars access when macOS
+asks. System iCloud sign-in is unnecessary; DAV credentials remain in Keychain.
+The mail proxy continues independently.
+
+The native backend owns an account-specific Contacts group and local calendars.
+One-way mode imports the retained server mirror. Two-way mode detects edits and
+new records in those managed containers, then uses the existing conditional DAV
+write journal. Add new contacts to the account's rCloud group to upload them.
+Unrelated local contacts and calendars are excluded.
+
+Native calendar publication supports ordinary events and display alarms.
+One-way mode also imports basic recurrence rules. Two-way recurring series stay
+pending because EventKit cannot supply their complete exception set; the backend
+must not upload or delete a series based only on its master event. Invitation/scheduling data, detached occurrences, exception
+dates, non-Monday recurrence week starts, and audio/mail/repeating alarms remain
+cached for attention if they cannot be represented safely. Pending writes and
+conflicts preserve local edits; the native backend does not invoke the obsolete
+Sync Services conflict UI. Native calendar renames/moves require attention;
+retired calendar containers are retained. New local events are discovered from
+1970 through 2101 (existing mapped events use direct identity lookups). Interrupted ambiguous native saves stop replay to
+avoid duplicates. Use the recovery inspection/export commands before recovery.
+
+Build inside Altivec Intelligence with both SDK volumes installed:
+
+```sh
+podman compose run --rm altivec "make release"
+```
+
+Modern slices are signed with `rcodesign` before universal assembly. Compose
+mounts `~/.local/share/retro-cloud-sync/signing` read-only; place a persistent
+certificate/private key PEM in `development.pem`, or override
+`RCLOUD_SIGNING_DIR` / the Make variable `RCLOUD_SIGNING_PEM`. Keep private keys
+outside the repository. Without a PEM, builds use ad-hoc signatures and privacy
+grants may need renewal after rebuilds. A local self-signed identity gives stable
+designated requirements; it is not Developer ID distribution or notarization.
+The native test app uses the same persistent identity and requests Calendar
+permission once while a request is pending.
 
 Run tests from the Linux build container:
 
 ```sh
 make test-business-linux
+make test-mac-native-stores TEST_HOST=x9-local
 make test-business-mac TEST_HOST=x4-vm
 make test-ui-mac TEST_HOST=x4-vm
 ```

@@ -356,8 +356,8 @@ static NSString * const kRCSavedAccount = @"RCKeychainSavedAppleID";
 
 - (void)setError:(NSString *)message;
 {
-  NSRunAlertPanel(@"Retro Cloud Sync",
-      message != nil ? message : @"Unknown error", @"OK", nil, nil);
+  NSRunAlertPanel(@"Retro Cloud Sync", @"%@", @"OK", nil, nil,
+      message != nil ? message : @"Unknown error");
 }
 
 - (void)rememberSavedAccount:(NSString *)username;

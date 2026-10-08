@@ -5,7 +5,11 @@
 
 #import <AppKit/AppKit.h>
 
-@interface MailServerView : NSView {
+@interface MailServerView : NSView
+#if defined(__LP64__)
+    <NSTextFieldDelegate>
+#endif
+{
  @private
   NSTextField *imapLocalPortField_;
   NSTextField *imapServerField_;

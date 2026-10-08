@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>NSContactsUsageDescription</key>
+  <string>rCloud syncs your contacts with the configured DAV account.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>rCloud syncs your local calendars with the configured DAV account.</string>
   <key>CFBundleExecutable</key>
   <string>rcloudd</string>
   <key>CFBundleIdentifier</key>

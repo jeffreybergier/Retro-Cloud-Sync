@@ -8,6 +8,7 @@ and `test-mac-*` commands remain supported.
 | --- | --- | --- |
 | Linux business logic | `make test-business-linux` | Native C parsing, stores, DAV mirrors/tokens, journals, conflict recovery, resource patching, local HTTP/TLS, photos, status, connection diagnostics, field/receipt policies and calendar projection |
 | macOS business integration | `make test-business-mac TEST_HOST=x4-vm` | Logging/status, shutdown, contacts/calendars Sync Services, conflict sessions, full two-way sync (contacts and calendars), plus the dedicated photo/partial-field scenarios |
+| macOS native stores (10.9+) | `make test-mac-native-stores TEST_HOST=x9-local` | AddressBook/EventKit import, edit, journal acknowledgement and owned-record cleanup; synthetic offline fixtures |
 | macOS UI | `make test-ui-mac TEST_HOST=x4-vm` | Preferences, Accessibility, validation feedback, Start/Stop and installed service interaction |
 
 Linux tests run synthetic fixtures without credentials or external servers. The
@@ -86,3 +87,29 @@ openssl libsqlite3-dev libxml2-dev libcurl4-openssl-dev` (and Git, tar and patch
 It uses system SQLite/curl headers and libraries and does not need Apple SDKs,
 the cross-compilers, or AltivecCore. The Mac suites still require the project's
 Altivec cross-toolchain and SDK setup.
+
+## Mavericks native stores
+
+Build `make build-mac-native-tests` in Altivec Intelligence. The harness uses the
+modern SDK and the production AddressBook/EventKit adapters. Run
+`make test-mac-native-stores TEST_HOST=x9-local` with SSH access to the logged-in
+Mac. Alternatively run `TEST_HOST=x9-local python3
+source/tests/macOS/native-stores/run-remote.py` on the host after the container
+build. No iCloud account or credentials are used and no HTTP requests are made.
+
+The runner installs `rCloud Native Tests.app` under
+`~/Desktop/RetroCloudNativeTests`, opens it in the desktop session, and collects
+logs in `build/tests/macOS/native-stores`. Approve its Contacts and Calendars
+prompts. It creates only disposable records and containers, then removes those
+identified by its private ownership journal. Run one native suite at a time and
+stop the production daemon first. Keep the run directory if interrupted; never
+reset a personal Contacts/Calendar database to recover a test.
+
+Validated on `x9-local` (OS X 10.9.5): one-way creation/update/deletion,
+stable native identities, two-way ordinary-event/contact edits and verified
+acknowledgements, lossless private-field retention, local creations without
+duplicate uploads, and explicit deferral of two-way recurring series. Disposable
+native fixtures were removed. Rebuilt apps signed with the same development
+identity reused the privacy grants without prompts. The legacy mapper suite and
+portable Linux business suite also passed; Apple Silicon runtime behavior and
+live iCloud writes were not exercised.

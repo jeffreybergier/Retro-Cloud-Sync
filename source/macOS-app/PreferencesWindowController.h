@@ -10,7 +10,11 @@
 @class ContactsView;
 @class DaemonLogView;
 
-@interface PreferencesWindowController : NSWindowController {
+@interface PreferencesWindowController : NSWindowController
+#if defined(__LP64__)
+    <NSWindowDelegate, NSToolbarDelegate>
+#endif
+{
  @private
   DaemonStatusView *daemonStatusView_;
   MailServerView *mailServerView_;

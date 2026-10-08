@@ -5,7 +5,7 @@ DAEMON_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-daemon
 DAEMON_INFO_PLIST := $(DAEMON_SOURCE_ROOT)/Info.plist
 DAEMON_BUILD_ROOT := $(BUILD_ROOT)/macOS-daemon/$(CONFIG)
 DAEMON_SOURCES := main.m RCCalendarSyncServicesBridge.m RCSyncServicesBridge.m RCSyncConflictSession.m \
-	RCContactConflictResolver.m RCTwoWaySync.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m RCCalendarTwoWay.m RCCalendarOperations.m \
+	RCContactConflictResolver.m RCTwoWaySync.m RCNativeSync.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m RCCalendarTwoWay.m RCCalendarOperations.m \
 	RCMailProxy.c RCLogger.m RCStatus.m
 DAEMON_SOURCE_PATHS := $(addprefix $(DAEMON_SOURCE_ROOT)/,$(DAEMON_SOURCES))
 DAEMON_INTERMEDIATES := $(DAEMON_BUILD_ROOT)/Intermediates
@@ -41,7 +41,7 @@ $(DAEMON_INTERMEDIATES)/i386/RCSyncServicesBridge.o: \
 
 $(DAEMON_OUTPUT): $(DAEMON_INTERMEDIATES)/ppc.bin \
 		$(DAEMON_INTERMEDIATES)/i386.bin
-	@echo " [3/3] Merging daemon universal binary (ppc, i386)..."
+	@echo " [3/3] Merging daemon universal binary (ppc, i386, x86_64, arm64)..."
 	@mkdir -p "$(dir $@)"
 	@$(LIPO) -create $^ -output "$@"
 

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>NativeStoreTests</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.altivecintelligence.rcloud.native-tests</string>
+	<key>CFBundleName</key>
+	<string>rCloud Native Tests</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Verify offline calendar synchronization using disposable fixtures.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Verify offline contact synchronization using disposable fixtures.</string>
+</dict>
+</plist>

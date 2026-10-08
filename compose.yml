@@ -55,6 +55,8 @@ services:
     volumes:
       # Mount the current project as the user workspace
       - .:/repo/user
+      # Persistent local signing identity; private key stays outside the repo/image.
+      - ${RCLOUD_SIGNING_DIR:-${HOME}/.local/share/retro-cloud-sync/signing}:/rcloud-signing:ro
       # Persist AI CLI settings, credentials, and shell state
       - ~/.altivec:/root
       # Mount Apple SDK archives read-only; defaults to ./.altivec-sdk
@@ -92,6 +94,8 @@ services:
     volumes:
       # Mount the current project as the user workspace
       - .:/repo/user
+      # Persistent local signing identity; private key stays outside the repo/image.
+      - ${RCLOUD_SIGNING_DIR:-${HOME}/.local/share/retro-cloud-sync/signing}:/rcloud-signing:ro
       # Persist AI CLI settings, credentials, and shell state
       - ~/.altivec:/root
       # Mount Apple SDK archives read-only; defaults to ./.altivec-sdk

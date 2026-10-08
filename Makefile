@@ -54,6 +54,7 @@ include $(SOURCE_ROOT)/make/daemon.mk
 include $(SOURCE_ROOT)/make/carddav-probe.mk
 include $(SOURCE_ROOT)/make/caldav-probe.mk
 include $(SOURCE_ROOT)/make/app.mk
+include $(SOURCE_ROOT)/make/modern-mac.mk
 include $(SOURCE_ROOT)/make/mac-app-tests.mk
 include $(SOURCE_ROOT)/make/mac-network-tests.mk
 include $(SOURCE_ROOT)/make/host-contacts-tests.mk

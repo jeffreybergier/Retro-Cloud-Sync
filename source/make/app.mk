@@ -37,7 +37,7 @@ ALL_SOURCE_PATHS = $(APP_SOURCE_PATHS) $(DAEMON_SOURCE_PATHS) \
 
 app-config: validate-build daemon-config $(APP_ZIP)
 
-$(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
+$(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(SOURCE_ROOT)/make/scripts/sign-bundle.sh $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) $(APP_INFO_PLIST) \
 		$(APP_SYNC_CLIENT_PLIST) $(APP_RESOURCES_ROOT)/CalendarSyncClient.plist $(ICAL_PREPARE) \
 		$(ALTIVECCORE_CA_CERTS) $(ALTIVECCOCOA_FONTS) \
 		$(ALTIVECCOCOA_FONT_LICENSE) $(LIBVC_PREPARE)
@@ -69,6 +69,7 @@ $(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) 
 	@cp "$(ALTIVECCOCOA_FONT_LICENSE)" \
 		"$(APP_BUNDLE)/Contents/Resources/Fonts/"
 	@printf 'APPL????' > "$(APP_BUNDLE)/Contents/PkgInfo"
+	@bash "$(SOURCE_ROOT)/make/scripts/sign-bundle.sh" "$(APP_BUNDLE)" "$(RCLOUD_SIGNING_PEM)" "$(LIPO)"
 	@echo " [5/5] Zipping app..."
 	@rm -f "$@"
 	@cd "$(APP_BUILD_ROOT)" && zip -rqy "$(APP_NAME).zip" \
@@ -76,7 +77,7 @@ $(APP_ZIP): $(SOURCE_ROOT)/make/app.mk $(APP_UNIVERSAL_BINARY) $(DAEMON_OUTPUT) 
 
 $(APP_UNIVERSAL_BINARY): $(APP_INTERMEDIATES)/ppc.bin \
 		$(APP_INTERMEDIATES)/i386.bin
-	@echo " [3/5] Merging app universal binary (ppc, i386)..."
+	@echo " [3/5] Merging app universal binary (ppc, i386, x86_64, arm64)..."
 	@$(LIPO) -create $^ -output "$@"
 
 $(APP_INTERMEDIATES)/ppc.bin: $(APP_PPC_OBJECTS) $(PPC_SHARED_LIBRARY) \

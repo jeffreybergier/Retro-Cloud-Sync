@@ -57,3 +57,7 @@ Old command names remain aliases.
 
   make build-mac-two-way-tests     Build offline native two-way tests
   make test-mac-two-way TEST_HOST=x4-vm   Test native collection and synthetic uploads
+
+Modern native stores (10.9+):
+  make build-mac-native-tests
+  make test-mac-native-stores TEST_HOST=x9-local

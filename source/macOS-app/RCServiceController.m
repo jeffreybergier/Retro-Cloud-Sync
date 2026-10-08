@@ -273,7 +273,7 @@ static NSArray *RCLaunchctlArguments(NSString *action, NSString *path)
       ![self ensureDirectoryExists:parentDirectory error:errorMessage]) {
     return NO;
   }
-  if (![fileManager createDirectoryAtPath:path attributes:nil]) {
+  if (![fileManager createDirectoryAtPath:path attributes:[NSDictionary dictionary]]) {
     if (errorMessage != NULL) {
       *errorMessage = [NSString stringWithFormat:@"Could not create: %@", path];
     }
@@ -397,13 +397,19 @@ static NSArray *RCLaunchctlArguments(NSString *action, NSString *path)
     }
   }
 
+  NSMutableArray *daemonArguments=[NSMutableArray array];
+#if defined(__i386__)
+  SInt32 major=0,minor=0;
+  if(Gestalt(gestaltSystemVersionMajor,&major)==noErr &&
+      Gestalt(gestaltSystemVersionMinor,&minor)==noErr && major==10 && minor>=5 && minor<9) {
+    /* launchd does not consult LSMinimumSystemVersionByArchitecture. */
+    [daemonArguments addObject:@"/usr/bin/arch"]; [daemonArguments addObject:@"-i386"];
+  }
+#endif
+  [daemonArguments addObjectsFromArray:[NSArray arrayWithObjects:installedDaemonPath,@"--config",[RCConfiguration configurationPath],nil]];
   launchAgent = [NSDictionary
       dictionaryWithObjectsAndKeys:kRCServiceLabel, @"Label",
-                                   [NSArray arrayWithObjects:installedDaemonPath,
-                                                             @"--config",
-                                                             [RCConfiguration
-                                                                 configurationPath],
-                                                             nil],
+                                   daemonArguments,
                                    @"ProgramArguments", [NSNumber numberWithBool:YES],
                                    @"RunAtLoad", [NSNumber numberWithBool:YES],
                                    @"KeepAlive", logPath, @"StandardOutPath", logPath,

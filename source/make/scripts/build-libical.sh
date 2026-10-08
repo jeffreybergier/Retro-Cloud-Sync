@@ -44,7 +44,16 @@ args=(-DSTATIC_ONLY=ON -DWITH_CXX_BINDINGS=OFF -DICAL_GLIB=OFF
       -DCMAKE_DISABLE_FIND_PACKAGE_ICU=TRUE
       -DCMAKE_DISABLE_FIND_PACKAGE_BerkeleyDB=TRUE
       -DUSE_BUILTIN_TZDATA=ON -DCMAKE_BUILD_TYPE=Release)
-if [ "$mode" != host ]; then
+if [ "$mode" = x86_64 ] || [ "$mode" = arm64 ]; then
+  compiler=$(compgen -G "$toolchain/bin/$mode-apple-darwin*-clang" | head -1)
+  minimum=10.9; [ "$mode" != arm64 ] || minimum=11.0
+  args+=(-DCMAKE_SYSTEM_NAME=Darwin "-DCMAKE_SYSTEM_PROCESSOR=$mode"
+         "-DCMAKE_C_COMPILER=$compiler" "-DCMAKE_AR=$toolchain/bin/ar"
+         "-DCMAKE_RANLIB=$toolchain/bin/ranlib"
+         "-DCMAKE_OSX_SYSROOT=$toolchain/SDK/MacOSX11.3.sdk"
+         "-DCMAKE_OSX_ARCHITECTURES=$mode" "-DCMAKE_OSX_DEPLOYMENT_TARGET=$minimum"
+         "-DCMAKE_C_FLAGS=-std=c99" "-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=/usr/bin/ld64.lld")
+elif [ "$mode" != host ]; then
   case "$mode" in
     ppc) compiler="$toolchain/bin/oppc32-gcc"; processor=powerpc ;;
     i386) compiler="$toolchain/bin/o32-gcc"; processor=i386 ;;
@@ -66,7 +75,7 @@ if ! cmake --build "$out" --target "$target" --parallel 4 > "$deps/libical-$mode
 fi
 # Some CMake versions cache the host's archive rule while identifying this old
 # compiler. Repack with cctools so ld64 receives BSD, not GNU, archive members.
-if [ "$mode" != host ]; then
+if [ "$mode" = ppc ] || [ "$mode" = i386 ]; then
   libraries=(ical)
   if [ "$target" = icalvcal ]; then libraries+=(icalvcal); fi
   for library in "${libraries[@]}"; do

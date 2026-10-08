@@ -3,6 +3,10 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>NSContactsUsageDescription</key>
+  <string>rCloud syncs your contacts with the configured DAV account.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>rCloud syncs your local calendars with the configured DAV account.</string>
   <key>ATSApplicationFontsPath</key>
   <string>Fonts</string>
   <key>CFBundleDevelopmentRegion</key>
@@ -31,6 +35,10 @@
     <string>10.4.0</string>
     <key>ppc</key>
     <string>10.4.0</string>
+    <key>x86_64</key>
+    <string>10.9.0</string>
+    <key>arm64</key>
+    <string>11.0.0</string>
   </dict>
 </dict>
 </plist>

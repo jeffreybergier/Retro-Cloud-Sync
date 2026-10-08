@@ -1,3 +1,4 @@
+#import "RCNativeSync.h"
 #import "RCAutorelease.h"
 #import "RCContactPhoto.h"
 #import "RCTwoWayNative.h"
@@ -455,7 +456,7 @@ unsupported:
 done:
   RCVCardDocumentClear(&doc); return nil;
 }
-int RCSyncServicesTwoWayContacts(RCContactStore *store,const char *description,long *count,RCError *error)
+static int RCExchangeContacts(RCContactStore *store,const char *description,BOOL native,BOOL twoWay,long *count,RCError *error)
 {
   RCWriteJournal j=RCContactStoreWriteJournal(store); sqlite3_stmt *q=NULL;
   NSMutableDictionary *graph=[NSMutableDictionary dictionary]; NSMutableArray *resources=[NSMutableArray array];
@@ -488,10 +489,19 @@ int RCSyncServicesTwoWayContacts(RCContactStore *store,const char *description,l
   if (step!=SQLITE_DONE) goto failed;
   sqlite3_finalize(q); q=NULL;
   RCTwoWayContext c={j,RCContactSyncClientIdentifier(S(RCContactStoreSyncIdentifier(store))),S(description),entity,resources,graph,RCContactEncodeLocal,store,NO,RCContactProjectVerified,NO};
-  if (!RCTwoWayExchange(&c,error)) return 0;
+  if (!(native ? RCNativeExchange(&c,twoWay,error) : RCTwoWayExchange(&c,error))) return 0;
   if (c.didPublishAll && !RCContactStoreMarkPublished(store,generation,error)) return 0;
   if (count) *count=c.didPublishAll ? (long)[graph count] : -1;
   return 1;
 failed:
   sqlite3_finalize(q); if (!error->code) RCErrorSet(error,1,"Could not build two-way contact graph"); return 0;
+}
+
+int RCSyncServicesTwoWayContacts(RCContactStore *store,const char *description,long *count,RCError *error)
+{
+  return RCExchangeContacts(store,description,NO,YES,count,error);
+}
+int RCNativeSyncContacts(RCContactStore *store,BOOL twoWay,long *count,RCError *error)
+{
+  return RCExchangeContacts(store,NULL,YES,twoWay,count,error);
 }

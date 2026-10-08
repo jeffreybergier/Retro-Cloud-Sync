@@ -7,7 +7,11 @@
 
 @class PreferencesWindowController;
 
-@interface AppDelegate : NSObject {
+@interface AppDelegate : NSObject
+#if defined(__LP64__)
+    <NSApplicationDelegate>
+#endif
+{
  @private
   PreferencesWindowController *preferencesWindowController_;
 }

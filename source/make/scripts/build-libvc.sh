@@ -39,6 +39,12 @@ case "$mode" in
     flags+=(-arch "$mode" -isysroot "$toolchain/SDK/MacOSX10.5.sdk"
             -mmacosx-version-min=10.4 -fno-stack-protector -D_DARWIN_C_SOURCE)
     ;;
+  x86_64|arm64)
+    compiler=$(compgen -G "$toolchain/bin/$mode-apple-darwin*-clang" | head -1)
+    minimum=10.9; [ "$mode" != arm64 ] || minimum=11.0
+    archiver="$toolchain/bin/ar"; ranlib="$toolchain/bin/ranlib"
+    flags+=(-target "$mode-apple-macos$minimum" -isysroot "$toolchain/SDK/MacOSX11.3.sdk" -D_DARWIN_C_SOURCE)
+    ;;
   *) exit 1 ;;
 esac
 for name in vc vc_parse vc_scan; do

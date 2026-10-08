@@ -96,7 +96,7 @@ static NSString * const kRCSyncIntervalSeconds = @"SyncIntervalSeconds";
 
     if (![fileManager fileExistsAtPath:applicationSupport isDirectory:&isDirectory] ||
         !isDirectory ||
-        ![fileManager createDirectoryAtPath:directory attributes:nil]) {
+        ![fileManager createDirectoryAtPath:directory attributes:[NSDictionary dictionary]]) {
       if (errorMessage != NULL) {
         *errorMessage = @"Could not create the rCloud support directory";
       }

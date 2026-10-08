@@ -1,3 +1,4 @@
+#import "RCNativeSync.h"
 #import "RCStatus.h"
 #import "RCCalendarOperations.h"
 #import "RCContactPhoto.h"
@@ -338,15 +339,15 @@ static void *RCSyncWorkerMain(void *context)
         RCErrorClear(&error);
         BOOL exported;
         if (worker->contactsTwoWay) {
-          exported=contactsFetched && RCSyncServicesTwoWayContacts(store,
-              worker->syncClientDescriptionPath,&syncRecordCount,&error);
+          exported=contactsFetched && (RCUsesNativeStores() ? RCNativeSyncContacts(store,YES,&syncRecordCount,&error) : RCSyncServicesTwoWayContacts(store,
+              worker->syncClientDescriptionPath,&syncRecordCount,&error));
           if (!contactsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
           if (exported) RCRunAccountWrites(&journal,worker,password,NO,store);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else {
           if (!contactsFetched) RCLogger(RCLogInfo, "Contacts", "Apply", @"Attempting local application from the last committed download");
-          exported=RCSyncServicesPushContacts(store,worker->syncClientDescriptionPath,&syncRecordCount,&error);
+          exported=RCUsesNativeStores() ? RCNativeSyncContacts(store,NO,&syncRecordCount,&error) : RCSyncServicesPushContacts(store,worker->syncClientDescriptionPath,&syncRecordCount,&error);
         }
         if(RCStopRequested) goto contacts_finished;
         if(!exported && contactsFetched) RCStatusFailure(@"Contacts",@"Apply");
@@ -354,7 +355,7 @@ static void *RCSyncWorkerMain(void *context)
         if (exported && syncRecordCount<0) {
           RCLogger(RCLogWarning, "Contacts", "Apply", @"Applied eligible records to local apps; unresolved local edits remain pending");
         } else if (exported) {
-          RCLogger(RCLogInfo, "Contacts", "Apply", @"Local application complete: %ld Sync Services records in snapshot", syncRecordCount);
+          RCLogger(RCLogInfo, "Contacts", "Apply", @"Local application complete: %ld records in native snapshot", syncRecordCount);
         } else if (worker->contactsTwoWay && !contactsFetched) {
           RCLogger(RCLogWarning, "Contacts", "Apply", @"Skipped: two-way local application requires a successful download");
         } else {
@@ -406,15 +407,15 @@ contacts_finished:
         RCErrorClear(&error);
         BOOL exported;
         if (worker->calendarsTwoWay) {
-          exported=calendarsFetched && RCSyncServicesTwoWayCalendars(calendarStore,
-              worker->calendarDescriptionPath,&syncRecordCount,&error);
+          exported=calendarsFetched && (RCUsesNativeStores() ? RCNativeSyncCalendars(calendarStore,YES,&syncRecordCount,&error) : RCSyncServicesTwoWayCalendars(calendarStore,
+              worker->calendarDescriptionPath,&syncRecordCount,&error));
           if (!calendarsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
           if (exported) RCRunAccountWrites(&journal,worker,password,YES,NULL);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else {
           if (!calendarsFetched) RCLogger(RCLogInfo, "Calendars", "Apply", @"Attempting local application from the last committed download");
-          exported=RCSyncServicesPushCalendars(calendarStore,worker->calendarDescriptionPath,0,&syncRecordCount,&error);
+          exported=RCUsesNativeStores() ? RCNativeSyncCalendars(calendarStore,NO,&syncRecordCount,&error) : RCSyncServicesPushCalendars(calendarStore,worker->calendarDescriptionPath,0,&syncRecordCount,&error);
         }
         if(RCStopRequested) goto calendar_finished;
         if(!exported && calendarsFetched) RCStatusFailure(@"Calendars",@"Apply");
@@ -422,7 +423,7 @@ contacts_finished:
         if (exported && syncRecordCount<0) {
           RCLogger(RCLogWarning, "Calendars", "Apply", @"Applied eligible records to local apps; unresolved local edits remain pending");
         } else if (exported) {
-          RCLogger(RCLogInfo, "Calendars", "Apply", @"Local application complete: %ld Sync Services records in snapshot",
+          RCLogger(RCLogInfo, "Calendars", "Apply", @"Local application complete: %ld records in native snapshot",
                 syncRecordCount);
           /* History compaction can be lengthy, but it has no remote effects.
              Interrupt only this maintenance phase, not journal checkpoints. */
@@ -807,7 +808,7 @@ int main(int argc, char *argv[])
     status = store != NULL && RCSyncServicesPushTestContacts(
         store, argv[3], &recordCount, &error);
     if (status) {
-      RCLogger(RCLogInfo, "Contacts", "Apply", @"Local application complete: %ld Sync Services records in snapshot", recordCount);
+      RCLogger(RCLogInfo, "Contacts", "Apply", @"Local application complete: %ld records in native snapshot", recordCount);
     } else {
       RCLogger(RCLogError, "Contacts", "Apply", @"Local application failed: %s", error.message);
     }
