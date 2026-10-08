@@ -130,3 +130,10 @@ after alarm reordering, database reopening, event edits and acknowledgement, plu
 an explicit local sound edit. Repeating alarms, duplicate fallback projections
 and ambiguous simultaneous alarm edits must not produce unsafe uploads. The
 fixtures use future trigger dates and never download or play sound attachments.
+
+The Mavericks all-day regression models a seven-day event with a Basso alarm
+15 hours before its start. It verifies a single default alarm after publication and recreates
+the old duplicate-alarm/pending-save state with the native identifier missing.
+Recovery must reuse the sole matching event, retain exact alarm wire data on
+later edits, and refuse missing, modified, already owned or multiple candidates without creating
+events or queuing uploads. All recovery mutations use disposable fixture stores.

@@ -3,6 +3,8 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>NSHighResolutionCapable</key>
+  <true/>
   <key>NSContactsUsageDescription</key>
   <string>rCloud syncs your contacts with the configured DAV account.</string>
   <key>NSCalendarsUsageDescription</key>

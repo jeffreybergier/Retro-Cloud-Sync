@@ -413,8 +413,28 @@ static NSDictionary *EKAlarmRecord(EKAlarm *alarm,NSString *root,RCError *error)
   }
   return r;
 }
+/* Mavericks may expose its default all-day alarm alongside the identical
+   explicitly imported alarm. Only this exact one-source/two-equal-local case
+   can be repaired during publication; ordinary native edits stay strict. */
+static BOOL EKDuplicateDefaultAlarm(id event,NSDictionary *resource,
+    RCError *error)
+{
+  NSDictionary *graph=[resource objectForKey:@"graph"];
+  NSString *root=[resource objectForKey:@"root"];
+  NSDictionary *record=[graph objectForKey:root];
+  NSArray *alarms=[event alarms], *audio=[record objectForKey:@"audio alarms"];
+  if(![[record objectForKey:@"all day"] boolValue] || [audio count]!=1 ||
+      [[record objectForKey:@"display alarms"] count] || [alarms count]!=2)
+    return NO;
+  EKAlarm *planned=EKMakeAlarm([graph objectForKey:[audio objectAtIndex:0]],YES,error);
+  if(!planned) return NO;
+  NSDictionary *expected=EKAlarmRecord(planned,root,error);
+  for(EKAlarm *alarm in alarms)
+    if(!RCNativeRecordsEqual(expected,EKAlarmRecord(alarm,root,error))) return NO;
+  return YES;
+}
 static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *record,
-    NSMutableDictionary *graph,RCError *error)
+    NSMutableDictionary *graph,BOOL recovering,RCError *error)
 {
   NSString *root=[resource objectForKey:@"root"];
   NSDictionary *base=[resource objectForKey:@"graph"], *snapshot=[resource objectForKey:@"_snapshot"];
@@ -429,7 +449,11 @@ static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *re
     }
     [expected setObject:prior forKey:key];
   }
-  for(EKAlarm *alarm in [event alarms]) {
+  NSArray *nativeAlarms=[event alarms];
+  if(recovering && EKDuplicateDefaultAlarm(event,resource,error))
+    nativeAlarms=[NSArray arrayWithObject:[nativeAlarms objectAtIndex:0]];
+  if(error->code) return NO;
+  for(EKAlarm *alarm in nativeAlarms) {
     NSDictionary *r=EKAlarmRecord(alarm,root,error); if(!r) return NO;
     for(NSDictionary *prior in observed) if(RCNativeRecordsEqual(prior,r)) goto ambiguous;
     [observed addObject:r];
@@ -475,9 +499,11 @@ static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *re
   }
   return YES;
 ambiguous:
-  RCErrorSet(error,1,"Native alarm identities are ambiguous; preserving the original alarms"); return NO;
+  RCErrorSet(error,1,"Native alarm identities are ambiguous (%lu expected, %lu native); preserving the original alarms",
+      (unsigned long)[expected count],(unsigned long)[[event alarms] count]); return NO;
 }
-static NSDictionary *EKRead(id event,NSDictionary *resource,RCError *error)
+static NSDictionary *EKRead(id event,NSDictionary *resource,BOOL recovering,
+    RCError *error)
 {
   if(!event) return [NSDictionary dictionary];
   NSString *root=[resource objectForKey:@"root"];
@@ -505,7 +531,7 @@ static NSDictionary *EKRead(id event,NSDictionary *resource,RCError *error)
     NSDictionary *r=EKReadRule(rule,root); if(r) { [graph setObject:r forKey:key]; [recurrences addObject:key]; } n++;
   }
   [record setObject:recurrences forKey:@"recurrences"];
-  if(!EKReadAlarms(event,resource,record,graph,error)) return nil;
+  if(!EKReadAlarms(event,resource,record,graph,recovering,error)) return nil;
   /* Attendee/organizer links and children deliberately stay out of this native
      snapshot. RCChangedGraph retains them from the full publication base;
      their absence in EventKit is not a user edit or a participant deletion. */
@@ -513,6 +539,24 @@ static NSDictionary *EKRead(id event,NSDictionary *resource,RCError *error)
      complete deletion or silently accepted by an upload receipt. */
   if([[event valueForKey:@"attendees"] count]) Put(record,@"native attendees",[NSNumber numberWithUnsignedInteger:[[event valueForKey:@"attendees"] count]]);
   [graph setObject:record forKey:root]; return graph;
+}
+/* Mavericks materializes its implicit alarm at commit, sometimes alongside
+   an equal explicit alarm. Reset only that verified pair: committing an empty
+   explicit list leaves the default alarm. Verify every native field afterward;
+   no ordering or private default-alarm property is used. */
+static BOOL EKRepairDefaultAlarm(EKEventStore *store,id event,
+    NSDictionary *resource,RCError *error)
+{
+  if(!EKDuplicateDefaultAlarm(event,resource,error)) return !error->code;
+  NSDictionary *expected=EKRead(event,resource,YES,error); if(!expected) return NO;
+  [event setAlarms:[NSArray array]];
+  if(!EKSave(store,@selector(saveEvent:span:commit:error:),event,YES,error)) return NO;
+  NSDictionary *actual=EKRead(event,resource,NO,error);
+  if(!actual || !RCNativeGraphsEqual(expected,actual)) {
+    if(!error->code) RCErrorSet(error,1,"Default alarm repair did not preserve the intended event; publication remains pending");
+    return NO;
+  }
+  return YES;
 }
 static BOOL EKCanWrite(NSDictionary *resource,RCError *error)
 {
@@ -561,9 +605,21 @@ static BOOL EKWrite(id event,id calendar,NSDictionary *resource,RCError *error)
   while((key=[it nextObject])) [rules addObject:EKRule([graph objectForKey:key])];
   [event setValue:rules forKey:@"recurrenceRules"];
   NSMutableArray *alarms=[NSMutableArray array]; NSString *links[]={@"display alarms",@"audio alarms"};
+  /* Retain EventKit's identity for unchanged alarms, including the implicit
+     all-day default. Replacing that default with an equivalent new object on
+     Mavericks leaves both the implicit and explicit alarms enabled. */
+  NSArray *existing=[event alarms];
   for(int kind=0;kind<2;kind++) for(key in [r objectForKey:links[kind]]) {
     EKAlarm *alarm=EKMakeAlarm([graph objectForKey:key],kind==1,error);
-    if(!alarm) return NO; [alarms addObject:alarm];
+    if(!alarm) return NO;
+    NSDictionary *wanted=EKAlarmRecord(alarm,[resource objectForKey:@"root"],error);
+    for(EKAlarm *prior in existing) {
+      RCError ignored; RCErrorClear(&ignored);
+      if(RCNativeRecordsEqual(wanted,EKAlarmRecord(prior,[resource objectForKey:@"root"],&ignored))) {
+        alarm=prior; break;
+      }
+    }
+    [alarms addObject:alarm];
   }
   [event setValue:alarms forKey:@"alarms"]; return YES;
 }
@@ -571,6 +627,7 @@ static BOOL EKWrite(id event,id calendar,NSDictionary *resource,RCError *error)
 @interface RCNativeStore (Implementation)
 - (id)container:(NSString *)root create:(BOOL)create error:(RCError *)error;
 - (NSDictionary *)rawGraph:(NSDictionary *)saved error:(RCError *)error;
+- (NSDictionary *)recoverCalendarResource:(NSDictionary *)saved error:(RCError *)error;
 @end
 @implementation RCNativeStore
 - (id)initWithContext:(RCTwoWayContext *)context error:(RCError *)error;
@@ -624,18 +681,24 @@ failed:
 - (NSDictionary *)savedResources:(RCError *)error;
 {
   sqlite3_stmt *q=NULL; NSMutableDictionary *result=[NSMutableDictionary dictionary]; int step=SQLITE_ERROR;
+  NSMutableArray *roots=[NSMutableArray array];
   RCWriteJournal j=context_->journal;
   if(sqlite3_prepare_v2(j.db,"SELECT root FROM native_store_resources WHERE account_id=? AND root NOT LIKE '@%'",-1,&q,NULL)==SQLITE_OK) {
     sqlite3_bind_int64(q,1,j.account);
     while((step=sqlite3_step(q))==SQLITE_ROW) {
-      NSString *root=[NSString stringWithUTF8String:(const char *)sqlite3_column_text(q,0)];
-      NSDictionary *r=RCLoadNative(j,root,error); if(!r) break;
-      if([[r objectForKey:@"_pending"] boolValue]) { RCErrorSet(error,1,"An interrupted native save requires recovery; refusing duplicate creation"); break; }
-      [result setObject:r forKey:root];
+      [roots addObject:[NSString stringWithUTF8String:(const char *)sqlite3_column_text(q,0)]];
     }
   }
   sqlite3_finalize(q);
   if(step!=SQLITE_DONE) { if(!error->code) RCErrorSet(error,1,"Could not read native resources"); return nil; }
+  for(NSString *root in roots) {
+    NSDictionary *r=RCLoadNative(j,root,error); if(!r) return nil;
+    if([[r objectForKey:@"_pending"] boolValue]) {
+      if(contacts_) { RCErrorSet(error,1,"An interrupted native save requires recovery; refusing duplicate creation"); return nil; }
+      r=[self recoverCalendarResource:r error:error]; if(!r) return nil;
+    }
+    [result setObject:r forKey:root];
+  }
   return result;
 }
 - (id)container:(NSString *)root create:(BOOL)create error:(RCError *)error;
@@ -686,12 +749,90 @@ failed:
   if(event && ![[[event valueForKey:@"calendar"] valueForKey:@"calendarIdentifier"] isEqual:[container valueForKey:@"calendarIdentifier"]]) {
     RCErrorSet(error,1,"Local calendar move requires attention; preserving the event"); return nil;
   }
-  return EKRead(event,saved,error);
+  return EKRead(event,saved,NO,error);
 }
 - (NSDictionary *)readResource:(NSDictionary *)saved error:(RCError *)error;
 {
   NSDictionary *raw=[self rawGraph:saved error:error];
   return raw ? RCChangedGraph([saved objectForKey:@"graph"],[saved objectForKey:@"_snapshot"],raw) : nil;
+}
+- (NSDictionary *)recoverCalendarResource:(NSDictionary *)saved error:(RCError *)error;
+{
+  NSString *root=[saved objectForKey:@"root"];
+  NSDictionary *record=[[saved objectForKey:@"graph"] objectForKey:root];
+  NSArray *calendars=[record objectForKey:@"calendar"];
+  if([calendars count]!=1 || [[record objectForKey:@"recurrences"] count]) goto unsafe;
+  id calendar=[self container:[calendars objectAtIndex:0] create:NO error:error];
+  if(!calendar) goto unsafe;
+  EKEvent *planned=[EKEvent eventWithEventStore:events_];
+  if(!EKWrite(planned,calendar,saved,error)) return nil;
+  NSDictionary *expected=EKRead(planned,saved,YES,error); if(!expected) return nil;
+  NSString *identifier=[[saved objectForKey:@"_ids"] objectForKey:root];
+  NSArray *candidates=nil;
+  if(identifier) {
+    EKEvent *event=[(EKEventStore *)events_ eventWithIdentifier:identifier];
+    candidates=event ? [NSArray arrayWithObject:event] : [NSArray array];
+  } else {
+    /* Old releases lost the new identifier when all-day readback failed.
+       Search only this narrowly identified failure in its owned calendar.
+       Never create a replacement or guess between equal candidates. */
+    if(![[record objectForKey:@"all day"] boolValue] ||
+        [[record objectForKey:@"audio alarms"] count]!=1 ||
+        [[record objectForKey:@"display alarms"] count]) goto unsafe;
+    /* Mavericks all-day queries need whole-day bounds, not seconds around
+       midnight. Full native-field comparison below still verifies the date. */
+    NSDate *start=[planned startDate];
+    NSPredicate *predicate=[(EKEventStore *)events_ predicateForEventsWithStartDate:
+        [start dateByAddingTimeInterval:-86400] endDate:[start dateByAddingTimeInterval:86400]
+        calendars:[NSArray arrayWithObject:calendar]];
+    candidates=[(EKEventStore *)events_ eventsMatchingPredicate:predicate];
+  }
+  NSMutableSet *owned=[NSMutableSet set]; sqlite3_stmt *q=NULL;
+  RCWriteJournal j=context_->journal; int step=SQLITE_ERROR;
+  if(sqlite3_prepare_v2(j.db,"SELECT root,native FROM native_store_resources WHERE account_id=? AND root<>?",-1,&q,NULL)==SQLITE_OK) {
+    sqlite3_bind_int64(q,1,j.account); sqlite3_bind_text(q,2,[root UTF8String],-1,SQLITE_TRANSIENT);
+    while((step=sqlite3_step(q))==SQLITE_ROW) {
+      NSString *other=[NSString stringWithUTF8String:(const char *)sqlite3_column_text(q,0)];
+      NSString *native=[RCDecode(q,1) objectForKey:other]; if(native) [owned addObject:native];
+    }
+  }
+  sqlite3_finalize(q);
+  if(step!=SQLITE_DONE) { RCErrorSet(error,1,"Could not verify recovery ownership"); return nil; }
+  EKEvent *match=nil;
+  for(EKEvent *event in candidates) {
+    if([owned containsObject:[event eventIdentifier]] ||
+        ![[[event calendar] calendarIdentifier] isEqual:[calendar calendarIdentifier]] ||
+        [event isDetached] || [[event recurrenceRules] count]) continue;
+    RCError candidateError; RCErrorClear(&candidateError);
+    NSDictionary *current=EKRead(event,saved,YES,&candidateError);
+    if(current && RCNativeGraphsEqual(current,expected)) {
+      if(match) goto unsafe;
+      match=event;
+    }
+  }
+  if(!match) goto unsafe;
+  NSMutableDictionary *resource=[NSMutableDictionary dictionaryWithDictionary:saved];
+  [resource removeObjectForKey:@"_ids"]; [resource removeObjectForKey:@"_snapshot"];
+  [resource removeObjectForKey:@"_pending"];
+  NSDictionary *ids=[NSDictionary dictionaryWithObject:[match eventIdentifier] forKey:root];
+  /* Checkpoint the verified identity before repairing the old duplicate. A
+     crash at any later point retries this event, never creates another one. */
+  if(!RCSaveNative(j,resource,ids,expected,YES,error)) return nil;
+  if(!EKRepairDefaultAlarm(events_,match,resource,error)) return nil;
+  NSDictionary *snapshot=EKRead(match,resource,NO,error);
+  if(!snapshot || !RCNativeGraphsEqual(snapshot,expected)) goto unsafe;
+  if(!RCTwoWaySQL(&j,error,"SAVEPOINT native_calendar_recovery")) return nil;
+  if(!RCSaveNative(j,resource,ids,snapshot,NO,error) ||
+      !RCTwoWaySQL(&j,error,"DELETE FROM two_way_attention WHERE account_id=%lld AND record_id=%Q AND reason='native-publication-pending'",j.account,[root UTF8String]) ||
+      !RCTwoWaySQL(&j,error,"RELEASE native_calendar_recovery")) {
+    RCTwoWaySQL(&j,NULL,"ROLLBACK TO native_calendar_recovery; RELEASE native_calendar_recovery");
+    return nil;
+  }
+  RCLogger(RCLogInfo,NULL,"Recovery",@"Recovered verified native calendar publication (record=%@)",root);
+  return RCLoadNative(j,root,error);
+unsafe:
+  if(!error->code) RCErrorSet(error,1,"Pending calendar save has no unique unchanged native match; refusing duplicate creation");
+  return nil;
 }
 - (BOOL)canPublishResource:(NSDictionary *)resource error:(RCError *)error;
 {
@@ -727,8 +868,10 @@ failed:
   else {
     if(!EKSave(events_,NSSelectorFromString(@"saveEvent:span:commit:error:"),item,YES,error)) return NO;
     NSString *native=[item valueForKey:@"eventIdentifier"]; if(!native) goto failed; [ids setObject:native forKey:root];
+    if(!RCSaveNative(context_->journal,resource,ids,nil,YES,error)) return NO;
+    if(!EKRepairDefaultAlarm(events_,item,resource,error)) return NO;
   }
-  NSDictionary *snapshot=contacts_ ? ABRead(item,root,ids) : EKRead(item,resource,error);
+  NSDictionary *snapshot=contacts_ ? ABRead(item,root,ids) : EKRead(item,resource,NO,error);
   if(!snapshot) return NO;
   return RCSaveNative(context_->journal,resource,ids,snapshot,NO,error);
 failed:
@@ -783,7 +926,7 @@ failed:
           NSString *root=[@"native-event-" stringByAppendingString:native];
           NSDictionary *record=[NSDictionary dictionaryWithObject:[NSArray arrayWithObject:calendar] forKey:@"calendar"];
           NSDictionary *stub=[NSDictionary dictionaryWithObjectsAndKeys:root,@"root",[NSDictionary dictionaryWithObject:record forKey:root],@"graph",nil];
-          NSDictionary *graph=EKRead(event,stub,error), *ids=[NSDictionary dictionaryWithObject:native forKey:root];
+          NSDictionary *graph=EKRead(event,stub,NO,error), *ids=[NSDictionary dictionaryWithObject:native forKey:root];
           if(!graph) return nil;
           [result addObject:[NSDictionary dictionaryWithObjectsAndKeys:root,@"root",graph,@"graph",ids,@"_ids",graph,@"_snapshot",nil]];
         }

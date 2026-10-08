@@ -186,6 +186,123 @@ static void InvitationTests(NSString *directory)
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
 }
+static void PendingCalendarSave(RCWriteJournal j,NSString *root,BOOL loseIdentity)
+{
+  NSData *empty=[NSKeyedArchiver archivedDataWithRootObject:[NSDictionary dictionary]];
+  sqlite3_stmt *q=NULL;
+  CHECK(sqlite3_prepare_v2(j.db,"UPDATE native_store_resources SET pending=1,native=CASE WHEN ? THEN ? ELSE native END,snapshot=CASE WHEN ? THEN ? ELSE snapshot END WHERE account_id=? AND root=?",-1,&q,NULL)==SQLITE_OK);
+  sqlite3_bind_int(q,1,loseIdentity); sqlite3_bind_blob(q,2,[empty bytes],[empty length],SQLITE_TRANSIENT);
+  sqlite3_bind_int(q,3,loseIdentity); sqlite3_bind_blob(q,4,[empty bytes],[empty length],SQLITE_TRANSIENT);
+  sqlite3_bind_int64(q,5,j.account); sqlite3_bind_text(q,6,[root UTF8String],-1,SQLITE_TRANSIENT);
+  CHECK(sqlite3_step(q)==SQLITE_DONE); sqlite3_finalize(q);
+  CHECK(RCTwoWaySQL(&j,&error,"INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,'native-publication-pending')",j.account,[root UTF8String]));
+}
+static void ExpectCalendarRecoveryBlocked(RCCalendarStore *store)
+{
+  long count=0; RCErrorClear(&error);
+  BOOL ok=RCNativeSyncCalendars(store,NO,&count,&error);
+  BOOL blocked=strstr(error.message,"no unique unchanged native match")!=NULL;
+  CHECK(!ok && blocked);
+  CHECK(Count(RCCalendarStoreWriteJournal(store),"SELECT count(*) FROM native_store_resources WHERE pending=1")==1);
+}
+static void AllDayAlarmTests(NSString *directory)
+{
+  NSString *path=[directory stringByAppendingPathComponent:@"all-day-alarms.sqlite"];
+  RCCalendarStore *store=RCCalendarStoreOpen([path fileSystemRepresentation],
+      "offline-all-day-test",&error); CHECK(store);
+  @try {
+    NSString *body=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//rCloud offline//EN\r\n"
+        @"BEGIN:VEVENT\r\nUID:offline-all-day\r\nDTSTART;VALUE=DATE:20301012\r\nDTEND;VALUE=DATE:20301019\r\n"
+        @"SUMMARY:Offline all-day alarm\r\nBEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT15H\r\n"
+        @"ATTACH;VALUE=URI:Basso\r\nX-APPLE-DEFAULT-ALARM:TRUE\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    CalendarSeed(store,Data(body),"\"all-day-1\""); SyncCalendar(store,NO,YES);
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+    NSDictionary *row=FirstRow(j); CHECK(row);
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
+    EKEvent *event=[events eventWithIdentifier:[row objectForKey:@"id"]]; CHECK(event);
+    CHECK([event isAllDay]); CHECK([[event alarms] count]==1);
+    EKAlarm *alarm=[[event alarms] objectAtIndex:0];
+    CHECK([alarm type]==EKAlarmTypeAudio && [[alarm soundName] isEqual:@"Basso"]);
+    SyncCalendar(store,NO,YES); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    puts("PASS: Multi-day all-day event with a default sound alarm imports and replays without ambiguity");
+
+    NSString *root=[[row objectForKey:@"resource"] objectForKey:@"root"];
+    NSString *eventID=[row objectForKey:@"id"];
+    NSPredicate *predicate=[events predicateForEventsWithStartDate:[[event startDate] dateByAddingTimeInterval:-1]
+        endDate:[[event endDate] dateByAddingTimeInterval:1] calendars:[NSArray arrayWithObject:[event calendar]]];
+    // Reproduce the previous release: a fresh equivalent alarm enables both
+    // the implicit all-day default and its explicit copy, then readback fails
+    // before the event identifier and snapshot have reached the journal.
+    EKAlarm *replacement=[EKAlarm alarmWithRelativeOffset:-54000]; [replacement setSoundName:@"Basso"];
+    [event setAlarms:[NSArray arrayWithObject:replacement]];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event alarms] count]==2);
+    PendingCalendarSave(j,root,YES);
+    RCCalendarStoreClose(store); store=NULL;
+    store=RCCalendarStoreOpen([path fileSystemRepresentation],"offline-all-day-test",&error); CHECK(store);
+    j=RCCalendarStoreWriteJournal(store);
+    SyncCalendar(store,NO,YES); SyncCalendar(store,NO,YES);
+    CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
+    CHECK(Count(j,"SELECT count(*) FROM native_store_resources WHERE pending=1")==0);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event alarms] count]==1);
+    CHECK([[events eventsMatchingPredicate:predicate] count]==1);
+    puts("PASS: Legacy all-day save with lost identity recovers its unique event, removes the duplicate and replays without creation");
+
+    [event setTitle:@"Edited all-day alarm"]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    NSString *edited=[body stringByReplacingOccurrencesOfString:@"SUMMARY:Offline all-day alarm" withString:@"SUMMARY:Edited all-day alarm"];
+    NSData *confirmed=ConfirmWrite(j); CHECK([confirmed isEqual:Data(edited)]);
+    CalendarSeed(store,confirmed,"\"confirmed\""); SyncCalendar(store,YES,YES); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==1);
+    [events reset]; event=[events eventWithIdentifier:eventID];
+    PendingCalendarSave(j,root,NO);
+    [event setTitle:@"Unacknowledged local edit"]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    ExpectCalendarRecoveryBlocked(store);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event title] isEqual:@"Unacknowledged local edit"]);
+    [event setTitle:@"Edited all-day alarm"]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,NO,YES);
+    puts("PASS: Recovered all-day event edits retain the original alarm bytes; pending recovery never overwrites a newer local edit");
+
+    // An otherwise exact candidate already owned by another resource must
+    // never be adopted for a pending save whose original identity was lost.
+    NSData *otherIDs=[NSKeyedArchiver archivedDataWithRootObject:
+        [NSDictionary dictionaryWithObject:eventID forKey:@"other-offline-event"]];
+    sqlite3_stmt *owner=NULL;
+    CHECK(sqlite3_prepare_v2(j.db,"INSERT INTO native_store_resources SELECT account_id,'other-offline-event',resource,?,snapshot,0 FROM native_store_resources WHERE account_id=? AND root=?",-1,&owner,NULL)==SQLITE_OK);
+    sqlite3_bind_blob(owner,1,[otherIDs bytes],[otherIDs length],SQLITE_TRANSIENT);
+    sqlite3_bind_int64(owner,2,j.account); sqlite3_bind_text(owner,3,[root UTF8String],-1,SQLITE_TRANSIENT);
+    CHECK(sqlite3_step(owner)==SQLITE_DONE); sqlite3_finalize(owner);
+    PendingCalendarSave(j,root,YES); ExpectCalendarRecoveryBlocked(store);
+    CHECK(sqlite3_exec(j.db,"DELETE FROM native_store_resources WHERE root='other-offline-event'",NULL,NULL,NULL)==SQLITE_OK);
+    SyncCalendar(store,NO,YES); CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
+    puts("PASS: Recovery refuses an event already owned by another resource");
+
+    EKEvent *twin=[EKEvent eventWithEventStore:events];
+    [twin setCalendar:[event calendar]]; [twin setAllDay:YES]; [twin setTitle:[event title]];
+    [twin setStartDate:[event startDate]]; [twin setEndDate:[event endDate]];
+    replacement=[EKAlarm alarmWithRelativeOffset:-54000]; [replacement setSoundName:@"Basso"];
+    [twin setAlarms:[NSArray arrayWithObject:replacement]];
+    CHECK([events saveEvent:twin span:EKSpanFutureEvents commit:YES error:NULL]);
+    NSString *twinID=[twin eventIdentifier];
+    PendingCalendarSave(j,root,YES); ExpectCalendarRecoveryBlocked(store);
+    [events reset]; CHECK([[events eventsMatchingPredicate:predicate] count]==2);
+    twin=[events eventWithIdentifier:twinID]; CHECK(twin);
+    CHECK([events removeEvent:twin span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,NO,YES); CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK(event);
+    PendingCalendarSave(j,root,YES);
+    CHECK([events removeEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    ExpectCalendarRecoveryBlocked(store);
+    [events reset]; CHECK([[events eventsMatchingPredicate:predicate] count]==0);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    puts("PASS: Missing and multiple all-day recovery candidates stay pending without new events or uploads");
+  } @finally {
+    if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
+  }
+}
 static void AudioAlarmTests(NSString *directory)
 {
   NSString *path=[directory stringByAppendingPathComponent:@"audio-alarms.sqlite"];
@@ -338,6 +455,7 @@ int main(int argc,char **argv)
       if(attempt==0) printf("WAITING FOR CALENDAR ACCESS: %s\n",error.message);
       if(attempt==599) CHECK(NO); [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1]];
     }
+    AllDayAlarmTests(directory);
     row=FirstRow(ej); CHECK(row); NSString *eventID=[[row objectForKey:@"id"] copy];
     EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
     EKEvent *event=[events eventWithIdentifier:eventID]; CHECK(event); CHECK([[event title] isEqual:@"rCloud Offline Event"]);

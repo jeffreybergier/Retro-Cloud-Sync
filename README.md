@@ -41,6 +41,11 @@ Sync Services conflict UI. Native calendar renames/moves require attention;
 retired calendar containers are retained. New local events are discovered from
 1970 through 2101 (existing mapped events use direct identity lookups). Interrupted ambiguous native saves stop replay to
 avoid duplicates. Use the recovery inspection/export commands before recovery.
+Pending calendar saves recover only when an existing event in the managed
+calendar uniquely matches the intended native fields. The old Mavericks all-day
+alarm failure can also recover its missing identifier and duplicate default
+alarm this way. Missing, edited, already owned, or multiple matches remain pending; recovery
+never creates a replacement event.
 Alarm readback matches unchanged alarms independently of their order. Duplicate
 local projections and ambiguous simultaneous alarm edits are deferred rather
 than guessing which alarm owns retained attachment data.
