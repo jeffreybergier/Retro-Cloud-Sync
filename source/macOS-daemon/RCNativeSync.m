@@ -7,6 +7,7 @@
 #import <EventKit/EventKit.h>
 #import <AddressBook/AddressBook.h>
 #import <CoreServices/CoreServices.h>
+#include <openssl/sha.h>
 
 BOOL RCUsesNativeStoresForVersion(int major,int minor)
 {
@@ -163,12 +164,24 @@ static NSDictionary *RCChangedGraph(NSDictionary *base,NSDictionary *snapshot,NS
     NSDictionary *old=[snapshot objectForKey:key], *now=[current objectForKey:key];
     if(!now) { [result removeObjectForKey:key]; continue; }
     if(!old) { [result setObject:now forKey:key]; continue; }
+    /* A native-only default is part of the readback baseline, not the wire
+       graph. Its unchanged presence must not manufacture a cloud alarm. */
+    if(![base objectForKey:key] && RCNativeRecordsEqual(old,now)) continue;
     NSMutableDictionary *record=[NSMutableDictionary dictionaryWithDictionary:[base objectForKey:key] ?: old];
     NSMutableSet *fields=[NSMutableSet setWithArray:[old allKeys]]; [fields addObjectsFromArray:[now allKeys]];
     NSEnumerator *f=[fields objectEnumerator]; NSString *field;
     while((field=[f nextObject])) {
       id a=[old objectForKey:field],b=[now objectForKey:field];
       if(a==b || [a isEqual:b]) continue;
+      if(([field isEqual:@"display alarms"] || [field isEqual:@"audio alarms"]) && [b isKindOfClass:[NSArray class]]) {
+        NSMutableArray *wire=[NSMutableArray array];
+        for(NSString *child in b) {
+          NSDictionary *prior=[snapshot objectForKey:child], *value=[current objectForKey:child];
+          if(![base objectForKey:child] && prior && RCNativeRecordsEqual(prior,value)) continue;
+          [wire addObject:child];
+        }
+        b=wire;
+      }
       Put(record,field,b);
     }
     [result setObject:record forKey:key];
@@ -413,6 +426,22 @@ static NSDictionary *EKAlarmRecord(EKAlarm *alarm,NSString *root,RCError *error)
   }
   return r;
 }
+/* New alarms have no durable key yet. Derive one from their native signature,
+   not their current position: EventKit can reorder them between queue and ack.
+   Known alarms continue to use their already checkpointed identities. */
+static NSString *EKNewAlarmKey(NSDictionary *record,NSString *root,RCError *error)
+{
+  NSArray *signature=[NSArray arrayWithObjects:[record objectForKey:ISyncRecordEntityNameKey],
+      [record objectForKey:@"triggerdate"] ?: @"", [record objectForKey:@"triggerduration"] ?: @"",
+      [[record objectForKey:@"com.apple.ical.sound"] absoluteString] ?: @"",nil];
+  NSData *data=[NSPropertyListSerialization dataFromPropertyList:signature format:NSPropertyListBinaryFormat_v1_0 errorDescription:NULL];
+  if(!data) { RCErrorSet(error,1,"Could not identify a new native alarm safely"); return nil; }
+  unsigned char digest[SHA256_DIGEST_LENGTH]; SHA256([data bytes],[data length],digest);
+  char hex[SHA256_DIGEST_LENGTH*2+1]; const char *digits="0123456789abcdef";
+  for(NSUInteger n=0;n<sizeof(digest);n++) { hex[n*2]=digits[digest[n]>>4]; hex[n*2+1]=digits[digest[n]&15]; }
+  hex[sizeof(hex)-1]=0;
+  return [root stringByAppendingFormat:@"/native-alarm/%s",hex];
+}
 /* Mavericks may expose its default all-day alarm alongside the identical
    explicitly imported alarm. Only this exact one-source/two-equal-local case
    can be repaired during publication; ordinary native edits stay strict. */
@@ -441,7 +470,10 @@ static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *re
   NSMutableDictionary *expected=[NSMutableDictionary dictionary], *matches=[NSMutableDictionary dictionary];
   NSMutableArray *observed=[NSMutableArray array], *unmatched=[NSMutableArray array];
   NSString *links[]={@"display alarms",@"audio alarms"};
-  for(int kind=0;kind<2;kind++) for(NSString *key in [[base objectForKey:root] objectForKey:links[kind]]) {
+  NSDictionary *reference=[snapshot objectForKey:root] ?: [base objectForKey:root];
+  /* Include native-only baseline alarms so reorder/restart keeps their stable
+     identities too. They remain absent from the retained wire graph. */
+  for(int kind=0;kind<2;kind++) for(NSString *key in [reference objectForKey:links[kind]]) {
     NSDictionary *prior=[snapshot objectForKey:key];
     if(!prior) {
       EKAlarm *alarm=EKMakeAlarm([base objectForKey:key],kind==1,error); if(!alarm) return NO;
@@ -481,9 +513,10 @@ static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *re
     NSDictionary *r=[observed objectAtIndex:n];
     NSString *key=[matches objectForKey:[NSNumber numberWithUnsignedInteger:n]];
     if(!key) {
-      NSUInteger suffix=n;
-      do { key=[root stringByAppendingFormat:@"/alarm/%lu",(unsigned long)suffix++]; }
-      while([base objectForKey:key] || [graph objectForKey:key]);
+      NSString *stem=EKNewAlarmKey(r,root,error); if(!stem) return NO;
+      key=stem; NSUInteger suffix=0;
+      while([base objectForKey:key] || [snapshot objectForKey:key] || [graph objectForKey:key])
+        key=[stem stringByAppendingFormat:@"/%lu",(unsigned long)++suffix];
     }
     [graph setObject:r forKey:key];
     [([[r objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.AudioAlarm"] ? audio : display) addObject:key];
@@ -628,6 +661,7 @@ static BOOL EKWrite(id event,id calendar,NSDictionary *resource,RCError *error)
 - (id)container:(NSString *)root create:(BOOL)create error:(RCError *)error;
 - (NSDictionary *)rawGraph:(NSDictionary *)saved error:(RCError *)error;
 - (NSDictionary *)recoverCalendarResource:(NSDictionary *)saved error:(RCError *)error;
+- (NSDictionary *)repairLegacyCalendarSnapshot:(NSDictionary *)saved error:(RCError *)error;
 @end
 @implementation RCNativeStore
 - (id)initWithContext:(RCTwoWayContext *)context error:(RCError *)error;
@@ -696,6 +730,8 @@ failed:
     if([[r objectForKey:@"_pending"] boolValue]) {
       if(contacts_) { RCErrorSet(error,1,"An interrupted native save requires recovery; refusing duplicate creation"); return nil; }
       r=[self recoverCalendarResource:r error:error]; if(!r) return nil;
+    } else if(!contacts_) {
+      r=[self repairLegacyCalendarSnapshot:r error:error]; if(!r) return nil;
     }
     [result setObject:r forKey:root];
   }
@@ -749,12 +785,86 @@ failed:
   if(event && ![[[event valueForKey:@"calendar"] valueForKey:@"calendarIdentifier"] isEqual:[container valueForKey:@"calendarIdentifier"]]) {
     RCErrorSet(error,1,"Local calendar move requires attention; preserving the event"); return nil;
   }
-  return EKRead(event,saved,NO,error);
+  NSDictionary *raw=EKRead(event,saved,NO,error); if(!raw) return nil;
+  NSDictionary *base=[saved objectForKey:@"graph"], *snapshot=[saved objectForKey:@"_snapshot"];
+  for(NSString *key in snapshot) {
+    NSDictionary *old=[snapshot objectForKey:key], *now=[raw objectForKey:key];
+    if(![base objectForKey:key] && now &&
+        [[old objectForKey:ISyncRecordEntityNameKey] hasSuffix:@"Alarm"] &&
+        !RCNativeRecordsEqual(old,now)) {
+      RCErrorSet(error,1,"A native-only default alarm was edited; preserving the local edit and original wire alarms");
+      return nil;
+    }
+  }
+  return raw;
 }
 - (NSDictionary *)readResource:(NSDictionary *)saved error:(RCError *)error;
 {
   NSDictionary *raw=[self rawGraph:saved error:error];
   return raw ? RCChangedGraph([saved objectForKey:@"graph"],[saved objectForKey:@"_snapshot"],raw) : nil;
+}
+/* Before audio support, the ordinal reader could label Mavericks' implicit
+   Basso default as display and shift a real reminder to a synthetic key. Only
+   migrate the exact unchanged legacy receipt: no native or wire data is saved. */
+- (NSDictionary *)repairLegacyCalendarSnapshot:(NSDictionary *)saved error:(RCError *)error;
+{
+  NSString *root=[saved objectForKey:@"root"];
+  NSDictionary *base=[saved objectForKey:@"graph"], *snapshot=[saved objectForKey:@"_snapshot"];
+  NSDictionary *source=[base objectForKey:root], *old=[snapshot objectForKey:root];
+  NSArray *sourceKeys=[source objectForKey:@"display alarms"], *oldKeys=[old objectForKey:@"display alarms"];
+  NSUInteger count=[sourceKeys count];
+  if(![[source objectForKey:@"all day"] boolValue] || !count ||
+      [[source objectForKey:@"audio alarms"] count] || [[source objectForKey:@"recurrences"] count] ||
+      [oldKeys count]!=count+1 || [[old objectForKey:@"audio alarms"] count] || [snapshot count]!=count+2)
+    return saved;
+  NSMutableArray *oldAlarms=[NSMutableArray array];
+  for(NSString *key in oldKeys) {
+    NSDictionary *alarm=[snapshot objectForKey:key]; if(!alarm) return saved;
+    [oldAlarms addObject:alarm];
+  }
+  NSArray *calendars=[source objectForKey:@"calendar"]; if([calendars count]!=1) goto unsafe;
+  id calendar=[self container:[calendars objectAtIndex:0] create:NO error:error]; if(!calendar) goto unsafe;
+  NSString *identifier=[[saved objectForKey:@"_ids"] objectForKey:root];
+  EKEvent *event=identifier ? [(EKEventStore *)events_ eventWithIdentifier:identifier] : nil;
+  if(!event || ![[[event calendar] calendarIdentifier] isEqual:[calendar calendarIdentifier]] ||
+      [event isDetached] || [[event recurrenceRules] count]) goto unsafe;
+  NSMutableDictionary *resource=[NSMutableDictionary dictionaryWithDictionary:saved];
+  [resource removeObjectForKey:@"_snapshot"]; [resource removeObjectForKey:@"_ids"]; [resource removeObjectForKey:@"_pending"];
+  NSDictionary *current=EKRead(event,resource,NO,error); if(!current) return nil;
+  NSDictionary *now=[current objectForKey:root];
+  if([[now objectForKey:@"display alarms"] count]!=count || [[now objectForKey:@"audio alarms"] count]!=1 || [current count]!=count+2) goto unsafe;
+  NSMutableDictionary *oldFields=[NSMutableDictionary dictionaryWithDictionary:old], *nowFields=[NSMutableDictionary dictionaryWithDictionary:now];
+  for(NSString *link in [NSArray arrayWithObjects:@"display alarms",@"audio alarms",nil]) {
+    [oldFields removeObjectForKey:link]; [nowFields removeObjectForKey:link];
+  }
+  if(!RCNativeRecordsEqual(oldFields,nowFields)) goto unsafe;
+  // The real reminders must still equal their source projections. The
+  // additional Basso reminder is the precise default the old reader mistyped.
+  for(NSString *key in sourceKeys) {
+    EKAlarm *planned=EKMakeAlarm([base objectForKey:key],NO,error); if(!planned) return nil;
+    if(!RCNativeRecordsEqual(EKAlarmRecord(planned,root,error),[current objectForKey:key])) goto unsafe;
+  }
+  NSDictionary *defaultAlarm=[current objectForKey:[[now objectForKey:@"audio alarms"] objectAtIndex:0]];
+  if([defaultAlarm objectForKey:@"triggerdate"] || [[defaultAlarm objectForKey:@"triggerduration"] intValue]!=-54000 ||
+      ![[defaultAlarm objectForKey:@"com.apple.ical.sound"] isEqual:[EKSystemSounds() objectForKey:@"Basso"]]) goto unsafe;
+  for(NSString *link in [NSArray arrayWithObjects:@"display alarms",@"audio alarms",nil]) for(NSString *key in [now objectForKey:link]) {
+    NSMutableDictionary *alarm=[NSMutableDictionary dictionaryWithDictionary:[current objectForKey:key]];
+    if([link isEqual:@"audio alarms"]) {
+      [alarm setObject:@"com.apple.calendars.DisplayAlarm" forKey:ISyncRecordEntityNameKey];
+      [alarm removeObjectForKey:@"com.apple.ical.sound"];
+    }
+    NSUInteger index=NSNotFound;
+    for(NSUInteger n=0;n<[oldAlarms count];n++) if(RCNativeRecordsEqual(alarm,[oldAlarms objectAtIndex:n])) { index=n; break; }
+    if(index==NSNotFound) goto unsafe;
+    [oldAlarms removeObjectAtIndex:index];
+  }
+  if([oldAlarms count]) goto unsafe;
+  if(!RCSaveNative(context_->journal,resource,[saved objectForKey:@"_ids"],current,NO,error)) return nil;
+  RCLogger(RCLogInfo,NULL,"Recovery",@"Repaired verified legacy calendar alarm snapshot (record=%@)",root);
+  return RCLoadNative(context_->journal,root,error);
+unsafe:
+  if(!error->code) RCErrorSet(error,1,"Legacy calendar alarm snapshot no longer matches the native event; preserving local edits");
+  return nil;
 }
 - (NSDictionary *)recoverCalendarResource:(NSDictionary *)saved error:(RCError *)error;
 {
@@ -954,8 +1064,15 @@ failed:
     NSMutableDictionary *snapshot=[NSMutableDictionary dictionaryWithDictionary:[r objectForKey:@"_snapshot"]];
     NSDictionary *raw=[self rawGraph:r error:error]; if(!raw) return NO;
     BOOL touched=NO; NSEnumerator *ids=[receipt keyEnumerator]; NSString *key;
-    while((key=[ids nextObject])) if([base objectForKey:key] || [[r objectForKey:@"root"] isEqual:key]) {
-      touched=YES; id value=[receipt objectForKey:key];
+    while((key=[ids nextObject])) {
+      id value=[receipt objectForKey:key];
+      /* A newly acknowledged alarm belongs to this resource too. Omitting it
+         from the baseline would rediscover the same addition on every read. */
+      BOOL newAlarm=!contacts_ && [raw objectForKey:key] && [value isKindOfClass:[NSDictionary class]] &&
+          [[value objectForKey:ISyncRecordEntityNameKey] hasSuffix:@"Alarm"] &&
+          [[value objectForKey:@"owner"] containsObject:[r objectForKey:@"root"]];
+      if(![base objectForKey:key] && ![[r objectForKey:@"root"] isEqual:key] && !newAlarm) continue;
+      touched=YES;
       if(value==[NSNull null]) { [base removeObjectForKey:key]; [snapshot removeObjectForKey:key]; }
       else {
         NSArray *fields=[scopes objectForKey:key];

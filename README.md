@@ -46,6 +46,9 @@ calendar uniquely matches the intended native fields. The old Mavericks all-day
 alarm failure can also recover its missing identifier and duplicate default
 alarm this way. Missing, edited, already owned, or multiple matches remain pending; recovery
 never creates a replacement event.
+Verified legacy all-day snapshots with misidentified display reminders are
+repaired without changing the event or its original calendar data. Automatic
+native reminders remain outside outgoing iCloud data when unchanged.
 Alarm readback matches unchanged alarms independently of their order. Duplicate
 local projections and ambiguous simultaneous alarm edits are deferred rather
 than guessing which alarm owns retained attachment data.

@@ -137,3 +137,11 @@ the old duplicate-alarm/pending-save state with the native identifier missing.
 Recovery must reuse the sole matching event, retain exact alarm wire data on
 later edits, and refuse missing, modified, already owned or multiple candidates without creating
 events or queuing uploads. All recovery mutations use disposable fixture stores.
+
+The legacy ordinal-alarm regressions model one or two all-day display reminders plus
+Mavericks' automatic Basso reminder. It recreates the old misclassified snapshot
+and checks exact receipt repair, stable identities after reorder/reopen, no
+implicit-default uploads, and unchanged wire alarms during later title edits.
+Changed event fields or alarm triggers block repair; a newly added local reminder
+may upload without copying the unchanged automatic default, and a reorder between
+queue and acknowledgement must not manufacture a newer edit or another upload.

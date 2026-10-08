@@ -303,6 +303,136 @@ static void AllDayAlarmTests(NSString *directory)
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
 }
+static NSDictionary *CalendarSnapshot(RCWriteJournal j,NSString *root)
+{
+  sqlite3_stmt *q=NULL;
+  CHECK(sqlite3_prepare_v2(j.db,"SELECT snapshot FROM native_store_resources WHERE account_id=? AND root=?",-1,&q,NULL)==SQLITE_OK);
+  sqlite3_bind_int64(q,1,j.account); sqlite3_bind_text(q,2,[root UTF8String],-1,SQLITE_TRANSIENT);
+  CHECK(sqlite3_step(q)==SQLITE_ROW);
+  NSDictionary *snapshot=[NSKeyedUnarchiver unarchiveObjectWithData:[NSData dataWithBytes:sqlite3_column_blob(q,0) length:sqlite3_column_bytes(q,0)]];
+  sqlite3_finalize(q); return snapshot;
+}
+static void LegacyDisplaySnapshot(RCWriteJournal j,NSString *root)
+{
+  NSDictionary *resource=[FirstRow(j) objectForKey:@"resource"];
+  NSArray *keys=[[[resource objectForKey:@"graph"] objectForKey:root] objectForKey:@"display alarms"];
+  NSDictionary *current=CalendarSnapshot(j,root);
+  NSString *extra=[root stringByAppendingFormat:@"/alarm/%lu",(unsigned long)[keys count]];
+  NSMutableDictionary *event=[NSMutableDictionary dictionaryWithDictionary:[current objectForKey:root]];
+  [event setObject:[keys arrayByAddingObject:extra] forKey:@"display alarms"];
+  [event setObject:[NSArray array] forKey:@"audio alarms"];
+  // The old ordinal mapper classified the implicit audio default as display
+  // and assigned it to the second source key, shifting that reminder to /2.
+  NSMutableDictionary *old=[NSMutableDictionary dictionaryWithObject:event forKey:root];
+  if([keys count]==2) {
+    [old setObject:[current objectForKey:[keys objectAtIndex:0]] forKey:[keys objectAtIndex:0]];
+    [old setObject:[current objectForKey:[keys objectAtIndex:0]] forKey:[keys objectAtIndex:1]];
+    [old setObject:[current objectForKey:[keys objectAtIndex:1]] forKey:extra];
+  } else {
+    NSString *audio=[[[current objectForKey:root] objectForKey:@"audio alarms"] objectAtIndex:0];
+    NSMutableDictionary *defaultAlarm=[NSMutableDictionary dictionaryWithDictionary:[current objectForKey:audio]];
+    [defaultAlarm setObject:@"com.apple.calendars.DisplayAlarm" forKey:@"com.apple.syncservices.RecordEntityName"];
+    [defaultAlarm removeObjectForKey:@"com.apple.ical.sound"];
+    [old setObject:defaultAlarm forKey:[keys objectAtIndex:0]];
+    [old setObject:[current objectForKey:[keys objectAtIndex:0]] forKey:extra];
+  }
+  NSData *data=[NSKeyedArchiver archivedDataWithRootObject:old]; sqlite3_stmt *q=NULL;
+  CHECK(sqlite3_prepare_v2(j.db,"UPDATE native_store_resources SET snapshot=? WHERE account_id=? AND root=?",-1,&q,NULL)==SQLITE_OK);
+  sqlite3_bind_blob(q,1,[data bytes],[data length],SQLITE_TRANSIENT);
+  sqlite3_bind_int64(q,2,j.account); sqlite3_bind_text(q,3,[root UTF8String],-1,SQLITE_TRANSIENT);
+  CHECK(sqlite3_step(q)==SQLITE_DONE); sqlite3_finalize(q);
+}
+static void LegacyDefaultDisplayTests(NSString *directory,BOOL single)
+{
+  NSString *account=single ? @"offline-legacy-single-display-test" : @"offline-legacy-display-test";
+  NSString *path=[directory stringByAppendingPathComponent:[account stringByAppendingString:@".sqlite"]];
+  RCCalendarStore *store=RCCalendarStoreOpen([path fileSystemRepresentation],[account UTF8String],&error); CHECK(store);
+  @try {
+    NSString *body=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//rCloud offline//EN\r\n"
+        @"BEGIN:VEVENT\r\nUID:offline-legacy-display\r\nDTSTART;VALUE=DATE:20301012\r\nDTEND;VALUE=DATE:20301013\r\n"
+        @"SUMMARY:Offline legacy reminders\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15H\r\n"
+        @"DESCRIPTION:First reminder\r\nX-PRIVATE-ALARM:first\r\nEND:VALARM\r\n"
+        @"BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-P6DT15H\r\nDESCRIPTION:Second reminder\r\n"
+        @"X-PRIVATE-ALARM:second\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    if(single) {
+      body=[body stringByReplacingOccurrencesOfString:@"BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-P6DT15H\r\nDESCRIPTION:Second reminder\r\nX-PRIVATE-ALARM:second\r\nEND:VALARM\r\n" withString:@""];
+      body=[body stringByReplacingOccurrencesOfString:@"TRIGGER:-PT15H" withString:@"TRIGGER:-PT10M"];
+    }
+    CalendarSeed(store,Data(body),"\"legacy-display-1\""); SyncCalendar(store,NO,YES);
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+    NSDictionary *row=FirstRow(j); NSString *root=[[row objectForKey:@"resource"] objectForKey:@"root"], *eventID=[row objectForKey:@"id"];
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease]; EKEvent *event=[events eventWithIdentifier:eventID];
+    CHECK(event && [[event alarms] count]==(single ? 2 : 3));
+    LegacyDisplaySnapshot(j,root); SyncCalendar(store,NO,YES);
+    CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
+    RCCalendarStoreClose(store); store=RCCalendarStoreOpen([path fileSystemRepresentation],[account UTF8String],&error); CHECK(store);
+    j=RCCalendarStoreWriteJournal(store);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event alarms] count]==(single ? 2 : 3));
+    [event setAlarms:[[[event alarms] reverseObjectEnumerator] allObjects]];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,NO,YES); SyncCalendar(store,YES,YES); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    puts("PASS: Legacy misidentified display reminders recover without changing native alarms, creating events or uploading the implicit default");
+
+    [events reset]; event=[events eventWithIdentifier:eventID]; [event setTitle:@"Edited legacy reminders"];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    NSData *confirmed=ConfirmWrite(j);
+    CHECK([confirmed isEqual:Data([body stringByReplacingOccurrencesOfString:@"SUMMARY:Offline legacy reminders" withString:@"SUMMARY:Edited legacy reminders"])]);
+    CalendarSeed(store,confirmed,"\"confirmed\""); SyncCalendar(store,YES,YES); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    puts("PASS: Edits after legacy alarm recovery retain exact source reminders and never add a default audio alarm to the wire body");
+
+    LegacyDisplaySnapshot(j,root);
+    [events reset]; event=[events eventWithIdentifier:eventID]; [event setTitle:@"Newer local edit"];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    long count=0; RCErrorClear(&error); BOOL ok=RCNativeSyncCalendars(store,YES,&count,&error);
+    CHECK(!ok); CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event title] isEqual:@"Newer local edit"]);
+    [event setTitle:@"Edited legacy reminders"]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,YES);
+    puts("PASS: Legacy snapshot recovery refuses a changed event and preserves its newer local edit");
+    if(!single) {
+      LegacyDisplaySnapshot(j,root);
+      [events reset]; event=[events eventWithIdentifier:eventID];
+      NSMutableArray *alarms=[NSMutableArray arrayWithArray:[event alarms]];
+      for(NSUInteger n=0;n<[alarms count];n++) if([(EKAlarm *)[alarms objectAtIndex:n] type]==EKAlarmTypeDisplay && [[alarms objectAtIndex:n] relativeOffset]==-572400) {
+        EKAlarm *alarm=[[[alarms objectAtIndex:n] copy] autorelease]; [alarm setRelativeOffset:-572100]; [alarms replaceObjectAtIndex:n withObject:alarm];
+      }
+      [event setAlarms:alarms]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+      RCErrorClear(&error); ok=RCNativeSyncCalendars(store,YES,&count,&error); CHECK(!ok);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+      [events reset]; event=[events eventWithIdentifier:eventID]; BOOL edited=NO;
+      alarms=[NSMutableArray arrayWithArray:[event alarms]];
+      for(NSUInteger n=0;n<[alarms count];n++) if([(EKAlarm *)[alarms objectAtIndex:n] type]==EKAlarmTypeDisplay && [[alarms objectAtIndex:n] relativeOffset]==-572100) {
+        edited=YES; EKAlarm *alarm=[[[alarms objectAtIndex:n] copy] autorelease]; [alarm setRelativeOffset:-572400]; [alarms replaceObjectAtIndex:n withObject:alarm];
+      }
+      [event setAlarms:alarms]; CHECK(edited); CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+      SyncCalendar(store,YES,YES);
+      puts("PASS: Legacy receipt repair refuses a changed alarm and leaves its native edit intact");
+
+    }
+
+    [events reset]; event=[events eventWithIdentifier:eventID];
+    [event addAlarm:[EKAlarm alarmWithRelativeOffset:-300]];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    [events reset]; event=[events eventWithIdentifier:eventID];
+    [event setAlarms:[[[event alarms] reverseObjectEnumerator] allObjects]];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    confirmed=ConfirmWrite(j);
+    NSString *updated=[[[NSString alloc] initWithData:confirmed encoding:NSUTF8StringEncoding] autorelease];
+    CHECK([[updated componentsSeparatedByString:@"ACTION:DISPLAY"] count]==(single ? 3 : 4));
+    CHECK([updated rangeOfString:@"ACTION:AUDIO"].location==NSNotFound);
+    CHECK([updated rangeOfString:@"X-PRIVATE-ALARM:first"].location!=NSNotFound && (single || [updated rangeOfString:@"X-PRIVATE-ALARM:second"].location!=NSNotFound));
+    CalendarSeed(store,confirmed,"\"confirmed-2\""); SyncCalendar(store,YES,YES); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==2);
+    puts("PASS: Adding a real local reminder uploads that reminder without copying the unchanged native-only Basso default");
+
+  } @finally {
+    if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
+  }
+}
 static void AudioAlarmTests(NSString *directory)
 {
   NSString *path=[directory stringByAppendingPathComponent:@"audio-alarms.sqlite"];
@@ -455,7 +585,7 @@ int main(int argc,char **argv)
       if(attempt==0) printf("WAITING FOR CALENDAR ACCESS: %s\n",error.message);
       if(attempt==599) CHECK(NO); [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1]];
     }
-    AllDayAlarmTests(directory);
+    AllDayAlarmTests(directory); LegacyDefaultDisplayTests(directory,NO); LegacyDefaultDisplayTests(directory,YES);
     row=FirstRow(ej); CHECK(row); NSString *eventID=[[row objectForKey:@"id"] copy];
     EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
     EKEvent *event=[events eventWithIdentifier:eventID]; CHECK(event); CHECK([[event title] isEqual:@"rCloud Offline Event"]);
