@@ -13,7 +13,7 @@ Legacy Mac OS X 10.4+ app: a local TLS mail proxy plus iCloud CardDAV/CalDAV mir
 
 ## Objective-C house rules
 
-- Use explicit accessor messages, not Objective-C dot syntax. All project Objective-C uses manual retain/release; balance ownership, delegate and callback lifetimes, and `[super dealloc]`. Update Cocoa UI only on the main thread.
+- Use explicit accessor messages, not Objective-C dot syntax. All project Objective-C uses manual retain/release; balance ownership, delegate and callback lifetimes, and `[super dealloc]`. Update Cocoa UI only on the main thread. Font Awesome icons use the owning window's `XP_backingScaleFactor` (Tiger-safe 1x fallback), never a fixed 1x raster; rebuild cached toolbar icons on backing/display changes and status icons after window attachment.
 - Prefer C in `source/shared` for protocol, database, sync and network logic. Keep Cocoa in app/daemon Objective-C adapters; C files must not import Apple frameworks. Keep UI work bounded: avoid full-table loads or repeated queries while rendering, fetch needed rows with indexed queries or a bounded cache, and measure large-list changes on the target Mac.
 - Drain `NSAutoreleasePool` in bounded batches in long loops that create autoreleased objects. Check both SDK availability and runtime support for newer APIs. Tiger PPC code cannot use blocks. Put compatibility checks and deprecated-API calls in narrow helpers near the relevant Apple-framework boundary; avoid scattered warning suppressions and keep callers clean.
 

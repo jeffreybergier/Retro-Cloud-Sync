@@ -10,6 +10,7 @@
 #import "DaemonStatusView.h"
 #import "MailServerView.h"
 #import "ContactsView.h"
+#import "XPAppKit.h"
 #import "DaemonLogView.h"
 
 static NSString * const kRCDaemonToolbarItem = @"Status";
@@ -22,6 +23,8 @@ static NSString * const kRCWindowFrameAutosaveName = @"RetroCloudSyncPreferences
 @interface PreferencesWindowController (Private)
 - (void)selectPreferencePane:(id)sender;
 - (void)showView:(NSView *)view;
+- (void)rebuildToolbarImagesForWindow:(NSWindow *)window;
+- (NSImage *)imageForToolbarIdentifier:(NSString *)identifier;
 @end
 
 @implementation PreferencesWindowController
@@ -87,18 +90,7 @@ static NSString * const kRCWindowFrameAutosaveName = @"RetroCloudSyncPreferences
   [toolbar setDelegate:self];
   [toolbar setAllowsUserCustomization:NO];
   [toolbar setAutosavesConfiguration:NO];
-  daemonToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAGauge
-      style:AIFontAwesomeStyleSolid iconSize:24.0 canvasSize:32.0
-      scale:1.0] retain];
-  mailToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAEnvelope
-      style:AIFontAwesomeStyleSolid iconSize:24.0 canvasSize:32.0
-      scale:1.0] retain];
-  contactsToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAAddressBook
-      style:AIFontAwesomeStyleSolid iconSize:24.0 canvasSize:32.0
-      scale:1.0] retain];
-  logToolbarImage_ = [[AIFontAwesome imageForIcon:AIFAFileLines
-      style:AIFontAwesomeStyleSolid iconSize:24.0 canvasSize:32.0
-      scale:1.0] retain];
+  [self rebuildToolbarImagesForWindow:window];
   if (daemonToolbarImage_ != nil && mailToolbarImage_ != nil &&
       contactsToolbarImage_ != nil && logToolbarImage_ != nil) {
     [toolbar setDisplayMode:NSToolbarDisplayModeIconAndLabel];
@@ -204,19 +196,41 @@ static NSString * const kRCWindowFrameAutosaveName = @"RetroCloudSyncPreferences
                                                itemIdentifier]];
   [item setTarget:self];
   [item setAction:@selector(selectPreferencePane:)];
-  if ([itemIdentifier isEqualToString:kRCDaemonToolbarItem]) {
-    image = daemonToolbarImage_;
-  } else if ([itemIdentifier isEqualToString:kRCSyncToolbarItem]) {
-    image = contactsToolbarImage_;
-  } else if ([itemIdentifier isEqualToString:kRCLogToolbarItem]) {
-    image = logToolbarImage_;
-  } else {
-    image = mailToolbarImage_;
-  }
+  image = [self imageForToolbarIdentifier:itemIdentifier];
   if (image != nil) {
     [item setImage:image];
   }
   return item;
+}
+
+- (NSImage *)imageForToolbarIdentifier:(NSString *)identifier;
+{
+  if([identifier isEqual:kRCDaemonToolbarItem]) return daemonToolbarImage_;
+  if([identifier isEqual:kRCSyncToolbarItem]) return contactsToolbarImage_;
+  if([identifier isEqual:kRCLogToolbarItem]) return logToolbarImage_;
+  return mailToolbarImage_;
+}
+- (void)rebuildToolbarImagesForWindow:(NSWindow *)window;
+{
+  CGFloat scale=[window XP_backingScaleFactor]; if(scale<1.0) scale=1.0;
+  NSImage **images[]={&daemonToolbarImage_,&mailToolbarImage_,&contactsToolbarImage_,&logToolbarImage_};
+  AIFontAwesomeIcon icons[]={AIFAGauge,AIFAEnvelope,AIFAAddressBook,AIFAFileLines};
+  for(unsigned int n=0;n<4;n++) {
+    NSImage *image=[[AIFontAwesome imageForIcon:icons[n] style:AIFontAwesomeStyleSolid
+        iconSize:24.0 canvasSize:32.0 scale:scale] retain];
+    [*images[n] release]; *images[n]=image;
+  }
+  NSEnumerator *items=[[toolbar_ items] objectEnumerator]; NSToolbarItem *item;
+  while((item=[items nextObject]))
+    [item setImage:[self imageForToolbarIdentifier:[item itemIdentifier]]];
+}
+- (void)windowDidChangeBackingProperties:(NSNotification *)notification;
+{
+  [self rebuildToolbarImagesForWindow:[notification object]];
+}
+- (void)windowDidChangeScreen:(NSNotification *)notification;
+{
+  [self rebuildToolbarImagesForWindow:[notification object]];
 }
 
 - (void)selectPreferencePane:(id)sender;

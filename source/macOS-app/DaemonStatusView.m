@@ -8,6 +8,7 @@
 #import "RCServiceController.h"
 #import "RCConfiguration.h"
 #import <AltivecCocoa/AIFontAwesome.h>
+#import "XPAppKit.h"
 #include <signal.h>
 #include <errno.h>
 
@@ -60,12 +61,12 @@ static NSAttributedString *RCStatusDetails(NSString *message, NSString *last,
   return RCStatusRows([NSArray arrayWithObjects:@"Status",message,
       @"Last successful sync",last,heading,detail,nil]);
 }
-static NSImage *RCStatusIcon(NSString *severity, BOOL paused)
+static NSImage *RCStatusIcon(NSString *severity, BOOL paused, CGFloat scale)
 {
   BOOL red=[severity isEqual:@"red"], green=[severity isEqual:@"green"];
   AIFontAwesomeIcon glyph=paused ? AIFAPause : red ? AIFACircleXmark : green ? AIFACircleCheck : AIFATriangleExclamation;
   NSImage *source=[AIFontAwesome imageForIcon:glyph style:AIFontAwesomeStyleSolid
-      iconSize:18 canvasSize:24 scale:1];
+      iconSize:18 canvasSize:24 scale:scale<1.0 ? 1.0 : scale];
   NSImage *image=[[[NSImage alloc] initWithSize:NSMakeSize(24,24)] autorelease];
   [image lockFocus];
   [source drawAtPoint:NSZeroPoint fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:1];
@@ -151,6 +152,12 @@ static NSString *RCStatusDate(id value)
   [statusLabel_ release];
   [serviceController_ release];
   [super dealloc];
+}
+
+- (void)viewDidMoveToWindow;
+{
+  [super viewDidMoveToWindow];
+  [self updateServiceStatus:nil];
 }
 
 - (void)startUpdating;
@@ -247,7 +254,7 @@ static NSString *RCStatusDate(id value)
       [NSArray arrayWithObjects:@"Status",message,nil]);
   [statusLabel_ setAttributedStringValue:details];
   [statusLabel_ setToolTip:[details string]];
-  [serviceIcon_ setImage:RCStatusIcon(severity,paused)];
+  [serviceIcon_ setImage:RCStatusIcon(severity,paused,[[self window] XP_backingScaleFactor])];
 }
 
 - (void)updateSyncStatus;
@@ -280,7 +287,7 @@ static NSString *RCStatusDate(id value)
     else if([code isEqual:@"Upload"]) message=@"Could not finish uploading — see log";
     if(disabled) message=@"Disabled";
     else if(!live && s) message=@"Paused — background service stopped";
-    [syncIcon_[i] setImage:RCStatusIcon(live && !disabled ? [s objectForKey:@"Severity"] : @"yellow",!live || disabled)];
+    [syncIcon_[i] setImage:RCStatusIcon(live && !disabled ? [s objectForKey:@"Severity"] : @"yellow",!live || disabled,[[self window] XP_backingScaleFactor])];
     id next=[s objectForKey:@"NextAttempt"]; long pending=[[s objectForKey:@"PendingCount"] longValue];
     NSString *heading=code ? @"Next retry" : @"Next sync";
     NSString *detail=disabled ? @"Disabled" : !live ? @"Not scheduled" : @"Waiting for schedule";

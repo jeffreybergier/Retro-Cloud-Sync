@@ -3,7 +3,7 @@
 APP_NAME := rCloud
 APP_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-app
 APP_BUILD_ROOT := $(BUILD_ROOT)/macOS-app/$(CONFIG)
-APP_SOURCES := main.m AppDelegate.m PreferencesWindowController.m \
+APP_SOURCES := main.m AppDelegate.m XPAppKit.m PreferencesWindowController.m \
 	DaemonStatusView.m DaemonLogView.m MailServerView.m RCConfiguration.m \
 	ContactsView.m RCServiceController.m
 APP_SOURCE_PATHS := $(addprefix $(APP_SOURCE_ROOT)/,$(APP_SOURCES))
