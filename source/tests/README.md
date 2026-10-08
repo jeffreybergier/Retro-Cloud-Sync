@@ -122,3 +122,11 @@ updates, and a concurrent remote update pinned to the original ETag. Native
 invitation deletion must stay pending without queuing a cloud DELETE. Remote
 outcomes are simulated in the journal; the portable write-safety suite separately
 checks conditional HTTP writes and precondition conflicts.
+
+Audio regressions cover mixed display/audio alarms, relative/absolute triggers,
+system-file and named sounds, custom and absent-attachment fallbacks, one-way
+recurring imports, and new local audio alarms. They check exact wire preservation
+after alarm reordering, database reopening, event edits and acknowledgement, plus
+an explicit local sound edit. Repeating alarms, duplicate fallback projections
+and ambiguous simultaneous alarm edits must not produce unsafe uploads. The
+fixtures use future trigger dates and never download or play sound attachments.

@@ -186,6 +186,108 @@ static void InvitationTests(NSString *directory)
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
 }
+static void AudioAlarmTests(NSString *directory)
+{
+  NSString *path=[directory stringByAppendingPathComponent:@"audio-alarms.sqlite"];
+  RCCalendarStore *store=RCCalendarStoreOpen([path fileSystemRepresentation],
+      "offline-audio-test",&error); CHECK(store);
+  @try {
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+    NSString *body=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//rCloud offline//EN\r\n"
+        @"BEGIN:VEVENT\r\nUID:offline-audio\r\nDTSTART:20301012T090000Z\r\nDTEND:20301012T100000Z\r\n"
+        @"SUMMARY:Offline sound alarms\r\nDESCRIPTION:Original notes\r\nRRULE:FREQ=YEARLY;COUNT=3\r\n"
+        @"BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT10M\r\n"
+        @"ATTACH;FMTTYPE=audio/basic:file://localhost/System/Library/Sounds/Glass.aiff\r\nEND:VALARM\r\n"
+        @"BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nDESCRIPTION:Display reminder\r\nEND:VALARM\r\n"
+        @"BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER;VALUE=DATE-TIME:20301012T080000Z\r\n"
+        @"ATTACH;VALUE=URI:https://fixture.invalid/custom-tone.aiff\r\nX-PRIVATE-ALARM:keep\r\nEND:VALARM\r\n"
+        @"BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT5M\r\nEND:VALARM\r\n"
+        @"BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT30M\r\nATTACH;VALUE=URI:Ping\r\nEND:VALARM\r\n"
+        @"END:VEVENT\r\nEND:VCALENDAR\r\n";
+    CalendarSeed(store,Data(body),"\"audio-1\""); SyncCalendar(store,NO,YES);
+    NSString *eventID=[FirstRow(j) objectForKey:@"id"]; CHECK(eventID);
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
+    EKEvent *event=[events eventWithIdentifier:eventID]; CHECK(event);
+    CHECK([[event alarms] count]==5 && [[event recurrenceRules] count]==1);
+    int audio=0,display=0;
+    for(EKAlarm *alarm in [event alarms]) {
+      if([alarm type]==EKAlarmTypeDisplay) { display++; CHECK([alarm relativeOffset]==-900); }
+      else {
+        CHECK([alarm type]==EKAlarmTypeAudio); audio++;
+        if([alarm absoluteDate]) {
+          CHECK([[alarm absoluteDate] isEqual:[NSCalendarDate dateWithYear:2030 month:10 day:12 hour:8 minute:0 second:0 timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]]]);
+          CHECK([[alarm soundName] isEqual:@"Basso"]);
+        } else if([alarm relativeOffset]==-600) CHECK([[alarm soundName] isEqual:@"Glass"]);
+        else if([alarm relativeOffset]==-1800) CHECK([[alarm soundName] isEqual:@"Ping"]);
+        else { CHECK([alarm relativeOffset]==-300); CHECK([[alarm soundName] isEqual:@"Basso"]); }
+      }
+    }
+    CHECK(audio==4 && display==1);
+    SyncCalendar(store,NO,YES); CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
+    puts("PASS: Recurring one-way events import mixed display/audio alarms, named and file sounds, absolute triggers and default/custom fallbacks");
+
+    body=[body stringByReplacingOccurrencesOfString:@"RRULE:FREQ=YEARLY;COUNT=3\r\n" withString:@""];
+    CalendarSeed(store,Data(body),"\"audio-2\""); SyncCalendar(store,NO,YES);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK(event);
+    [event setAlarms:[[[event alarms] reverseObjectEnumerator] allObjects]];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,YES); CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    RCCalendarStoreClose(store); store=NULL;
+    store=RCCalendarStoreOpen([path fileSystemRepresentation],"offline-audio-test",&error); CHECK(store);
+    j=RCCalendarStoreWriteJournal(store);
+    [event setNotes:@"Edited notes"]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    NSString *expected=[body stringByReplacingOccurrencesOfString:@"DESCRIPTION:Original notes" withString:@"DESCRIPTION:Edited notes"];
+    NSData *confirmed=ConfirmWrite(j); CHECK([confirmed isEqual:Data(expected)]);
+    CalendarSeed(store,confirmed,"\"confirmed\""); SyncCalendar(store,YES,YES); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==1);
+    puts("PASS: Alarm reordering, database reopen and event edits preserve original attachment bytes and absent default ATTACH across acknowledgement/replay");
+
+    // Changing the locally chosen fallback is a real user edit; only that
+    // alarm's attachment may change, not the other audio or display alarms.
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK(event);
+    NSMutableArray *alarms=[NSMutableArray arrayWithArray:[event alarms]]; BOOL changed=NO;
+    for(NSUInteger n=0;n<[alarms count];n++) if([[alarms objectAtIndex:n] absoluteDate]) {
+      EKAlarm *alarm=[[[alarms objectAtIndex:n] copy] autorelease]; [alarm setSoundName:@"Glass"];
+      [alarms replaceObjectAtIndex:n withObject:alarm]; changed=YES;
+    }
+    CHECK(changed); [event setAlarms:alarms]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    expected=[expected stringByReplacingOccurrencesOfString:@"https://fixture.invalid/custom-tone.aiff"
+        withString:@"file:///System/Library/Sounds/Glass.aiff"];
+    confirmed=ConfirmWrite(j); CHECK([confirmed isEqual:Data(expected)]);
+    CalendarSeed(store,confirmed,"\"confirmed\""); SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==2);
+    puts("PASS: Explicit local sound change replaces only the intended attachment and retains its URI parameters");
+
+    // Never silently flatten repeated alarms or guess between identical native
+    // projections (different unavailable attachments can share one fallback).
+    NSString *unsupported=[expected stringByReplacingOccurrencesOfString:@"TRIGGER:-PT5M\r\n"
+        withString:@"TRIGGER:-PT5M\r\nREPEAT:2\r\nDURATION:PT1M\r\n"];
+    CalendarSeed(store,Data(unsupported),"\"audio-repeat\""); SyncCalendar(store,NO,NO);
+    CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(expected)]);
+    unsupported=[expected stringByReplacingOccurrencesOfString:@"TRIGGER:-PT30M\r\nATTACH;VALUE=URI:Ping"
+        withString:@"TRIGGER:-PT5M\r\nATTACH;VALUE=URI:https://fixture.invalid/missing.aiff"];
+    CalendarSeed(store,Data(unsupported),"\"audio-duplicate\""); SyncCalendar(store,NO,NO);
+    CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(expected)]);
+    CalendarSeed(store,Data(expected),"\"audio-restored\""); SyncCalendar(store,NO,YES);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK(event);
+    alarms=[NSMutableArray arrayWithArray:[event alarms]];
+    for(NSUInteger n=0;n<[alarms count];n++) if([(EKAlarm *)[alarms objectAtIndex:n] type]==EKAlarmTypeAudio &&
+        ![[alarms objectAtIndex:n] absoluteDate]) {
+      EKAlarm *alarm=[[[alarms objectAtIndex:n] copy] autorelease];
+      [alarm setRelativeOffset:[alarm relativeOffset]-60]; [alarms replaceObjectAtIndex:n withObject:alarm];
+    }
+    [event setAlarms:alarms]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    long count=0; CHECK(!RCNativeSyncCalendars(store,YES,&count,&error));
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==2);
+    puts("PASS: Repeating alarms, duplicate fallback projections and ambiguous multiple alarm edits are held without unsafe uploads");
+  } @finally {
+    if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
+  }
+}
 int main(int argc,char **argv)
 {
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init]; setbuf(stdout,NULL); int result=1;
@@ -283,14 +385,23 @@ int main(int argc,char **argv)
     event=[EKEvent eventWithEventStore:events]; [event setCalendar:calendar]; [event setTitle:@"rCloud New Offline Event"];
     [event setStartDate:[NSDate dateWithTimeIntervalSince1970:1791795600]];
     [event setEndDate:[NSDate dateWithTimeIntervalSince1970:1791799200]];
+    EKAlarm *newAlarm=[EKAlarm alarmWithRelativeOffset:-600]; [newAlarm setSoundName:@"Glass"];
+    [event addAlarm:newAlarm];
     CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
     SyncCalendar(calendars,YES,NO);
     CHECK(Count(ej,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
+    long long newOperation=0; CHECK(RCWriteJournalNext(&ej,2000000000,&newOperation,&error)); CHECK(newOperation>0);
+    RCWriteOperation newWrite; CHECK(RCWriteJournalGet(&ej,newOperation,&newWrite,&error));
+    CHECK(!strcmp(newWrite.kind,"create"));
+    NSString *newBody=[[[NSString alloc] initWithBytes:newWrite.desiredBody length:newWrite.desiredLength encoding:NSUTF8StringEncoding] autorelease];
+    CHECK([newBody rangeOfString:@"ACTION:AUDIO"].location!=NSNotFound);
+    CHECK([newBody rangeOfString:@"Glass.aiff"].location!=NSNotFound);
+    RCWriteOperationClear(&newWrite);
     SyncCalendar(calendars,YES,NO);
     CHECK(Count(ej,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
     [calendarID release];
     puts("PASS: Locally created contacts/events queue once across repeated exchanges");
-    InvitationTests(directory); result=0;
+    InvitationTests(directory); AudioAlarmTests(directory); result=0;
   } @catch(NSException *exception) { fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]); }
   @try { if(contacts) Cleanup(RCContactStoreWriteJournal(contacts),YES); if(calendars) Cleanup(RCCalendarStoreWriteJournal(calendars),NO); }
   @catch(NSException *exception) { fprintf(stderr,"Cleanup needs retry: %s\n",[[exception name] UTF8String]); result=1; }

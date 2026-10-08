@@ -359,7 +359,125 @@ static NSDate *EKDate(NSDate *date,BOOL allDay,BOOL toNative)
   }
   return date;
 }
-static NSDictionary *EKRead(id event,NSDictionary *resource)
+/* Only installed system sounds are used. Never fetch a remote attachment or
+   open a server-supplied path. The full original attachment stays in the base. */
+static NSDictionary *EKSystemSounds(void)
+{
+  static NSDictionary *sounds=nil;
+  @synchronized([EKAlarm class]) {
+    if(!sounds) {
+      NSMutableDictionary *found=[NSMutableDictionary dictionary];
+      NSString *directory=@"/System/Library/Sounds";
+      NSArray *files=[[NSFileManager defaultManager] contentsOfDirectoryAtPath:directory error:NULL];
+      for(NSString *file in [files sortedArrayUsingSelector:@selector(compare:)]) {
+        if(![[NSArray arrayWithObjects:@"aiff",@"aif",@"wav",@"caf",nil] containsObject:[[file pathExtension] lowercaseString]]) continue;
+        [found setObject:[NSURL fileURLWithPath:[directory stringByAppendingPathComponent:file]]
+            forKey:[file stringByDeletingPathExtension]];
+      }
+      sounds=[found copy];
+    }
+  }
+  return sounds;
+}
+static EKAlarm *EKMakeAlarm(NSDictionary *record,BOOL audio,RCError *error)
+{
+  EKAlarm *alarm=[record objectForKey:@"triggerdate"] ?
+      [EKAlarm alarmWithAbsoluteDate:[record objectForKey:@"triggerdate"]] :
+      [EKAlarm alarmWithRelativeOffset:[[record objectForKey:@"triggerduration"] doubleValue]];
+  if(audio) {
+    BOOL valid; NSURL *url=RCNativeAlarmSound(record,&valid);
+    if(!valid) { RCErrorSet(error,1,"Invalid audio alarm sound"); return nil; }
+    NSString *name=[[[url path] lastPathComponent] stringByDeletingPathExtension];
+    NSDictionary *sounds=EKSystemSounds();
+    if(![sounds objectForKey:name ?: @""]) name=[sounds objectForKey:@"Basso"] ? @"Basso" : [[[sounds allKeys] sortedArrayUsingSelector:@selector(compare:)] firstObject];
+    if(!name) { RCErrorSet(error,1,"No installed system sound for an audio alarm"); return nil; }
+    [alarm setSoundName:name];
+  }
+  return alarm;
+}
+static NSDictionary *EKAlarmRecord(EKAlarm *alarm,NSString *root,RCError *error)
+{
+  BOOL audio=[alarm type]==EKAlarmTypeAudio;
+  if((!audio && [alarm type]!=EKAlarmTypeDisplay) || [alarm structuredLocation]) {
+    RCErrorSet(error,1,"Unsupported native alarm action or location"); return nil;
+  }
+  NSMutableDictionary *r=[NSMutableDictionary dictionaryWithObjectsAndKeys:
+      audio ? @"com.apple.calendars.AudioAlarm" : @"com.apple.calendars.DisplayAlarm",
+      ISyncRecordEntityNameKey,[NSArray arrayWithObject:root],@"owner",nil];
+  if([alarm absoluteDate]) Put(r,@"triggerdate",[alarm absoluteDate]);
+  else Put(r,@"triggerduration",[NSNumber numberWithInt:(int)[alarm relativeOffset]]);
+  if(audio) {
+    NSURL *sound=[EKSystemSounds() objectForKey:[alarm soundName] ?: @""];
+    if(!sound) { RCErrorSet(error,1,"Unknown native alarm sound; preserving the original alarm"); return nil; }
+    Put(r,@"com.apple.ical.sound",sound);
+  }
+  return r;
+}
+static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *record,
+    NSMutableDictionary *graph,RCError *error)
+{
+  NSString *root=[resource objectForKey:@"root"];
+  NSDictionary *base=[resource objectForKey:@"graph"], *snapshot=[resource objectForKey:@"_snapshot"];
+  NSMutableDictionary *expected=[NSMutableDictionary dictionary], *matches=[NSMutableDictionary dictionary];
+  NSMutableArray *observed=[NSMutableArray array], *unmatched=[NSMutableArray array];
+  NSString *links[]={@"display alarms",@"audio alarms"};
+  for(int kind=0;kind<2;kind++) for(NSString *key in [[base objectForKey:root] objectForKey:links[kind]]) {
+    NSDictionary *prior=[snapshot objectForKey:key];
+    if(!prior) {
+      EKAlarm *alarm=EKMakeAlarm([base objectForKey:key],kind==1,error); if(!alarm) return NO;
+      prior=EKAlarmRecord(alarm,root,error); if(!prior) return NO;
+    }
+    [expected setObject:prior forKey:key];
+  }
+  for(EKAlarm *alarm in [event alarms]) {
+    NSDictionary *r=EKAlarmRecord(alarm,root,error); if(!r) return NO;
+    for(NSDictionary *prior in observed) if(RCNativeRecordsEqual(prior,r)) goto ambiguous;
+    [observed addObject:r];
+  }
+  /* Match unchanged alarms first, independent of EventKit ordering. Only one
+     remaining edit has an unambiguous identity; never guess among several. */
+  for(NSUInteger n=0;n<[observed count];n++) {
+    NSNumber *index=[NSNumber numberWithUnsignedInteger:n]; NSString *match=nil;
+    for(NSString *key in expected) if(RCNativeRecordsEqual([expected objectForKey:key],[observed objectAtIndex:n])) {
+      if(match) goto ambiguous;
+      match=key;
+    }
+    if(match) { [matches setObject:match forKey:index]; [expected removeObjectForKey:match]; }
+    else [unmatched addObject:index];
+  }
+  if([expected count] && [unmatched count]) {
+    if([expected count]!=1 || [unmatched count]!=1) goto ambiguous;
+    NSString *key=[[expected allKeys] objectAtIndex:0]; NSNumber *index=[unmatched objectAtIndex:0];
+    if(![[[expected objectForKey:key] objectForKey:ISyncRecordEntityNameKey]
+        isEqual:[[observed objectAtIndex:[index unsignedIntegerValue]] objectForKey:ISyncRecordEntityNameKey]]) goto ambiguous;
+    [matches setObject:key forKey:index];
+  }
+  NSMutableArray *display=[NSMutableArray array], *audio=[NSMutableArray array];
+  for(NSUInteger n=0;n<[observed count];n++) {
+    NSDictionary *r=[observed objectAtIndex:n];
+    NSString *key=[matches objectForKey:[NSNumber numberWithUnsignedInteger:n]];
+    if(!key) {
+      NSUInteger suffix=n;
+      do { key=[root stringByAppendingFormat:@"/alarm/%lu",(unsigned long)suffix++]; }
+      while([base objectForKey:key] || [graph objectForKey:key]);
+    }
+    [graph setObject:r forKey:key];
+    [([[r objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.AudioAlarm"] ? audio : display) addObject:key];
+  }
+  for(int kind=0;kind<2;kind++) {
+    NSMutableArray *remaining=[NSMutableArray arrayWithArray:kind ? audio : display];
+    NSMutableArray *ordered=[NSMutableArray array];
+    /* Relationship equality ignores ordering, but the lossless wire encoder
+       uses source order. Do not turn a native reorder into a structural edit. */
+    for(NSString *key in [[base objectForKey:root] objectForKey:links[kind]])
+      if([remaining containsObject:key]) { [ordered addObject:key]; [remaining removeObject:key]; }
+    [ordered addObjectsFromArray:remaining]; [record setObject:ordered forKey:links[kind]];
+  }
+  return YES;
+ambiguous:
+  RCErrorSet(error,1,"Native alarm identities are ambiguous; preserving the original alarms"); return NO;
+}
+static NSDictionary *EKRead(id event,NSDictionary *resource,RCError *error)
 {
   if(!event) return [NSDictionary dictionary];
   NSString *root=[resource objectForKey:@"root"];
@@ -387,16 +505,7 @@ static NSDictionary *EKRead(id event,NSDictionary *resource)
     NSDictionary *r=EKReadRule(rule,root); if(r) { [graph setObject:r forKey:key]; [recurrences addObject:key]; } n++;
   }
   [record setObject:recurrences forKey:@"recurrences"];
-  NSMutableArray *alarms=[NSMutableArray array]; it=[[event valueForKey:@"alarms"] objectEnumerator]; id alarm; n=0;
-  while((alarm=[it nextObject])) {
-    NSArray *existing=[base objectForKey:@"display alarms"];
-    NSString *key=n<[existing count] ? [existing objectAtIndex:n] : [root stringByAppendingFormat:@"/alarm/%lu",(unsigned long)n];
-    NSMutableDictionary *r=[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.DisplayAlarm",ISyncRecordEntityNameKey,[NSArray arrayWithObject:root],@"owner",nil];
-    if([alarm valueForKey:@"absoluteDate"]) Put(r,@"triggerdate",[alarm valueForKey:@"absoluteDate"]);
-    else Put(r,@"triggerduration",[NSNumber numberWithInt:[[alarm valueForKey:@"relativeOffset"] intValue]]);
-    [graph setObject:r forKey:key]; [alarms addObject:key]; n++;
-  }
-  [record setObject:alarms forKey:@"display alarms"];
+  if(!EKReadAlarms(event,resource,record,graph,error)) return nil;
   /* Attendee/organizer links and children deliberately stay out of this native
      snapshot. RCChangedGraph retains them from the full publication base;
      their absence in EventKit is not a user edit or a participant deletion. */
@@ -409,7 +518,7 @@ static BOOL EKCanWrite(NSDictionary *resource,RCError *error)
 {
   NSDictionary *graph=[resource objectForKey:@"graph"], *r=[graph objectForKey:[resource objectForKey:@"root"]];
   if([[r objectForKey:@"detached events"] count] || [[r objectForKey:@"exception dates"] count] || [[r objectForKey:@"main event"] count] ||
-      [[r objectForKey:@"audio alarms"] count] || [[r objectForKey:@"mail alarms"] count]) {
+      [[r objectForKey:@"mail alarms"] count]) {
     RCErrorSet(error,1,"EventKit publication needs unsupported exception or alarm fields; retained for attention"); return NO;
   }
   NSEnumerator *it=[[r objectForKey:@"recurrences"] objectEnumerator]; NSString *key;
@@ -417,9 +526,19 @@ static BOOL EKCanWrite(NSDictionary *resource,RCError *error)
     NSDictionary *rule=[graph objectForKey:key]; NSString *week=[rule objectForKey:@"weekstartday"];
     if((week && ![week isEqual:@"monday"]) || !EKRule(rule)) { RCErrorSet(error,1,"EventKit cannot represent this recurrence rule"); return NO; }
   }
-  it=[[r objectForKey:@"display alarms"] objectEnumerator];
-  while((key=[it nextObject])) if([[[graph objectForKey:key] objectForKey:@"repeat count"] intValue]) {
-    RCErrorSet(error,1,"EventKit cannot represent repeating alarms"); return NO;
+  NSMutableArray *alarms=[NSMutableArray array];
+  NSString *links[]={@"display alarms",@"audio alarms"};
+  for(int kind=0;kind<2;kind++) for(key in [r objectForKey:links[kind]]) {
+    NSDictionary *a=[graph objectForKey:key];
+    if([[a objectForKey:@"repeat count"] intValue]) {
+      RCErrorSet(error,1,"EventKit cannot represent repeating alarms"); return NO;
+    }
+    EKAlarm *alarm=EKMakeAlarm(a,kind==1,error); if(!alarm) return NO;
+    NSDictionary *projected=EKAlarmRecord(alarm,[resource objectForKey:@"root"],error); if(!projected) return NO;
+    for(NSDictionary *prior in alarms) if(RCNativeRecordsEqual(prior,projected)) {
+      RCErrorSet(error,1,"Duplicate native alarm projections cannot be identified safely"); return NO;
+    }
+    [alarms addObject:projected];
   }
   return YES;
 }
@@ -441,12 +560,10 @@ static BOOL EKWrite(id event,id calendar,NSDictionary *resource,RCError *error)
   NSMutableArray *rules=[NSMutableArray array]; NSEnumerator *it=[[r objectForKey:@"recurrences"] objectEnumerator]; NSString *key;
   while((key=[it nextObject])) [rules addObject:EKRule([graph objectForKey:key])];
   [event setValue:rules forKey:@"recurrenceRules"];
-  NSMutableArray *alarms=[NSMutableArray array]; it=[[r objectForKey:@"display alarms"] objectEnumerator];
-  while((key=[it nextObject])) {
-    NSDictionary *a=[graph objectForKey:key]; id alarm=nil;
-    if([a objectForKey:@"triggerdate"]) alarm=[EKAlarm alarmWithAbsoluteDate:[a objectForKey:@"triggerdate"]];
-    else alarm=[EKAlarm alarmWithRelativeOffset:[[a objectForKey:@"triggerduration"] doubleValue]];
-    if(!alarm) { RCErrorSet(error,1,"Could not construct EventKit alarm"); return NO; } [alarms addObject:alarm];
+  NSMutableArray *alarms=[NSMutableArray array]; NSString *links[]={@"display alarms",@"audio alarms"};
+  for(int kind=0;kind<2;kind++) for(key in [r objectForKey:links[kind]]) {
+    EKAlarm *alarm=EKMakeAlarm([graph objectForKey:key],kind==1,error);
+    if(!alarm) return NO; [alarms addObject:alarm];
   }
   [event setValue:alarms forKey:@"alarms"]; return YES;
 }
@@ -569,7 +686,7 @@ failed:
   if(event && ![[[event valueForKey:@"calendar"] valueForKey:@"calendarIdentifier"] isEqual:[container valueForKey:@"calendarIdentifier"]]) {
     RCErrorSet(error,1,"Local calendar move requires attention; preserving the event"); return nil;
   }
-  return EKRead(event,saved);
+  return EKRead(event,saved,error);
 }
 - (NSDictionary *)readResource:(NSDictionary *)saved error:(RCError *)error;
 {
@@ -611,7 +728,8 @@ failed:
     if(!EKSave(events_,NSSelectorFromString(@"saveEvent:span:commit:error:"),item,YES,error)) return NO;
     NSString *native=[item valueForKey:@"eventIdentifier"]; if(!native) goto failed; [ids setObject:native forKey:root];
   }
-  NSDictionary *snapshot=contacts_ ? ABRead(item,root,ids) : EKRead(item,resource);
+  NSDictionary *snapshot=contacts_ ? ABRead(item,root,ids) : EKRead(item,resource,error);
+  if(!snapshot) return NO;
   return RCSaveNative(context_->journal,resource,ids,snapshot,NO,error);
 failed:
   RCErrorSet(error,1,"Native store rejected publication; check access and local store availability"); return NO;
@@ -665,7 +783,8 @@ failed:
           NSString *root=[@"native-event-" stringByAppendingString:native];
           NSDictionary *record=[NSDictionary dictionaryWithObject:[NSArray arrayWithObject:calendar] forKey:@"calendar"];
           NSDictionary *stub=[NSDictionary dictionaryWithObjectsAndKeys:root,@"root",[NSDictionary dictionaryWithObject:record forKey:root],@"graph",nil];
-          NSDictionary *graph=EKRead(event,stub), *ids=[NSDictionary dictionaryWithObject:native forKey:root];
+          NSDictionary *graph=EKRead(event,stub,error), *ids=[NSDictionary dictionaryWithObject:native forKey:root];
+          if(!graph) return nil;
           [result addObject:[NSDictionary dictionaryWithObjectsAndKeys:root,@"root",graph,@"graph",ids,@"_ids",graph,@"_snapshot",nil]];
         }
         } @catch(id exception) { RCDrainPoolPreservingException(&windowPool,exception); @throw; }
