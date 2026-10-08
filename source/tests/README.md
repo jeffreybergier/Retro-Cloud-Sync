@@ -123,6 +123,12 @@ invitation deletion must stay pending without queuing a cloud DELETE. Remote
 outcomes are simulated in the journal; the portable write-safety suite separately
 checks conditional HTTP writes and precondition conflicts.
 
+Recurring all-day default regressions recreate the legacy source-only snapshot
+with no reminder, a display reminder or a Basso sound reminder. Readback tolerates
+exactly one later automatic Basso default without changing the native alarms or
+wire body; reopen and two-way switching must not queue uploads. Multiple extra
+defaults still fail safely with their native alarms and cloud data unchanged.
+
 EXDATE regressions cover all-day and time-zone recurring masters with multiple
 folded exclusions. They verify all occurrences appear locally, exact original
 wire data survives publication/reopen and remote exclusion updates, and local

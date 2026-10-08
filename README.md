@@ -50,7 +50,10 @@ alarm this way. Missing, edited, already owned, or multiple matches remain pendi
 never creates a replacement event.
 Verified legacy all-day snapshots with misidentified display reminders are
 repaired without changing the event or its original calendar data. Automatic
-native reminders remain outside outgoing iCloud data when unchanged.
+native reminders remain outside outgoing iCloud data when unchanged. Mavericks
+may materialize another default on an all-day recurring series after publication;
+exactly one verified extra Basso reminder is omitted from readback without
+changing the native alarms or the original calendar data.
 Alarm readback matches unchanged alarms independently of their order. Duplicate
 local projections and ambiguous simultaneous alarm edits are deferred rather
 than guessing which alarm owns retained attachment data.

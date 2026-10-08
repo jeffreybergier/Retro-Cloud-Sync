@@ -459,6 +459,65 @@ static void LegacyDefaultDisplayTests(NSString *directory,NSUInteger reminders)
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
 }
+static void RecurringDefaultAlarmTests(NSString *directory,NSUInteger kind)
+{
+  NSString *account=[NSString stringWithFormat:@"offline-series-default-%lu",(unsigned long)kind];
+  NSString *path=[directory stringByAppendingPathComponent:[account stringByAppendingString:@".sqlite"]];
+  RCCalendarStore *store=RCCalendarStoreOpen([path fileSystemRepresentation],[account UTF8String],&error); CHECK(store);
+  @try {
+    NSString *reminder=kind==0 ? @"" : kind==1 ?
+        @"BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15H\r\nDESCRIPTION:Reminder\r\nEND:VALARM\r\n" :
+        @"BEGIN:VALARM\r\nACTION:AUDIO\r\nTRIGGER:-PT15H\r\nATTACH;VALUE=URI:Basso\r\nX-PRIVATE-ALARM:preserve\r\nEND:VALARM\r\n";
+    NSString *body=[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//rCloud offline//EN\r\nBEGIN:VEVENT\r\nUID:offline-series-default\r\nDTSTART;VALUE=DATE:20301012\r\nDTEND;VALUE=DATE:20301013\r\nSUMMARY:Offline recurring default\r\nRRULE:FREQ=DAILY;COUNT=3\r\n%@END:VEVENT\r\nEND:VCALENDAR\r\n",reminder];
+    CalendarSeed(store,Data(body),"\"series-default-1\""); SyncCalendar(store,NO,YES);
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store); NSDictionary *row=FirstRow(j);
+    NSString *root=[[row objectForKey:@"resource"] objectForKey:@"root"], *eventID=[row objectForKey:@"id"];
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease]; EKEvent *event=[events eventWithIdentifier:eventID]; CHECK(event);
+    // Reproduce the old receipt, before Mavericks materializes its automatic
+    // reminder on a later read. It contains only the source alarm projection.
+    NSMutableDictionary *snapshot=[NSMutableDictionary dictionaryWithDictionary:CalendarSnapshot(j,root)];
+    NSMutableDictionary *record=[NSMutableDictionary dictionaryWithDictionary:[snapshot objectForKey:root]];
+    if(kind<2) {
+      for(NSString *key in [record objectForKey:@"audio alarms"]) [snapshot removeObjectForKey:key];
+      [record setObject:[NSArray array] forKey:@"audio alarms"]; [snapshot setObject:record forKey:root];
+    }
+    NSData *data=[NSKeyedArchiver archivedDataWithRootObject:snapshot]; sqlite3_stmt *q=NULL;
+    CHECK(sqlite3_prepare_v2(j.db,"UPDATE native_store_resources SET snapshot=? WHERE root=?",-1,&q,NULL)==SQLITE_OK);
+    sqlite3_bind_blob(q,1,[data bytes],[data length],SQLITE_TRANSIENT); sqlite3_bind_text(q,2,[root UTF8String],-1,SQLITE_TRANSIENT);
+    CHECK(sqlite3_step(q)==SQLITE_DONE); sqlite3_finalize(q);
+    NSMutableArray *alarms=[NSMutableArray array];
+    if(kind==1) [alarms addObject:[EKAlarm alarmWithRelativeOffset:-54000]];
+    for(NSUInteger n=0;n<(kind==2 ? 1 : 0);n++) {
+      EKAlarm *alarm=[EKAlarm alarmWithRelativeOffset:-54000]; [alarm setSoundName:@"Basso"]; [alarms addObject:alarm];
+    }
+    [event setAlarms:alarms]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event alarms] count]==(kind ? 2 : 1));
+    SyncCalendar(store,NO,YES);
+    CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
+    CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
+    [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event alarms] count]==(kind ? 2 : 1));
+    RCCalendarStoreClose(store); store=RCCalendarStoreOpen([path fileSystemRepresentation],[account UTF8String],&error); CHECK(store);
+    j=RCCalendarStoreWriteJournal(store); SyncCalendar(store,NO,YES); SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-needs-review'")==1);
+    printf("PASS: Recurring all-day default with %lu source alarm kind survives old receipt/reopen without changing native alarms or uploading defaults\n",(unsigned long)kind);
+    if(kind==2) {
+      [events reset]; event=[events eventWithIdentifier:eventID];
+      NSMutableArray *duplicates=[NSMutableArray array];
+      for(int n=0;n<2;n++) { EKAlarm *alarm=[EKAlarm alarmWithRelativeOffset:-54000]; [alarm setSoundName:@"Basso"]; [duplicates addObject:alarm]; }
+      [event setAlarms:duplicates]; CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+      [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event alarms] count]==3);
+      long count=0; RCErrorClear(&error); BOOL ok=RCNativeSyncCalendars(store,NO,&count,&error); CHECK(!ok);
+      [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event alarms] count]==3);
+      CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      puts("PASS: More than one extra default remains ambiguous without changing alarms or cloud data");
+    }
+
+  } @finally {
+    if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
+  }
+}
 static void ExcludedOccurrenceTests(NSString *directory,BOOL allDay)
 {
   NSString *account=allDay ? @"offline-date-exclusions" : @"offline-time-exclusions";
@@ -671,6 +730,7 @@ int main(int argc,char **argv)
       if(attempt==0) printf("WAITING FOR CALENDAR ACCESS: %s\n",error.message);
       if(attempt==599) CHECK(NO); [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1]];
     }
+    RecurringDefaultAlarmTests(directory,2); RecurringDefaultAlarmTests(directory,1); RecurringDefaultAlarmTests(directory,0);
     ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES);
     AllDayAlarmTests(directory); LegacyDefaultDisplayTests(directory,2); LegacyDefaultDisplayTests(directory,1); LegacyDefaultDisplayTests(directory,0);
     row=FirstRow(ej); CHECK(row); NSString *eventID=[[row objectForKey:@"id"] copy];

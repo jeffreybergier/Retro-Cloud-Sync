@@ -462,6 +462,39 @@ static BOOL EKDuplicateDefaultAlarm(id event,NSDictionary *resource,
     if(!RCNativeRecordsEqual(expected,EKAlarmRecord(alarm,root,error))) return NO;
   return YES;
 }
+/* Mavericks can materialize an extra automatic Basso reminder on a later
+   read of an all-day series. Omit only that precise extra from the projection,
+   after matching every source reminder. Leave native objects and wire data
+   intact; two-way series writes/deletions are deferred by the coordinator. */
+static NSArray *EKSeriesAlarms(id event,NSDictionary *resource,RCError *error)
+{
+  NSArray *alarms=[event alarms]; NSString *root=[resource objectForKey:@"root"];
+  NSDictionary *graph=[resource objectForKey:@"graph"], *record=[graph objectForKey:root];
+  NSUInteger count=[[record objectForKey:@"display alarms"] count]+[[record objectForKey:@"audio alarms"] count];
+  if(![[record objectForKey:@"all day"] boolValue] || ![event isAllDay] ||
+      ![[record objectForKey:@"recurrences"] count] || ![[event recurrenceRules] count] ||
+      [event isDetached] || [alarms count]!=count+1) return alarms;
+  NSMutableArray *remaining=[NSMutableArray arrayWithArray:alarms];
+  NSString *links[]={@"display alarms",@"audio alarms"};
+  for(int kind=0;kind<2;kind++) for(NSString *key in [record objectForKey:links[kind]]) {
+    EKAlarm *planned=EKMakeAlarm([graph objectForKey:key],kind==1,error); if(!planned) return nil;
+    NSDictionary *wanted=EKAlarmRecord(planned,root,error); if(!wanted) return nil;
+    NSUInteger match=NSNotFound;
+    for(NSUInteger n=0;n<[remaining count];n++) {
+      NSDictionary *actual=EKAlarmRecord([remaining objectAtIndex:n],root,error); if(!actual) return nil;
+      if(RCNativeRecordsEqual(wanted,actual)) { match=n; break; }
+    }
+    if(match==NSNotFound) return alarms;
+    [remaining removeObjectAtIndex:match];
+  }
+  if([remaining count]!=1) return alarms;
+  EKAlarm *extra=[remaining objectAtIndex:0]; NSDictionary *r=EKAlarmRecord(extra,root,error); if(!r) return nil;
+  if(![[r objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.AudioAlarm"] ||
+      [r objectForKey:@"triggerdate"] || [[r objectForKey:@"triggerduration"] intValue]!=-54000 ||
+      ![[r objectForKey:@"com.apple.ical.sound"] isEqual:[EKSystemSounds() objectForKey:@"Basso"]]) return alarms;
+  NSMutableArray *projected=[NSMutableArray arrayWithArray:alarms];
+  [projected removeObjectAtIndex:[projected indexOfObjectIdenticalTo:extra]]; return projected;
+}
 static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *record,
     NSMutableDictionary *graph,BOOL recovering,RCError *error)
 {
@@ -481,7 +514,7 @@ static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *re
     }
     [expected setObject:prior forKey:key];
   }
-  NSArray *nativeAlarms=[event alarms];
+  NSArray *nativeAlarms=EKSeriesAlarms(event,resource,error); if(!nativeAlarms && error->code) return NO;
   if(recovering && EKDuplicateDefaultAlarm(event,resource,error))
     nativeAlarms=[NSArray arrayWithObject:[nativeAlarms objectAtIndex:0]];
   if(error->code) return NO;
