@@ -1,4 +1,5 @@
 #import "RCIOSSettings.h"
+#import <AltivecCocoa/AIFontAwesome.h>
 #import "RCIOSAccess.h"
 #include "RCICloudCredentials.h"
 #include <sys/stat.h>
@@ -355,17 +356,22 @@ static NSString *StatusDate(id value, NSString *fallback) {
 @end
 
 UIViewController *RCIOSRootController(void) {
+  [AIFontAwesome registerBundledFonts];
   NSArray *screens=@[[[[RCIOSSettings alloc] init] autorelease],
       [[[RCMailTable alloc] init] autorelease],
       [[[RCAccountTable alloc] init] autorelease],
       [[[RCLogTable alloc] initWithStyle:UITableViewStylePlain] autorelease]];
   NSArray *titles=@[@"Status",@"Mail",@"Sync",@"Log"];
+  AIFontAwesomeIcon icons[]={AIFAGauge,AIFAEnvelope,AIFAAddressBook,AIFAFileLines};
+  CGFloat scale=[[UIScreen mainScreen] scale];
   NSMutableArray *panes=[NSMutableArray array];
   for(NSUInteger index=0;index<[screens count];index++) {
     UITableViewController *screen=[screens objectAtIndex:index];
     [screen setTitle:[titles objectAtIndex:index]];
     UINavigationController *navigation=[[[UINavigationController alloc] initWithRootViewController:screen] autorelease];
-    [navigation setTabBarItem:[[[UITabBarItem alloc] initWithTitle:[titles objectAtIndex:index] image:nil tag:index] autorelease]];
+    UIImage *icon=[AIFontAwesome imageForIcon:icons[index] style:AIFontAwesomeStyleSolid
+        iconSize:24.0 canvasSize:32.0 scale:scale];
+    [navigation setTabBarItem:[[[UITabBarItem alloc] initWithTitle:[titles objectAtIndex:index] image:icon tag:index] autorelease]];
     [panes addObject:navigation];
   }
   UITabBarController *tabs=[[[UITabBarController alloc] init] autorelease];

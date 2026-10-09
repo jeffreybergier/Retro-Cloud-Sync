@@ -4,17 +4,18 @@ IOS_OUT := $(BUILD_ROOT)/iOS
 IOS_SDK ?= /osxcross/modern/SDK/iPhoneOS8.4.sdk
 IOS_BIN ?= /osxcross/modern/bin
 IOS_CORE ?= /altivec/libs/core/build-phone
+IOS_COCOA ?= /altivec/libs/cocoa/build-phone
 IOS_CC ?= /usr/bin/clang
 IOS_FLAGS = $(IOS_TEST_FLAGS) -isysroot $(IOS_SDK) -B$(IOS_BIN) -std=c99 -O2 -g -Wall -Wextra -fblocks \
   -Wno-semicolon-before-method-body -I$(SHARED_SOURCE_ROOT) -I$(DAEMON_SOURCE_ROOT) -I$(IOS_ROOT) \
-  -I$(IOS_CORE)/include -I$(IOS_SDK)/usr/include/libxml2 $(ICAL_FLAGS) $(LIBVC_FLAGS)
+  -I$(IOS_CORE)/include -I$(IOS_COCOA)/include -I$(IOS_SDK)/usr/include/libxml2 $(ICAL_FLAGS) $(LIBVC_FLAGS)
 IOS_COMMON := $(SYNC_COMMON_SOURCES) RCLogger.m RCStatus.m RCMailProxy.c
 IOS_PLATFORM := RCIOSNativeBackend.m RCIOSNativeStore.m RCIOSAccess.m RCIOSCredentials.c RCIOSSettings.m main.m
 IOS_C := $(filter-out $(SHARED_SOURCE_ROOT)/RCICloudCredentials.c,$(SHARED_SOURCE_PATHS))
 IOS_SOURCES := $(addprefix $(DAEMON_SOURCE_ROOT)/,$(IOS_COMMON)) $(addprefix $(IOS_ROOT)/,$(IOS_PLATFORM)) $(IOS_C) $(IOS_TEST_SOURCE)
 IOS_HEADERS := $(wildcard $(DAEMON_SOURCE_ROOT)/*.h $(IOS_ROOT)/*.h $(SHARED_SOURCE_ROOT)/*.h)
 IOS_LINK = -framework Foundation -framework UIKit -framework CoreGraphics -framework AddressBook -framework EventKit \
-  -framework CoreFoundation -framework Security -framework SystemConfiguration -lxml2
+  -framework CoreText -framework CoreFoundation -framework Security -framework SystemConfiguration -lxml2
 
 define RC_IOS_ARCH
 $(ICAL_ROOT)/libical-ios-$(1)/lib/libical.a: $(ICAL_PREPARE) $(ICAL_SCRIPT)
@@ -24,7 +25,7 @@ $(LIBVC_ROOT)/libvc-ios-$(1)/libvc.a: $(LIBVC_PREPARE) $(LIBVC_SCRIPT) $(LIBVC_S
 $(IOS_OUT)/$(1)/daemon.o: $(DAEMON_SOURCE_ROOT)/main.m $(IOS_HEADERS) $(ICAL_ROOT)/libical-ios-$(1)/lib/libical.a
 	@mkdir -p "$$(dir $$@)"
 	$$(IOS_CC) -target $(1)-apple-ios$(2) $$(IOS_FLAGS) -I$(ICAL_ROOT)/libical-ios-$(1)/src -Dmain=RCCloudDaemonMain -c "$$<" -o "$$@"
-$(IOS_OUT)/$(1)/rCloud: $(IOS_SOURCES) $(IOS_HEADERS) $(IOS_OUT)/$(1)/daemon.o $(ICAL_ROOT)/libical-ios-$(1)/lib/libical.a $(LIBVC_ROOT)/libvc-ios-$(1)/libvc.a
+$(IOS_OUT)/$(1)/rCloud: $(IOS_SOURCES) $(IOS_HEADERS) $(IOS_OUT)/$(1)/daemon.o $(ICAL_ROOT)/libical-ios-$(1)/lib/libical.a $(LIBVC_ROOT)/libvc-ios-$(1)/libvc.a $(IOS_COCOA)/lib/libAltivecCocoa.a
 	$$(IOS_CC) -target $(1)-apple-ios$(2) $$(IOS_FLAGS) -I$(ICAL_ROOT)/libical-ios-$(1)/src $$(IOS_SOURCES) $$(filter %.o %.a,$$^) $$(IOS_CORE)/lib/libAltivecCore.a $$(IOS_LINK) -o "$$@"
 endef
 $(eval $(call RC_IOS_ARCH,armv7,5.0))
@@ -37,6 +38,8 @@ ios-release: $(IOS_OUT)/rCloud.app/rCloud
 	cp $(IOS_ROOT)/Resources/*.png $(IOS_OUT)/rCloud.app/
 	cp $(IOS_ROOT)/package/Config.example.plist $(IOS_OUT)/rCloud.app/
 	cp $(IOS_ROOT)/Info.plist $(IOS_OUT)/rCloud.app/Info.plist
+	mkdir -p $(IOS_OUT)/rCloud.app/Fonts
+	cp $(IOS_COCOA)/Resources/Fonts/*.otf $(IOS_COCOA)/Resources/Fonts/LICENSE-Font-Awesome.txt $(IOS_OUT)/rCloud.app/Fonts/
 	cp $(IOS_CORE)/lib/cacert.pem $(IOS_OUT)/rCloud.app/cacert.pem
 	cp -R $(ICAL_SOURCE)/zoneinfo $(IOS_OUT)/rCloud.app/
 .PHONY: ios-release
