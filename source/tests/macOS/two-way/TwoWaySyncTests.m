@@ -1141,6 +1141,16 @@ static void CalendarMapperRegressionTests(RCCalendarStore *store)
   desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:truth]]; master=[truth objectForKey:root];
   [truth removeObjectForKey:@"new-exception"]; [master setObject:[NSArray array] forKey:@"detached events"];
+  /* The encoder must also preserve an exclusion supplied with the removal,
+     independently of Tiger's native-session handling of that combination. */
+  NSMutableDictionary *excludedTruth=[NSKeyedUnarchiver unarchiveObjectWithData:
+      [NSKeyedArchiver archivedDataWithRootObject:truth]];
+  [[excludedTruth objectForKey:root] setObject:[NSArray arrayWithObject:original] forKey:@"exception dates"];
+  NSDictionary *excluded=RCTwoWayEncodeFields(RCCalendarEncodeLocal,store,desired,excludedTruth,root,&error);
+  CHECK(excluded);
+  NSString *excludedWire=[[[NSString alloc] initWithData:[excluded objectForKey:@"body"] encoding:NSUTF8StringEncoding] autorelease];
+  CHECK([excludedWire rangeOfString:@"EXDATE:20260908T100000Z"].location!=NSNotFound);
+  CHECK([excludedWire rangeOfString:@"RECURRENCE-ID:"].location==NSNotFound);
   desired=RCCalendarEncodeLocal(store,desired,truth,root,&error); if(!desired) fprintf(stderr,"Mapper: %s\n",error.message); CHECK(desired);
   CHECK([[desired objectForKey:@"body"] isEqual:body]);
   truth=[NSKeyedUnarchiver unarchiveObjectWithData:[NSKeyedArchiver archivedDataWithRootObject:truth]]; master=[truth objectForKey:root];
@@ -1370,9 +1380,22 @@ static void CalendarExceptionIntegration(RCTwoWayContext *c,ISyncClient *local,R
   NSString *detached=EventWithTitle(events,[title stringByAppendingString:@"-exception"]); CHECK(detached);
   master=[NSMutableDictionary dictionaryWithDictionary:[events objectForKey:root]];
   [master setObject:[NSArray array] forKey:@"detached events"];
-  [master setObject:[NSArray arrayWithObject:original] forKey:@"exception dates"];
   CalendarFixtureSession(local,[NSDictionary dictionaryWithObject:master forKey:root],[NSArray arrayWithObject:detached]);
+  /* Tiger drops exception dates pushed in the same session as detached-record
+     deletion. Push the exclusion against the resulting native snapshot before
+     collecting either edit, so it cannot leak into the later alarm scenario. */
+  events=CalendarFixtureEvents(local);
+  CHECK(![events objectForKey:detached]);
+  master=[NSMutableDictionary dictionaryWithDictionary:[events objectForKey:root]];
+  CHECK([[master objectForKey:@"detached events"] count]==0);
+  [master setObject:[NSArray arrayWithObject:original] forKey:@"exception dates"];
+  CalendarFixtureSession(local,[NSDictionary dictionaryWithObject:master forKey:root],nil);
+  CHECK(RCNativePropertyValuesEqual(@"com.apple.calendars.Event",@"exception dates",
+      [[CalendarFixtureEvents(local) objectForKey:root] objectForKey:@"exception dates"],
+      [NSArray arrayWithObject:original]));
   CHECK(RCTwoWayExchange(c,&error)); CHECK(RCTwoWayRunWrites(&c->journal,(RCHTTPClient *)1,"text/calendar",&error)==1);
+  CHECK([[[[NSString alloc] initWithData:[remoteBodies objectForKey:href] encoding:NSUTF8StringEncoding] autorelease]
+      rangeOfString:@"EXDATE:20260908T100000Z"].location!=NSNotFound);
   resource=CalendarResource(store,30,[remoteBodies objectForKey:href],href,[remoteETags objectForKey:href]);
   c->resources=[NSArray arrayWithObject:resource]; c->graph=CalendarGraph(c->resources);
   CHECK(RCTwoWayExchange(c,&error)); CHECK(Scalar(&c->journal,"SELECT count(*) FROM write_operations WHERE state IN ('queued','applied','conflict')")==0);
