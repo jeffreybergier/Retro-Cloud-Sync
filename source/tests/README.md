@@ -190,7 +190,7 @@ cache entries. The installed bundle must include the
 release launch images, Info.plist and Config.example.plist. Restore the release
 executable and reload the production job after the app exits.
 
-The smoke test runs on the UIKit main thread, traverses all options screens,
+The smoke test runs on the UIKit main thread, verifies the Mac pane order (Status, Mail, Sync, Log), traverses all options screens,
 checks the 568-point window, uses the actual Save action with synthetic Keychain
 credentials, checks mode-0600 configuration persistence and opens the bounded log
 viewer. Navigation assertions wait for UIKit transitions. Its configuration is

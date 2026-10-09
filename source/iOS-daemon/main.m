@@ -16,9 +16,7 @@ int RCCloudDaemonMain(int argc,char **argv);
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
   (void)application; (void)options;
   window_=[[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
-  RCIOSSettings *settings=[[RCIOSSettings alloc] init];
-  UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:settings];
-  [settings release]; [window_ setRootViewController:navigation]; [navigation release];
+  [window_ setRootViewController:RCIOSRootController()];
   [window_ makeKeyAndVisible];
 #ifdef RCIOS_UI_TESTS
   [self performSelector:@selector(runUITests) withObject:nil afterDelay:1];

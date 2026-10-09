@@ -94,21 +94,21 @@ iOS 5 uses the older AddressBook initializer and Calendar APIs; iOS 6+ privacy
 APIs are weak-linked/runtime-guarded. Permission denial stops the affected
 service, never exposing an empty store to deletion logic.
 
-Open **rCloud → Account & Sync** to enter your Apple Account and app-specific
+Open **rCloud → Sync** to enter your Apple Account and app-specific
 password. Choose the Contacts and Calendars modes, interval, and history, then
 tap **Save**. A blank password keeps the existing Keychain password for that
 account. New GUI setups start with both services disabled; two-way sync is an
-explicit choice. Set both services to Disabled to stop syncing. Back discards
-unsaved settings. Saving safely stops the current daemon; launchd restarts it promptly with the
+explicit choice. Set both services to Disabled to stop syncing. Use Save to apply changes. Saving safely stops the current daemon; launchd restarts it promptly with the
 new configuration. First setup triggers launchd through a configuration-file watch.
 A five-second throttle prevents rapid restart loops; active work must finish
 stopping safely before the replacement daemon starts. Passwords never enter
 the configuration or log. The status and log screens have Refresh buttons.
-All screens use standard UIKit table controllers and navigation. Portrait launch
+All screens use standard UIKit table controllers and navigation, with the Mac
+pane order and labels: Status, Mail, Sync, Log. Portrait launch
 images cover the original iPhone, iPhone 5, iPhone 6/6 Plus, and iPad, including
 `Default-568h@2x.png` to avoid the iPhone 4 compatibility viewport.
 
-Open **rCloud → Mail Proxy**, enable the proxy, and tap **Save** to use Mail
+Open **rCloud → Mail**, enable the proxy, and tap **Save** to use Mail
 through localhost. Existing installations leave the proxy disabled until enabled.
 A mail-only setup does not require a Contacts/Calendar account or credentials in
 rCloud. It preserves any existing sync configuration.
@@ -119,7 +119,7 @@ Use Password authentication and enter your iCloud mail credentials/app-specific
 password in Mail itself. The proxy listens only on IPv4 loopback and verifies
 upstream TLS certificates and hostnames: IMAP TLS to `imap.mail.me.com:993`,
 SMTP STARTTLS to `smtp.mail.me.com:587`. Local and upstream ports/hosts can be
-changed in the standard table-based Mail Proxy screen. Port conflicts or TLS
+changed in the standard table-based Mail screen. Port conflicts or TLS
 failures appear in the daemon log. Mail account migration is manual; installation
 does not change Mail accounts or remove another proxy/tweak.
 

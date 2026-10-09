@@ -66,7 +66,7 @@ static BOOL Save(NSDictionary *config) {
 @implementation RCAccountTable
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad {
-  [super viewDidLoad]; [self setTitle:@"Account & Sync"];
+  [super viewDidLoad]; [self setTitle:@"Sync"];
   NSDictionary *loaded=[NSDictionary dictionaryWithContentsOfFile:ConfigPath()];
   unreadable_=!loaded && [[NSFileManager defaultManager] fileExistsAtPath:ConfigPath()];
   if(!loaded) loaded=[NSDictionary dictionaryWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"Config.example" ofType:@"plist"]];
@@ -86,32 +86,34 @@ static BOOL Save(NSDictionary *config) {
     [field setAutocapitalizationType:UITextAutocapitalizationTypeNone]; [field setAutocorrectionType:UITextAutocorrectionTypeNo];
     [field setContentVerticalAlignment:UIControlContentVerticalAlignmentCenter]; [field setDelegate:self]; [field setReturnKeyType:UIReturnKeyDone];
   }
-  [username_ setKeyboardType:UIKeyboardTypeEmailAddress]; [username_ setPlaceholder:@"Apple Account"]; [username_ setText:[settings_ objectForKey:@"Username"]];
-  [password_ setSecureTextEntry:YES]; [password_ setPlaceholder:@"App-specific password"];
+  [username_ setKeyboardType:UIKeyboardTypeEmailAddress]; [username_ setPlaceholder:@"Apple ID"]; [username_ setText:[settings_ objectForKey:@"Username"]];
+  [password_ setSecureTextEntry:YES]; [password_ setPlaceholder:@"Password"];
   [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave target:self action:@selector(save)] autorelease]];
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [[self tableView] reloadData]; }
 - (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; [[self view] endEditing:YES]; }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 3; }
-- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section { (void)table; (void)section; return 2; }
-- (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section { (void)table; return [@[@"iCloud",@"Sync",@"Schedule"] objectAtIndex:section]; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 4; }
+- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section { (void)table; return section==0 || section==2 ? 2 : 1; }
+- (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section { (void)table; return [@[@"iCloud Account",@"Contacts",@"Calendar",@"Interval"] objectAtIndex:section]; }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
   (void)table;
-  if(section==0) return @"Use an app-specific password. Leave the password blank to keep the saved password for this account. Passwords are stored in Keychain.";
-  if(section==1) return @"Download only copies iCloud data to this device. Two-way also uploads supported local changes. Choose Disabled for both services to stop syncing. Save to apply your changes.";
-  return @"All future events are included. Save to apply your changes. Sync continues when this app is closed.";
+  if(section==0) return @"Use an app-specific password. Leave blank to keep the saved password.";
+  if(section==1 || section==2) return @"1-way: iCloud → device. 2-way: iCloud ↔ device.";
+  return nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
   (void)table; UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil] autorelease];
   NSInteger row=[path row],section=[path section];
-  if(section==0) { [[cell textLabel] setText:row ? @"Password" : @"Account"]; [cell setAccessoryView:row ? password_ : username_]; [cell setSelectionStyle:UITableViewCellSelectionStyleNone]; }
+  if(section==0) { [[cell textLabel] setText:row ? @"Password" : @"Apple ID"]; [cell setAccessoryView:row ? password_ : username_]; [cell setSelectionStyle:UITableViewCellSelectionStyleNone]; }
   else {
-    NSString *key=section==1 ? (row ? @"CalendarsSyncMode" : @"ContactsSyncMode") : (row ? @"CalendarHistoryYears" : @"SyncIntervalSeconds");
-    [[cell textLabel] setText:section==1 ? (row ? @"Calendars" : @"Contacts") : (row ? @"Calendar history" : @"Interval")];
+    BOOL mode=section==1 || (section==2 && row==0);
+    BOOL history=section==2 && row==1;
+    NSString *key=section==1 ? @"ContactsSyncMode" : (section==2 ? (row ? @"CalendarHistoryYears" : @"CalendarsSyncMode") : @"SyncIntervalSeconds");
+    [[cell textLabel] setText:mode ? @"Sync" : (history ? @"Past events" : @"Interval")];
     id value=[settings_ objectForKey:key]; NSString *label;
-    if(section==1) label=[value isEqual:@"TwoWay"] ? @"Two-way" : ([value isEqual:@"OneWay"] ? @"Download only" : @"Disabled");
-    else if(row) label=[value intValue] ? [NSString stringWithFormat:@"Last %@ year(s)",value] : @"All history";
+    if(mode) label=[value isEqual:@"TwoWay"] ? @"2-way Sync" : ([value isEqual:@"OneWay"] ? @"1-way Sync" : @"Disabled");
+    else if(history) label=[value intValue]==1 ? @"Last 1 year" : ([value intValue]==2 ? @"Last 2 years" : @"All history");
     else label=[NSString stringWithFormat:@"%ld minutes",(long)[value integerValue]/60];
     [[cell detailTextLabel] setText:label]; [cell setAccessoryType:UITableViewCellAccessoryDisclosureIndicator];
   } return cell;
@@ -119,16 +121,23 @@ static BOOL Save(NSDictionary *config) {
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
   [table deselectRowAtIndexPath:path animated:YES]; if([path section]==0) return;
   [[self view] endEditing:YES]; NSInteger row=[path row],section=[path section];
-  NSString *key=section==1 ? (row ? @"CalendarsSyncMode" : @"ContactsSyncMode") : (row ? @"CalendarHistoryYears" : @"SyncIntervalSeconds");
-  NSArray *values=section==1 ? @[@"Disabled",@"OneWay",@"TwoWay"] : (row ? @[@0,@1,@2] : @[@300,@900,@1800,@3600]);
-  NSArray *labels=section==1 ? @[@"Disabled",@"Download only",@"Two-way"] : (row ? @[@"All history",@"Last 1 year",@"Last 2 years"] : @[@"5 minutes",@"15 minutes",@"30 minutes",@"1 hour"]);
-  NSString *help=section==1 ? @"Two-way sync can change iCloud data. Unsupported changes remain pending for review." : (row ? @"Older imported events may leave the device. They remain in iCloud. Ongoing recurring series are kept." : @"How often to check iCloud for changes.");
+  BOOL mode=section==1 || (section==2 && row==0);
+  BOOL history=section==2 && row==1;
+  NSString *key=section==1 ? @"ContactsSyncMode" : (section==2 ? (row ? @"CalendarHistoryYears" : @"CalendarsSyncMode") : @"SyncIntervalSeconds");
+  NSArray *values=mode ? @[@"Disabled",@"OneWay",@"TwoWay"] : (history ? @[@0,@1,@2] : @[@300,@900,@1800,@3600]);
+  NSArray *labels=mode ? @[@"Disabled",@"1-way Sync",@"2-way Sync"] : (history ? @[@"All history",@"Last 1 year",@"Last 2 years"] : @[@"5 minutes",@"15 minutes",@"30 minutes",@"1 hour"]);
+  NSString *help=mode ? @"2-way sync also updates iCloud." : (history ? @"Older events remain in iCloud." : @"How often to check iCloud for changes.");
   RCChoiceTable *choices=[[RCChoiceTable alloc] initWithSettings:settings_ key:key title:[[[table cellForRowAtIndexPath:path] textLabel] text] values:values labels:labels help:help];
   [[self navigationController] pushViewController:choices animated:YES]; [choices release];
 }
 - (BOOL)textFieldShouldReturn:(UITextField *)field { [field resignFirstResponder]; return YES; }
 - (void)save {
   [[self view] endEditing:YES];
+  if([[NSFileManager defaultManager] fileExistsAtPath:ConfigPath()]) {
+    NSDictionary *latest=[NSDictionary dictionaryWithContentsOfFile:ConfigPath()];
+    if(!latest) { Message(@"Cannot save",@"The configuration could not be read."); return; }
+    [config_ release]; config_=[latest mutableCopy];
+  }
   if(unreadable_ || !config_ || !settings_) { Message(@"Cannot save",@"The existing configuration could not be read. It has been left unchanged."); return; }
   NSString *username=[[username_ text] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   BOOL enabled=![[settings_ objectForKey:@"ContactsSyncMode"] isEqual:@"Disabled"] || ![[settings_ objectForKey:@"CalendarsSyncMode"] isEqual:@"Disabled"];
@@ -159,7 +168,7 @@ static BOOL Save(NSDictionary *config) {
 @implementation RCMailTable
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad {
-  [super viewDidLoad]; [self setTitle:@"Mail Proxy"];
+  [super viewDidLoad]; [self setTitle:@"Mail"];
   BOOL exists=[[NSFileManager defaultManager] fileExistsAtPath:ConfigPath()];
   NSDictionary *loaded=[NSDictionary dictionaryWithContentsOfFile:ConfigPath()];
   unreadable_=exists && !loaded;
@@ -198,13 +207,13 @@ static BOOL Save(NSDictionary *config) {
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 3; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section { (void)table; return section ? 3 : 1; }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
-  (void)table; return [@[@"Proxy",@"Incoming (IMAP)",@"Outgoing (SMTP)"] objectAtIndex:section];
+  (void)table; return [@[@"Mail",@"Incoming Mail (IMAP)",@"Outgoing Mail (SMTP)"] objectAtIndex:section];
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
   (void)table;
-  if(section==0) return @"Mail works independently of Contacts and Calendars. Save to apply changes.";
-  if(section==1) return @"In Mail account settings, use 127.0.0.1 and the local IMAP port (1143 by default), with SSL off. Enter your iCloud mail username and app-specific password in Mail.";
-  return @"For outgoing mail, use 127.0.0.1 and the local SMTP port (1587 by default), SSL off, and Password authentication. The proxy verifies TLS to the upstream servers. Use IMAP TLS port 993 and SMTP STARTTLS port 587 upstream. Local ports must be different and between 1024 and 65535.";
+  if(section==0) return nil;
+  if(section==1) return @"Mail: 127.0.0.1, local port, SSL off.";
+  return @"Mail: 127.0.0.1, local port, SSL off, Password authentication.";
 }
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
   (void)table;
@@ -216,6 +225,11 @@ static BOOL Save(NSDictionary *config) {
 - (BOOL)textFieldShouldReturn:(UITextField *)field { [field resignFirstResponder]; return YES; }
 - (void)save {
   [[self view] endEditing:YES];
+  if([[NSFileManager defaultManager] fileExistsAtPath:ConfigPath()]) {
+    NSDictionary *latest=[NSDictionary dictionaryWithContentsOfFile:ConfigPath()];
+    if(!latest) { Message(@"Cannot save",@"The configuration could not be read."); return; }
+    [config_ release]; config_=[latest mutableCopy];
+  }
   if(unreadable_ || !config_) { Message(@"Cannot save",@"The existing configuration could not be read. It has been left unchanged."); return; }
   NSMutableDictionary *mail=[NSMutableDictionary dictionary];
   [mail setObject:[NSNumber numberWithBool:[enabled_ isOn]] forKey:@"Enabled"];
@@ -296,59 +310,68 @@ static NSString *StatusDate(id value, NSString *fallback) {
 
 @implementation RCIOSSettings
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
-- (void)viewDidLoad { [super viewDidLoad]; [self setTitle:@"rCloud"]; [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(refresh)] autorelease]]; }
+- (void)viewDidLoad { [super viewDidLoad]; [self setTitle:@"Status"]; [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(refresh)] autorelease]]; }
 - (void)refresh {
   [status_ release];
   status_=[[NSDictionary dictionaryWithContentsOfFile:[Directory stringByAppendingPathComponent:@"Status.plist"]] retain];
   [[self tableView] reloadData];
 }
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self refresh]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 4; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 3; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
-  (void)table; return section==0 ? 3 : (section==3 ? 1 : 5);
+  (void)table; return section==0 ? 1 : 5;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
-  (void)table; return [@[@"Settings",@"Contacts",@"Calendars",@"Daemon"] objectAtIndex:section];
+  (void)table; return [@[@"Daemon",@"Contacts",@"Calendars"] objectAtIndex:section];
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
-  (void)table; return section==3 ? @"Status shows the daemon’s last saved report. Tap Refresh to update. Sync runs in the background." : nil;
+  (void)table; return section==0 ? @"Last saved status. Tap Refresh to update." : nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
   (void)table;
-  UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:[path section] ? UITableViewCellStyleValue1 : UITableViewCellStyleDefault reuseIdentifier:nil] autorelease];
-  if(![path section]) {
-    [[cell textLabel] setText:[@[@"Account & Sync",@"Mail Proxy",@"Log"] objectAtIndex:[path row]]];
-    [cell setAccessoryType:UITableViewCellAccessoryDisclosureIndicator];
+  UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil] autorelease];
+  NSString *label, *value;
+  if([path section]==0) {
+    label=@"Last report";
+    value=StatusDate([status_ objectForKey:@"UpdatedAt"],@"None");
   } else {
-    NSString *label, *value;
-    if([path section]==3) {
-      label=@"Last report";
-      value=StatusDate([status_ objectForKey:@"UpdatedAt"],@"None");
-    } else {
-      id service=[status_ objectForKey:[path section]==1 ? @"Contacts" : @"Calendars"];
-      if(![service isKindOfClass:[NSDictionary class]]) service=nil;
-      label=[@[@"Status",@"Last success",@"Pending changes",@"Next attempt",@"Error"] objectAtIndex:[path row]];
-      switch([path row]) {
-        case 0: value=[service objectForKey:@"Phase"] ?: @"Not started"; break;
-        case 1: value=StatusDate([service objectForKey:@"LastSuccess"],@"Never"); break;
-        case 2: value=[[service objectForKey:@"PendingCount"] description] ?: @"Unknown"; break;
-        case 3: value=StatusDate([service objectForKey:@"NextAttempt"],@"Not scheduled"); break;
-        default: value=[[service objectForKey:@"ErrorCode"] description] ?: @"None"; break;
-      }
+    id service=[status_ objectForKey:[path section]==1 ? @"Contacts" : @"Calendars"];
+    if(![service isKindOfClass:[NSDictionary class]]) service=nil;
+    label=[@[@"Status",@"Last success",@"Pending changes",@"Next attempt",@"Error"] objectAtIndex:[path row]];
+    switch([path row]) {
+      case 0: value=[service objectForKey:@"Phase"] ?: @"Not started"; break;
+      case 1: value=StatusDate([service objectForKey:@"LastSuccess"],@"Never"); break;
+      case 2: value=[[service objectForKey:@"PendingCount"] description] ?: @"Unknown"; break;
+      case 3: value=StatusDate([service objectForKey:@"NextAttempt"],@"Not scheduled"); break;
+      default: value=[[service objectForKey:@"ErrorCode"] description] ?: @"None"; break;
     }
-    [[cell textLabel] setText:label];
-    [[cell detailTextLabel] setText:value];
-    [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
   }
+  [[cell textLabel] setText:label];
+  [[cell detailTextLabel] setText:value];
+  [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
   return cell;
 }
 - (void)dealloc { [status_ release]; [super dealloc]; }
-- (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
-  [table deselectRowAtIndexPath:path animated:YES]; if([path section]) return;
-  UITableViewController *screen=[path row]==0 ? [[RCAccountTable alloc] init] : ([path row]==1 ? [[RCMailTable alloc] init] : [[RCLogTable alloc] initWithStyle:UITableViewStylePlain]);
-  [[self navigationController] pushViewController:screen animated:YES]; [screen release];
-}
 @end
+
+UIViewController *RCIOSRootController(void) {
+  NSArray *screens=@[[[[RCIOSSettings alloc] init] autorelease],
+      [[[RCMailTable alloc] init] autorelease],
+      [[[RCAccountTable alloc] init] autorelease],
+      [[[RCLogTable alloc] initWithStyle:UITableViewStylePlain] autorelease]];
+  NSArray *titles=@[@"Status",@"Mail",@"Sync",@"Log"];
+  NSMutableArray *panes=[NSMutableArray array];
+  for(NSUInteger index=0;index<[screens count];index++) {
+    UITableViewController *screen=[screens objectAtIndex:index];
+    [screen setTitle:[titles objectAtIndex:index]];
+    UINavigationController *navigation=[[[UINavigationController alloc] initWithRootViewController:screen] autorelease];
+    [navigation setTabBarItem:[[[UITabBarItem alloc] initWithTitle:[titles objectAtIndex:index] image:nil tag:index] autorelease]];
+    [panes addObject:navigation];
+  }
+  UITabBarController *tabs=[[[UITabBarController alloc] init] autorelease];
+  [tabs setViewControllers:panes];
+  return tabs;
+}
 
 #ifdef RCIOS_UI_TESTS
 /* Device smoke test: a separate build uses only a private cache configuration. */
@@ -360,7 +383,13 @@ void RCIOSRunUITests(UIWindow *window) {
   @try {
     NSCAssert(CGRectGetHeight([window bounds])==568, @"iPhone 5 must have a full 568-point window");
     [checks addObject:@"iPhone 5 full-height window"];
-    UINavigationController *navigation=(UINavigationController *)[window rootViewController];
+    UITabBarController *tabs=(UITabBarController *)[window rootViewController];
+    NSCAssert([tabs isKindOfClass:[UITabBarController class]], @"Standard tab navigation");
+    NSCAssert([[[tabs tabBar] items] count]==4, @"Four panes");
+    NSArray *titles=@[@"Status",@"Mail",@"Sync",@"Log"];
+    for(NSUInteger n=0;n<4;n++) NSCAssert([[[[[tabs tabBar] items] objectAtIndex:n] title] isEqual:[titles objectAtIndex:n]], @"Mac pane order and labels");
+    [checks addObject:@"Mac pane order: Status, Mail, Sync, Log"];
+    UINavigationController *navigation=(UINavigationController *)[tabs selectedViewController];
     RCIOSSettings *root=(RCIOSSettings *)[navigation topViewController];
     NSCAssert([root isKindOfClass:[UITableViewController class]], @"Root table");
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(CGRectGetWidth([window bounds]),CGRectGetHeight([window bounds])),YES,0);
@@ -372,8 +401,8 @@ void RCIOSRunUITests(UIWindow *window) {
     NSMutableDictionary *settings=[form valueForKey:@"settings_"];
     NSCAssert([[settings objectForKey:@"ContactsSyncMode"] isEqual:@"Disabled"] && [[settings objectForKey:@"CalendarsSyncMode"] isEqual:@"Disabled"], @"Fresh setup must not enable syncing");
     [checks addObject:@"Fresh configuration defaults to disabled"];
-    for(NSInteger section=1;section<=2;section++) for(NSInteger row=0;row<2;row++) {
-      NSIndexPath *path=[NSIndexPath indexPathForRow:row inSection:section];
+    for(NSArray *position in @[@[@1,@0],@[@2,@0],@[@2,@1],@[@3,@0]]) {
+      NSIndexPath *path=[NSIndexPath indexPathForRow:[[position objectAtIndex:1] integerValue] inSection:[[position objectAtIndex:0] integerValue]];
       [form tableView:[form tableView] didSelectRowAtIndexPath:path];
       [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];
       RCChoiceTable *choice=(RCChoiceTable *)[navigation topViewController];

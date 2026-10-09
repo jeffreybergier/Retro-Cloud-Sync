@@ -3,3 +3,5 @@
   NSDictionary *status_;
 }
 @end
+
+UIViewController *RCIOSRootController(void);
