@@ -355,20 +355,29 @@ static NSString *StatusDate(id value, NSString *fallback) {
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad { [super viewDidLoad]; [self setTitle:@"Status"]; [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(refresh)] autorelease]]; }
 - (void)refresh {
-  [status_ release];
-  status_=[[NSDictionary dictionaryWithContentsOfFile:[Directory stringByAppendingPathComponent:@"Status.plist"]] retain];
+  NSDictionary *latest=[NSDictionary dictionaryWithContentsOfFile:[Directory stringByAppendingPathComponent:@"Status.plist"]];
+  if(latest==status_ || [latest isEqual:status_]) return;
+  [status_ release]; status_=[latest retain];
   [[self tableView] reloadData];
 }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self refresh]; }
+- (void)viewWillAppear:(BOOL)animated {
+  [super viewWillAppear:animated]; [self refresh];
+  [refreshTimer_ invalidate]; [refreshTimer_ release];
+  refreshTimer_=[[NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(refresh) userInfo:nil repeats:YES] retain];
+}
+- (void)viewWillDisappear:(BOOL)animated {
+  [super viewWillDisappear:animated];
+  [refreshTimer_ invalidate]; [refreshTimer_ release]; refreshTimer_=nil;
+}
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 3; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
-  (void)table; return section==0 ? 1 : 5;
+  (void)table; return section==0 ? 1 : 6;
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
   (void)table; return [@[@"Daemon",@"Contacts",@"Calendars"] objectAtIndex:section];
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
-  (void)table; return section==0 ? @"Last saved status. Tap Refresh to update." : nil;
+  (void)table; return section==0 ? @"Updates automatically." : nil;
 }
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
   (void)table;
@@ -380,12 +389,13 @@ static NSString *StatusDate(id value, NSString *fallback) {
   } else {
     id service=[status_ objectForKey:[path section]==1 ? @"Contacts" : @"Calendars"];
     if(![service isKindOfClass:[NSDictionary class]]) service=nil;
-    label=[@[@"Status",@"Last success",@"Pending changes",@"Next attempt",@"Error"] objectAtIndex:[path row]];
+    label=[@[@"Status",@"Progress",@"Last success",@"Pending changes",@"Next attempt",@"Error"] objectAtIndex:[path row]];
     switch([path row]) {
       case 0: value=[service objectForKey:@"Phase"] ?: @"Not started"; break;
-      case 1: value=StatusDate([service objectForKey:@"LastSuccess"],@"Never"); break;
-      case 2: value=[[service objectForKey:@"PendingCount"] description] ?: @"Unknown"; break;
-      case 3: value=StatusDate([service objectForKey:@"NextAttempt"],@"Not scheduled"); break;
+      case 1: value=[service objectForKey:@"Progress"] ?: @"—"; break;
+      case 2: value=StatusDate([service objectForKey:@"LastSuccess"],@"Never"); break;
+      case 3: value=[[service objectForKey:@"PendingCount"] description] ?: @"Unknown"; break;
+      case 4: value=StatusDate([service objectForKey:@"NextAttempt"],@"Not scheduled"); break;
       default: value=[[service objectForKey:@"ErrorCode"] description] ?: @"None"; break;
     }
   }
@@ -394,7 +404,7 @@ static NSString *StatusDate(id value, NSString *fallback) {
   [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
   return cell;
 }
-- (void)dealloc { [status_ release]; [super dealloc]; }
+- (void)dealloc { [refreshTimer_ invalidate]; [refreshTimer_ release]; [status_ release]; [super dealloc]; }
 @end
 
 UIViewController *RCIOSRootController(void) {
@@ -445,6 +455,19 @@ void RCIOSRunUITests(UIWindow *window) {
     NSData *png=UIImagePNGRepresentation(UIGraphicsGetImageFromCurrentImageContext()); UIGraphicsEndImageContext();
     [[NSFileManager defaultManager] createDirectoryAtPath:Directory withIntermediateDirectories:YES attributes:nil error:NULL];
     [png writeToFile:[Directory stringByAppendingPathComponent:@"status.png"] atomically:YES];
+    NSString *statusPath=[Directory stringByAppendingPathComponent:@"Status.plist"];
+    NSDictionary *photoStatus=@{@"Contacts":@{@"Phase":@"Photos",@"Progress":@"1 / 2 contacts"}};
+    [photoStatus writeToFile:statusPath atomically:YES];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1.2]];
+    NSIndexPath *progressPath=[NSIndexPath indexPathForRow:1 inSection:1];
+    UITableViewCell *progressCell=[root tableView:[root tableView] cellForRowAtIndexPath:progressPath];
+    NSCAssert([[[progressCell detailTextLabel] text] isEqual:@"1 / 2 contacts"], @"Visible status refreshes automatically");
+    [@{@"Contacts":@{@"Phase":@"Photos",@"Progress":@"2 / 2 contacts"}} writeToFile:statusPath atomically:YES];
+    [root refresh];
+    progressCell=[root tableView:[root tableView] cellForRowAtIndexPath:progressPath];
+    NSCAssert([[[progressCell detailTextLabel] text] isEqual:@"2 / 2 contacts"], @"Manual status refresh");
+    [[NSFileManager defaultManager] removeItemAtPath:statusPath error:NULL];
+    [checks addObject:@"Automatic and manual status refresh show current photo progress"];
     RCAccountTable *form=[[RCAccountTable alloc] init]; [navigation pushViewController:form animated:NO]; [form view];
     NSMutableDictionary *settings=[form valueForKey:@"settings_"];
     NSCAssert([[settings objectForKey:@"ContactsSyncMode"] isEqual:@"Disabled"] && [[settings objectForKey:@"CalendarsSyncMode"] isEqual:@"Disabled"], @"Fresh setup must not enable syncing");

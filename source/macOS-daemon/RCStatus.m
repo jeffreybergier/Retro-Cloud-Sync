@@ -76,10 +76,19 @@ void RCStatusPhase(NSString *name, NSString *phase)
   @synchronized(status) {
   if(RCStopRequested) { RCStatusStopping(); return; }
   NSMutableDictionary *s=Service(name);
+  [s removeObjectForKey:@"Progress"];
   if([phase isEqual:@"Waiting"]) { [s removeObjectForKey:@"ErrorCode"]; [s removeObjectForKey:@"PendingCount"]; }
   [s removeObjectForKey:@"NextAttempt"];
   [s setObject:phase forKey:@"Phase"]; [s setObject:[s objectForKey:@"ErrorCode"] ? @"red" : @"yellow" forKey:@"Severity"]; Save();
 
+  }
+}
+void RCStatusProgress(NSString *name, NSUInteger completed, NSUInteger total)
+{
+  @synchronized(status) {
+    if(RCStopRequested) { RCStatusStopping(); return; }
+    [Service(name) setObject:[NSString stringWithFormat:@"%lu / %lu contacts",(unsigned long)completed,(unsigned long)total] forKey:@"Progress"];
+    Save();
   }
 }
 void RCStatusFailure(NSString *name, NSString *code)
@@ -87,6 +96,7 @@ void RCStatusFailure(NSString *name, NSString *code)
   @synchronized(status) {
   if(RCStopRequested) { RCStatusStopping(); return; }
   NSMutableDictionary *s=Service(name);
+  [s removeObjectForKey:@"Progress"];
   if(![s objectForKey:@"ErrorCode"]) [s setObject:code forKey:@"ErrorCode"];
   [s setObject:@"Error" forKey:@"Phase"]; [s setObject:@"red" forKey:@"Severity"]; Save();
 
@@ -97,6 +107,7 @@ void RCStatusFinish(NSString *name, RCWriteJournal *j, BOOL complete)
   @synchronized(status) {
   if(RCStopRequested) { RCStatusStopping(); return; }
   NSMutableDictionary *s=Service(name);
+  [s removeObjectForKey:@"Progress"];
   RCStatusResult result=RCStatusEvaluate(j,[name isEqual:@"Contacts"],complete,
       [s objectForKey:@"ErrorCode"]!=nil,RCStopRequested);
   if(RCStopRequested) { RCStatusStopping(); return; }
@@ -131,6 +142,7 @@ void RCStatusStopping(void)
     NSEnumerator *e=[[NSArray arrayWithObjects:@"Contacts",@"Calendars",nil] objectEnumerator]; NSString *name;
     while((name=[e nextObject])) if(![[Service(name) objectForKey:@"Phase"] isEqual:@"Disabled"]) {
       [Service(name) setObject:@"Stopping" forKey:@"Phase"];
+      [Service(name) removeObjectForKey:@"Progress"];
       [Service(name) setObject:@"yellow" forKey:@"Severity"];
       [Service(name) removeObjectForKey:@"ErrorCode"];
       [Service(name) removeObjectForKey:@"NextAttempt"];

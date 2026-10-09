@@ -104,7 +104,9 @@ explicit choice. Set both services to Disabled to stop syncing. Use Save to appl
 new configuration. First setup triggers launchd through a configuration-file watch.
 A five-second throttle prevents rapid restart loops; active work must finish
 stopping safely before the replacement daemon starts. Passwords never enter
-the configuration or log. The status and log screens have Refresh buttons.
+the configuration or log. Status refreshes automatically while visible; both Status and Log also have
+Refresh buttons. Contact photo checks report progress separately from the card
+download, without advancing the last-success time before native import finishes.
 All screens use standard UIKit table controllers and navigation, with the Mac
 pane order and labels: Status, Mail, Sync, Log. Portrait launch
 images cover the original iPhone, iPhone 5, iPhone 6/6 Plus, and iPad, including

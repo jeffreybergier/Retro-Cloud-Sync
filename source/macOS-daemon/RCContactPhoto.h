@@ -38,6 +38,7 @@ static inline NSData *RCContactPhoto(RCVCardDocument *document)
 NSString *RCContactPhotoURI(RCVCardDocument *);
 BOOL RCContactPhotoRead(RCContactStore *, RCVCardDocument *, NSString *, NSString *, NSData **, RCError *);
 BOOL RCContactPhotoFetch(RCContactStore *, RCHTTPClient *, NSString *, NSString *, NSData *, RCError *);
-BOOL RCContactPhotoRefresh(RCContactStore *, RCHTTPClient *, RCError *);
+typedef void (*RCContactPhotoProgress)(NSUInteger completed, NSUInteger total, void *context);
+BOOL RCContactPhotoRefresh(RCContactStore *, RCHTTPClient *, RCContactPhotoProgress, void *, RCError *);
 BOOL RCContactPhotoRefreshWrites(RCContactStore *, RCHTTPClient *, RCError *);
 #endif

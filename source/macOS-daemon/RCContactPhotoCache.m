@@ -89,7 +89,7 @@ BOOL RCContactPhotoFetch(RCContactStore *store, RCHTTPClient *http, NSString *hr
 done:
   RCHTTPResponseClear(&photo); RCHTTPResponseClear(&owner); return ok;
 }
-BOOL RCContactPhotoRefresh(RCContactStore *store, RCHTTPClient *http, RCError *error)
+BOOL RCContactPhotoRefresh(RCContactStore *store, RCHTTPClient *http, RCContactPhotoProgress progress, void *context, RCError *error)
 {
   RCWriteJournal j=RCContactStoreWriteJournal(store);
   if (!Initialize(&j,error)) return NO;
@@ -106,12 +106,15 @@ BOOL RCContactPhotoRefresh(RCContactStore *store, RCHTTPClient *http, RCError *e
   }
   sqlite3_finalize(q);
   if (step!=SQLITE_DONE) { RCErrorSet(error,1,"Could not read contact photo resources"); return NO; }
+  NSUInteger completed=0, total=[resources count];
+  if(progress) progress(0,total,context);
   NSEnumerator *it=[resources objectEnumerator]; NSArray *resource;
   while ((resource=[it nextObject])) {
     NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
     @try {
       if (RCCheckCancellation(error) || !RCContactPhotoFetch(store,http,[resource objectAtIndex:0],
           [resource objectAtIndex:1],[resource objectAtIndex:2],error)) return NO;
+      completed++; if(progress) progress(completed,total,context);
     } @catch(id exception) {
       RCDrainPoolPreservingException(&pool,exception); @throw;
     } @finally { [pool release]; }

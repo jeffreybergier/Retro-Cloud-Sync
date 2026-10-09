@@ -103,6 +103,16 @@ static void RCContactProgress(RCLogLevel level, const char *message, void *conte
     RCLoggerC(level, "Contacts", "Download", "%s", message);
 }
 
+static void RCPhotoProgress(NSUInteger completed, NSUInteger total, void *context)
+{
+  NSTimeInterval *last=(NSTimeInterval *)context;
+  NSTimeInterval now=[NSDate timeIntervalSinceReferenceDate];
+  if(completed==0 || completed==total || now-*last>=1.0) {
+    RCStatusProgress(@"Contacts",completed,total);
+    *last=now;
+  }
+}
+
 static void RCCalendarProgress(RCLogLevel level, const char *message, void *context)
 {
   (void)context;
@@ -361,15 +371,19 @@ static void *RCSyncWorkerMain(void *context)
           }
         }
         if (contactsFetched) {
+          RCStatusPhase(@"Contacts",@"Photos");
+          RCLogger(RCLogInfo,"Contacts","Photos",@"Checking contact photos");
+          NSTimeInterval photoProgressTime=0;
           RCHTTPClientConfig photoConfig; memset(&photoConfig,0,sizeof(photoConfig));
           photoConfig.username=worker->username; photoConfig.password=password;
           photoConfig.certificatePath=worker->certificatePath; photoConfig.allowedHostSuffix=".icloud.com";
           photoConfig.maximumResponseBytes=16U*1024U*1024U;
           RCHTTPClient *photos=RCHTTPClientCreate(&photoConfig,&error);
-          if (!photos || !RCContactPhotoRefresh(store,photos,&error)) {
+          if (!photos || !RCContactPhotoRefresh(store,photos,RCPhotoProgress,&photoProgressTime,&error)) {
             contactsFetched=NO;
             RCLogger(RCLogWarning,"Contacts","Download",@"Contact photo download pending: %s",error.message);
           }
+          if(contactsFetched) RCLogger(RCLogInfo,"Contacts","Photos",@"Contact photos complete");
           RCHTTPClientDestroy(photos);
         }
         if (RCStopRequested) goto contacts_finished;
