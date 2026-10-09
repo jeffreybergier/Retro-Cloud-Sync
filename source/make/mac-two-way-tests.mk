@@ -1,7 +1,6 @@
 TWO_WAY_TEST_ROOT := $(BUILD_ROOT)/tests/macOS/two-way
 TWO_WAY_TEST_SOURCES := $(SOURCE_ROOT)/tests/macOS/two-way/TwoWaySyncTests.m \
-  $(addprefix $(DAEMON_SOURCE_ROOT)/,RCTwoWaySync.m RCNativeSync.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m RCCalendarTwoWay.m RCCalendarOperations.m \
-  RCSyncServicesBridge.m RCCalendarSyncServicesBridge.m RCSyncConflictSession.m RCLogger.m)
+  $(addprefix $(DAEMON_SOURCE_ROOT)/,$(SYNC_COMMON_SOURCES) $(MAC_SYNC_SOURCES) RCLogger.m)
 TWO_WAY_TEST_HEADERS := $(wildcard $(SOURCE_ROOT)/tests/macOS/two-way/*.h) $(wildcard $(DAEMON_SOURCE_ROOT)/*.h) $(wildcard $(SHARED_SOURCE_ROOT)/*.h)
 $(TWO_WAY_TEST_ROOT)/ppc: $(TWO_WAY_TEST_SOURCES) $(TWO_WAY_TEST_HEADERS) \
   $(PPC_SHARED_LIBRARY) $(DAEMON_PPC_ALTIVECCORE) $(ICAL_PPC_LIBRARY) $(LIBVC_PPC_LIBRARY)

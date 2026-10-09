@@ -1,3 +1,4 @@
+#import "RCRecordGraph.h"
 #import "RCTwoWaySync.h"
 #import "RCSyncFieldScope.h"
 #include "RCSyncPolicy.h"
@@ -25,7 +26,7 @@ static BOOL RemovedOwner(NSDictionary *old, NSDictionary *base, NSDictionary *tr
   NSArray *owners=[old objectForKey:@"owner"];
   if ([owners count]!=1) return NO;
   NSString *owner=[owners objectAtIndex:0];
-  return [[[base objectForKey:owner] objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.Event"] && ![truth objectForKey:owner];
+  return [[[base objectForKey:owner] objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.calendars.Event"] && ![truth objectForKey:owner];
 }
 /* These are encoder capabilities, not a catalogue of every schema property.
    Unknown fields stay in native truth; unknown wire data stays in the raw body.
@@ -33,10 +34,10 @@ static BOOL RemovedOwner(NSDictionary *old, NSDictionary *base, NSDictionary *tr
    into another contact, calendar or recurring series. */
 static NSArray *Writable(NSDictionary *old, NSDictionary *record)
 {
-  NSString *entity=[record objectForKey:ISyncRecordEntityNameKey] ?: [old objectForKey:ISyncRecordEntityNameKey];
+  NSString *entity=[record objectForKey:RCRecordEntityNameKey] ?: [old objectForKey:RCRecordEntityNameKey];
   const char *names=RCWritableFieldNames([entity UTF8String]);
   NSMutableArray *result=[NSMutableArray arrayWithArray:Fields(names ? [NSString stringWithUTF8String:names] : nil)];
-  if(names) [result addObject:ISyncRecordEntityNameKey];
+  if(names) [result addObject:RCRecordEntityNameKey];
   return result;
 }
 
@@ -45,7 +46,7 @@ static NSArray *Writable(NSDictionary *old, NSDictionary *record)
    when its canonical representation omits the property altogether. */
 static NSArray *KnownFields(NSDictionary *record)
 {
-  NSString *entity=[record objectForKey:ISyncRecordEntityNameKey];
+  NSString *entity=[record objectForKey:RCRecordEntityNameKey];
   NSMutableSet *fields=[NSMutableSet setWithArray:Writable(nil,record)];
   [fields addObjectsFromArray:[record allKeys]];
   if ([entity isEqual:@"com.apple.calendars.Recurrence"])
@@ -57,7 +58,7 @@ static NSArray *KnownFields(NSDictionary *record)
 
 static NSArray *IndependentGroups(NSDictionary *record)
 {
-  const char *entity=[[record objectForKey:ISyncRecordEntityNameKey] UTF8String], *names;
+  const char *entity=[[record objectForKey:RCRecordEntityNameKey] UTF8String], *names;
   NSMutableArray *result=[NSMutableArray array]; size_t i;
   for(i=0;(names=RCIndependentFieldGroup(entity,i));i++)
     [result addObject:Fields([NSString stringWithUTF8String:names])];
@@ -186,7 +187,7 @@ NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder encoder, void *context
       if (![value isKindOfClass:[NSArray class]]) continue;
       NSEnumerator *items=[value objectEnumerator]; id child;
       while ((child=[items nextObject])) if ([child isKindOfClass:[NSString class]] && [truth objectForKey:child] && ![ids containsObject:child]) {
-        NSString *entity=[[truth objectForKey:child] objectForKey:ISyncRecordEntityNameKey];
+        NSString *entity=[[truth objectForKey:child] objectForKey:RCRecordEntityNameKey];
         if (!RCFollowChildRelationship([key UTF8String],[entity UTF8String])) continue;
         [ids addObject:child]; [queue addObject:child];
       }
@@ -208,7 +209,7 @@ NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder encoder, void *context
       else [selected removeObjectForKey:key];
     }
     if (!old && [fields containsObject:@"type"]) {
-      NSString *entity=[record objectForKey:ISyncRecordEntityNameKey];
+      NSString *entity=[record objectForKey:RCRecordEntityNameKey];
       id type=[record objectForKey:@"type"];
       if ([type isKindOfClass:[NSString class]] && [type length] && !RCContactTypeSupported([entity UTF8String],[type UTF8String])) {
         /* An unfamiliar schema type is not a custom label whose meaning we
@@ -220,10 +221,10 @@ NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder encoder, void *context
     else [projected removeObjectForKey:identifier];
     [scopes setObject:fields forKey:identifier];
   }
-  if (!resource && [[[projected objectForKey:root] objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.contacts.Contact"]) {
+  if (!resource && [[[projected objectForKey:root] objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.contacts.Contact"]) {
     NSDictionary *record=[projected objectForKey:root]; BOOL content=NO;
     NSEnumerator *keys=[record keyEnumerator]; NSString *key;
-    while ((key=[keys nextObject])) if (![key isEqual:ISyncRecordEntityNameKey] &&
+    while ((key=[keys nextObject])) if (![key isEqual:RCRecordEntityNameKey] &&
         !([key isEqual:@"display as company"] && [[record objectForKey:key] isEqual:@"person"]) && !RCNativeEmptyValue([record objectForKey:key])) content=YES;
     if (!content) { RCErrorSet(error,1,"New contact has no supported content to upload"); return nil; }
   }

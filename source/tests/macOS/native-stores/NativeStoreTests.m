@@ -1,7 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <AddressBook/AddressBook.h>
 #import <EventKit/EventKit.h>
-#import "../../../macOS-daemon/RCNativeSync.h"
+#import "../../../macOS-daemon/RCMacNativeBackend.h"
 #import "../../../macOS-daemon/RCTwoWayNative.h"
 #include <unistd.h>
 static RCError error;

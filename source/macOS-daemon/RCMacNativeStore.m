@@ -1,4 +1,6 @@
-#import "RCNativeSync.h"
+#import "RCRecordGraph.h"
+#import "RCMacNativeBackend.h"
+#import "RCNativeStore.h"
 #import "RCAutorelease.h"
 #import "RCLogger.h"
 #import "RCSyncFieldScope.h"
@@ -6,19 +8,16 @@
 #if defined(__LP64__)
 #import <EventKit/EventKit.h>
 #import <AddressBook/AddressBook.h>
-#import <CoreServices/CoreServices.h>
 #include <openssl/sha.h>
+@interface RCMacNativeStore : NSObject <RCNativeStore> {
+  RCTwoWayContext *context_;
+  id book_, events_;
+  BOOL contacts_;
+}
+- (id)initWithContext:(RCTwoWayContext *)context error:(RCError *)error;
+@end
 
-BOOL RCUsesNativeStoresForVersion(int major,int minor)
-{
-  return major>10 || (major==10 && minor>=9);
-}
-BOOL RCUsesNativeStores(void)
-{
-  SInt32 major=0,minor=0;
-  return Gestalt(gestaltSystemVersionMajor,&major)==noErr &&
-      Gestalt(gestaltSystemVersionMinor,&minor)==noErr && RCUsesNativeStoresForVersion(major,minor);
-}
+
 /* Only modern slices use EventKit. Ask once while permission is pending;
    repeated store initialization with the deprecated 10.8 initializer queues
    repeated dialogs on Mavericks. Never inspect an unauthorized empty store. */
@@ -47,7 +46,7 @@ static BOOL RCEventAccess(RCError *error)
   RCErrorSet(error,1,"Calendar access is pending or denied; allow rCloud in Privacy > Calendars");
   return NO;
 }
-BOOL RCNativeWaitForAccess(BOOL contacts,RCError *error)
+BOOL RCMacNativeWaitForAccess(BOOL contacts,RCError *error)
 {
   RCErrorClear(error);
   if(RCCheckCancellation(error)) return NO;
@@ -79,7 +78,7 @@ BOOL RCNativeWaitForAccess(BOOL contacts,RCError *error)
     (void)exception; RCErrorSet(error,1,"Could not request native privacy access"); return NO;
   }
 }
-void RCNativeRequestAccess(BOOL contacts,BOOL calendars)
+void RCMacNativeRequestAccess(BOOL contacts,BOOL calendars)
 {
   if(!RCUsesNativeStores() || RCStopRequested) return;
   RCError error; RCErrorClear(&error);
@@ -90,7 +89,7 @@ void RCNativeRequestAccess(BOOL contacts,BOOL calendars)
     }
     if(contacts && !RCStopRequested) {
       RCLogger(RCLogInfo,"Contacts","Access",@"Checking Contacts access at startup");
-      if(!RCNativeWaitForAccess(YES,&error) && !RCStopRequested)
+      if(!RCMacNativeWaitForAccess(YES,&error) && !RCStopRequested)
         RCLogger(RCLogWarning,"Contacts","Access",@"%s",error.message);
     }
   } @catch(NSException *exception) {
@@ -231,7 +230,7 @@ static NSArray *ABAddressProperties(void) { return [NSArray arrayWithObjects:kAB
 static NSDictionary *ABRead(ABPerson *person,NSString *root,NSDictionary *ids)
 {
   if(!person) return [NSDictionary dictionary];
-  NSMutableDictionary *graph=[NSMutableDictionary dictionary], *record=[NSMutableDictionary dictionaryWithObject:@"com.apple.contacts.Contact" forKey:ISyncRecordEntityNameKey];
+  NSMutableDictionary *graph=[NSMutableDictionary dictionary], *record=[NSMutableDictionary dictionaryWithObject:@"com.apple.contacts.Contact" forKey:RCRecordEntityNameKey];
   NSArray *keys=ABFields(),*properties=ABProperties(); NSUInteger i,k;
   for(i=0;i<[keys count];i++) Put(record,[keys objectAtIndex:i],[person valueForProperty:[properties objectAtIndex:i]]);
   [record setObject:([[person valueForProperty:kABPersonFlags] intValue]&kABShowAsMask)==kABShowAsCompany ? @"company" : @"person" forKey:@"display as company"];
@@ -246,7 +245,7 @@ static NSDictionary *ABRead(ABPerson *person,NSString *root,NSDictionary *ids)
       while((key=[it nextObject])) if([[ids objectForKey:key] isEqual:native]) { childID=key; break; }
       if(!childID) childID=[NSString stringWithFormat:@"%@/%@",root,native];
       NSMutableDictionary *child=[NSMutableDictionary dictionaryWithObjectsAndKeys:
-          [@"com.apple.contacts." stringByAppendingString:[ABEntities() objectAtIndex:k]],ISyncRecordEntityNameKey,
+          [@"com.apple.contacts." stringByAppendingString:[ABEntities() objectAtIndex:k]],RCRecordEntityNameKey,
           [NSArray arrayWithObject:root],@"contact",nil];
       ABReadLabel(child,[values labelAtIndex:i]);
       id value=[values valueAtIndex:i];
@@ -337,7 +336,7 @@ static EKRecurrenceRule *EKRule(NSDictionary *record)
 }
 static NSDictionary *EKReadRule(id rule,NSString *owner)
 {
-  NSMutableDictionary *r=[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Recurrence",ISyncRecordEntityNameKey,[NSArray arrayWithObject:owner],@"owner",nil];
+  NSMutableDictionary *r=[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Recurrence",RCRecordEntityNameKey,[NSArray arrayWithObject:owner],@"owner",nil];
   NSUInteger frequency=[[rule valueForKey:@"frequency"] unsignedIntegerValue];
   if(frequency>3) return nil;
   [r setObject:[EKFrequencies() objectAtIndex:frequency] forKey:@"frequency"];
@@ -416,7 +415,7 @@ static NSDictionary *EKAlarmRecord(EKAlarm *alarm,NSString *root,RCError *error)
   }
   NSMutableDictionary *r=[NSMutableDictionary dictionaryWithObjectsAndKeys:
       audio ? @"com.apple.calendars.AudioAlarm" : @"com.apple.calendars.DisplayAlarm",
-      ISyncRecordEntityNameKey,[NSArray arrayWithObject:root],@"owner",nil];
+      RCRecordEntityNameKey,[NSArray arrayWithObject:root],@"owner",nil];
   if([alarm absoluteDate]) Put(r,@"triggerdate",[alarm absoluteDate]);
   else Put(r,@"triggerduration",[NSNumber numberWithInt:(int)[alarm relativeOffset]]);
   if(audio) {
@@ -431,7 +430,7 @@ static NSDictionary *EKAlarmRecord(EKAlarm *alarm,NSString *root,RCError *error)
    Known alarms continue to use their already checkpointed identities. */
 static NSString *EKNewAlarmKey(NSDictionary *record,NSString *root,RCError *error)
 {
-  NSArray *signature=[NSArray arrayWithObjects:[record objectForKey:ISyncRecordEntityNameKey],
+  NSArray *signature=[NSArray arrayWithObjects:[record objectForKey:RCRecordEntityNameKey],
       [record objectForKey:@"triggerdate"] ?: @"", [record objectForKey:@"triggerduration"] ?: @"",
       [[record objectForKey:@"com.apple.ical.sound"] absoluteString] ?: @"",nil];
   NSData *data=[NSPropertyListSerialization dataFromPropertyList:signature format:NSPropertyListBinaryFormat_v1_0 errorDescription:NULL];
@@ -489,7 +488,7 @@ static NSArray *EKSeriesAlarms(id event,NSDictionary *resource,RCError *error)
   }
   if([remaining count]!=1) return alarms;
   EKAlarm *extra=[remaining objectAtIndex:0]; NSDictionary *r=EKAlarmRecord(extra,root,error); if(!r) return nil;
-  if(![[r objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.AudioAlarm"] ||
+  if(![[r objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.calendars.AudioAlarm"] ||
       [r objectForKey:@"triggerdate"] || [[r objectForKey:@"triggerduration"] intValue]!=-54000 ||
       ![[r objectForKey:@"com.apple.ical.sound"] isEqual:[EKSystemSounds() objectForKey:@"Basso"]]) return alarms;
   NSMutableArray *projected=[NSMutableArray arrayWithArray:alarms];
@@ -537,8 +536,8 @@ static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *re
   if([expected count] && [unmatched count]) {
     if([expected count]!=1 || [unmatched count]!=1) goto ambiguous;
     NSString *key=[[expected allKeys] objectAtIndex:0]; NSNumber *index=[unmatched objectAtIndex:0];
-    if(![[[expected objectForKey:key] objectForKey:ISyncRecordEntityNameKey]
-        isEqual:[[observed objectAtIndex:[index unsignedIntegerValue]] objectForKey:ISyncRecordEntityNameKey]]) goto ambiguous;
+    if(![[[expected objectForKey:key] objectForKey:RCRecordEntityNameKey]
+        isEqual:[[observed objectAtIndex:[index unsignedIntegerValue]] objectForKey:RCRecordEntityNameKey]]) goto ambiguous;
     [matches setObject:key forKey:index];
   }
   NSMutableArray *display=[NSMutableArray array], *audio=[NSMutableArray array];
@@ -552,7 +551,7 @@ static BOOL EKReadAlarms(id event,NSDictionary *resource,NSMutableDictionary *re
         key=[stem stringByAppendingFormat:@"/%lu",(unsigned long)++suffix];
     }
     [graph setObject:r forKey:key];
-    [([[r objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.AudioAlarm"] ? audio : display) addObject:key];
+    [([[r objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.calendars.AudioAlarm"] ? audio : display) addObject:key];
   }
   for(int kind=0;kind<2;kind++) {
     NSMutableArray *remaining=[NSMutableArray arrayWithArray:kind ? audio : display];
@@ -575,7 +574,7 @@ static NSDictionary *EKRead(id event,NSDictionary *resource,BOOL recovering,
   NSString *root=[resource objectForKey:@"root"];
   NSDictionary *base=[[resource objectForKey:@"graph"] objectForKey:root];
   NSMutableDictionary *graph=[NSMutableDictionary dictionary], *record=[NSMutableDictionary dictionaryWithObjectsAndKeys:
-      @"com.apple.calendars.Event",ISyncRecordEntityNameKey,nil];
+      @"com.apple.calendars.Event",RCRecordEntityNameKey,nil];
   NSArray *keys=[@"summary|description|location|url|all day" componentsSeparatedByString:@"|"];
   NSArray *properties=[@"title|notes|location|URL|allDay" componentsSeparatedByString:@"|"]; NSUInteger n;
   for(n=0;n<[keys count];n++) Put(record,[keys objectAtIndex:n],[event valueForKey:[properties objectAtIndex:n]]);
@@ -694,13 +693,13 @@ static BOOL EKWrite(id event,id calendar,NSDictionary *resource,RCError *error)
   [event setValue:alarms forKey:@"alarms"]; return YES;
 }
 
-@interface RCNativeStore (Implementation)
+@interface RCMacNativeStore (Implementation)
 - (id)container:(NSString *)root create:(BOOL)create error:(RCError *)error;
 - (NSDictionary *)rawGraph:(NSDictionary *)saved error:(RCError *)error;
 - (NSDictionary *)recoverCalendarResource:(NSDictionary *)saved error:(RCError *)error;
 - (NSDictionary *)repairLegacyCalendarSnapshot:(NSDictionary *)saved error:(RCError *)error;
 @end
-@implementation RCNativeStore
+@implementation RCMacNativeStore
 - (id)initWithContext:(RCTwoWayContext *)context error:(RCError *)error;
 {
   self=[super init]; if(!self) return nil; context_=context;
@@ -731,7 +730,7 @@ failed:
   NSEnumerator *it=[context_->graph keyEnumerator]; NSString *root;
   while((root=[it nextObject])) {
     NSDictionary *record=[context_->graph objectForKey:root];
-    if(![[record objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"]) continue;
+    if(![[record objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"]) continue;
     id calendar=[self container:root create:YES error:error]; if(!calendar) return NO;
     NSString *title=[record objectForKey:@"title"] ?: @"rCloud Calendar";
     NSString *key=[@"@" stringByAppendingString:root];
@@ -827,7 +826,7 @@ failed:
   for(NSString *key in snapshot) {
     NSDictionary *old=[snapshot objectForKey:key], *now=[raw objectForKey:key];
     if(![base objectForKey:key] && now &&
-        [[old objectForKey:ISyncRecordEntityNameKey] hasSuffix:@"Alarm"] &&
+        [[old objectForKey:RCRecordEntityNameKey] hasSuffix:@"Alarm"] &&
         !RCNativeRecordsEqual(old,now)) {
       RCErrorSet(error,1,"A native-only default alarm was edited; preserving the local edit and original wire alarms");
       return nil;
@@ -888,7 +887,7 @@ failed:
   for(NSString *link in [NSArray arrayWithObjects:@"display alarms",@"audio alarms",nil]) for(NSString *key in [now objectForKey:link]) {
     NSMutableDictionary *alarm=[NSMutableDictionary dictionaryWithDictionary:[current objectForKey:key]];
     if([link isEqual:@"audio alarms"]) {
-      [alarm setObject:@"com.apple.calendars.DisplayAlarm" forKey:ISyncRecordEntityNameKey];
+      [alarm setObject:@"com.apple.calendars.DisplayAlarm" forKey:RCRecordEntityNameKey];
       [alarm removeObjectForKey:@"com.apple.ical.sound"];
     }
     NSUInteger index=NSNotFound;
@@ -1059,7 +1058,7 @@ failed:
     /* Search only managed calendars, in bounded four-year windows (EventKit's
        predicate limit). Existing resource lookups never depend on this window. */
     NSEnumerator *calendars=[context_->graph keyEnumerator]; NSString *calendar;
-    while((calendar=[calendars nextObject])) if([[[context_->graph objectForKey:calendar] objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"]) {
+    while((calendar=[calendars nextObject])) if([[[context_->graph objectForKey:calendar] objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"]) {
       id container=[self container:calendar create:NO error:error]; if(error->code) return nil; if(!container) continue;
       int year; for(year=1970;year<2100;year+=4) {
         NSAutoreleasePool *windowPool=[[NSAutoreleasePool alloc] init];
@@ -1107,7 +1106,7 @@ failed:
       /* A newly acknowledged alarm belongs to this resource too. Omitting it
          from the baseline would rediscover the same addition on every read. */
       BOOL newAlarm=!contacts_ && [raw objectForKey:key] && [value isKindOfClass:[NSDictionary class]] &&
-          [[value objectForKey:ISyncRecordEntityNameKey] hasSuffix:@"Alarm"] &&
+          [[value objectForKey:RCRecordEntityNameKey] hasSuffix:@"Alarm"] &&
           [[value objectForKey:@"owner"] containsObject:[r objectForKey:@"root"]];
       if(![base objectForKey:key] && ![[r objectForKey:@"root"] isEqual:key] && !newAlarm) continue;
       touched=YES;
@@ -1138,9 +1137,12 @@ failed:
 }
 @end
 
+id<RCNativeStore> RCCreateMacNativeStore(RCTwoWayContext *context,RCError *error)
+{ return [[RCMacNativeStore alloc] initWithContext:context error:error]; }
 #else
-BOOL RCUsesNativeStoresForVersion(int major,int minor) { return major>10 || (major==10 && minor>=9); }
-BOOL RCUsesNativeStores(void) { return NO; }
-void RCNativeRequestAccess(BOOL contacts,BOOL calendars) { (void)contacts; (void)calendars; }
-BOOL RCNativeWaitForAccess(BOOL contacts,RCError *error) { (void)contacts; RCErrorClear(error); return !RCCheckCancellation(error); }
+void RCMacNativeRequestAccess(BOOL contacts,BOOL calendars) { (void)contacts; (void)calendars; }
+BOOL RCMacNativeWaitForAccess(BOOL contacts,RCError *error)
+{ (void)contacts; RCErrorClear(error); return !RCCheckCancellation(error); }
+id<RCNativeStore> RCCreateMacNativeStore(RCTwoWayContext *context,RCError *error)
+{ (void)context; RCErrorSet(error,1,"Mac native stores require the 64-bit application slice"); return nil; }
 #endif

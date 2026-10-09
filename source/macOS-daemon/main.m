@@ -1,4 +1,4 @@
-#import "RCNativeSync.h"
+#import "RCSyncBackend.h"
 #import "RCStatus.h"
 #import "RCCalendarOperations.h"
 #import "RCContactPhoto.h"
@@ -252,7 +252,8 @@ static void *RCSyncWorkerMain(void *context)
   unsigned long poll = 0;
 
   NSAutoreleasePool *accessPool=[[NSAutoreleasePool alloc] init];
-  RCNativeRequestAccess(worker->contactsEnabled,worker->calendarsEnabled);
+  const RCSyncBackend *backend=RCCurrentSyncBackend();
+  backend->requestAccess(worker->contactsEnabled,worker->calendarsEnabled);
   [accessPool release];
 
   /* This per-user LaunchAgent runs in the graphical login session. Keep
@@ -294,7 +295,7 @@ static void *RCSyncWorkerMain(void *context)
     if (worker->contactsEnabled && !RCStopRequested) {
       RCLoggerSetContext("Contacts", poll);
       RCErrorClear(&error);
-      if(RCUsesNativeStores() && !RCNativeWaitForAccess(YES,&error)) {
+      if(!backend->waitForAccess(YES,&error)) {
         if(!RCStopRequested) {
           RCStatusFailure(@"Contacts",@"Access");
           RCLogger(RCLogWarning,"Contacts","Access",@"Sync skipped: %s",error.message);
@@ -350,15 +351,14 @@ static void *RCSyncWorkerMain(void *context)
         RCErrorClear(&error);
         BOOL exported;
         if (worker->contactsTwoWay) {
-          exported=contactsFetched && (RCUsesNativeStores() ? RCNativeSyncContacts(store,YES,&syncRecordCount,&error) : RCSyncServicesTwoWayContacts(store,
-              worker->syncClientDescriptionPath,&syncRecordCount,&error));
+          exported=contactsFetched && backend->syncContacts(store,worker->syncClientDescriptionPath,YES,&syncRecordCount,&error);
           if (!contactsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
           if (exported) RCRunAccountWrites(&journal,worker,password,NO,store);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else {
           if (!contactsFetched) RCLogger(RCLogInfo, "Contacts", "Apply", @"Attempting local application from the last committed download");
-          exported=RCUsesNativeStores() ? RCNativeSyncContacts(store,NO,&syncRecordCount,&error) : RCSyncServicesPushContacts(store,worker->syncClientDescriptionPath,&syncRecordCount,&error);
+          exported=backend->syncContacts(store,worker->syncClientDescriptionPath,NO,&syncRecordCount,&error);
         }
         if(RCStopRequested) goto contacts_finished;
         if(!exported && contactsFetched) RCStatusFailure(@"Contacts",@"Apply");
@@ -380,7 +380,7 @@ contacts_finished:
       RCCalendarStore *calendarStore;
       RCLoggerSetContext("Calendars", poll);
       RCErrorClear(&error);
-      if(RCUsesNativeStores() && !RCNativeWaitForAccess(NO,&error)) {
+      if(!backend->waitForAccess(NO,&error)) {
         if(!RCStopRequested) {
           RCStatusFailure(@"Calendars",@"Access");
           RCLogger(RCLogWarning,"Calendars","Access",@"Sync skipped: %s",error.message);
@@ -425,15 +425,14 @@ contacts_finished:
         RCErrorClear(&error);
         BOOL exported;
         if (worker->calendarsTwoWay) {
-          exported=calendarsFetched && (RCUsesNativeStores() ? RCNativeSyncCalendars(calendarStore,YES,&syncRecordCount,&error) : RCSyncServicesTwoWayCalendars(calendarStore,
-              worker->calendarDescriptionPath,&syncRecordCount,&error));
+          exported=calendarsFetched && backend->syncCalendars(calendarStore,worker->calendarDescriptionPath,YES,&syncRecordCount,&error);
           if (!calendarsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
           if (exported) RCRunAccountWrites(&journal,worker,password,YES,NULL);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else {
           if (!calendarsFetched) RCLogger(RCLogInfo, "Calendars", "Apply", @"Attempting local application from the last committed download");
-          exported=RCUsesNativeStores() ? RCNativeSyncCalendars(calendarStore,NO,&syncRecordCount,&error) : RCSyncServicesPushCalendars(calendarStore,worker->calendarDescriptionPath,0,&syncRecordCount,&error);
+          exported=backend->syncCalendars(calendarStore,worker->calendarDescriptionPath,NO,&syncRecordCount,&error);
         }
         if(RCStopRequested) goto calendar_finished;
         if(!exported && calendarsFetched) RCStatusFailure(@"Calendars",@"Apply");

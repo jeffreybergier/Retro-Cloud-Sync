@@ -72,6 +72,10 @@ object construction and Sync Services remain covered by the Mac mapper and
 integration tests. `make test-mac-mappers TEST_HOST=x4-vm` runs just those mapper
 checks over SSH, without a Sync Services session or desktop automation. The
 two-way integration runners also retain these assertions.
+The mapper suite additionally injects a synthetic `RCNativeStore` into the shared
+native exchange coordinator. It checks backend selection and graph-key
+compatibility, denied/unavailable stores, retained factory ownership, exception
+rollback, and partial publication without accessing system contacts or calendars.
 
 Calendar projection receives a native-timezone-offset callback. Linux tests
 simulate matching/missing platform rules and compare all 40 occurrences in the

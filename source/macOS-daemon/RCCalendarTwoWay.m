@@ -1,4 +1,5 @@
-#import "RCNativeSync.h"
+#import "RCRecordGraph.h"
+#import "RCTwoWaySync.h"
 #import "RCAutorelease.h"
 #import "RCLogger.h"
 #import "RCTwoWayNative.h"
@@ -26,8 +27,8 @@ static NSString *DifferentField(NSDictionary *a, NSDictionary *b)
   NSString *key;
   while ((key=[it nextObject])) {
     NSMutableDictionary *left=[NSMutableDictionary dictionary], *right=[NSMutableDictionary dictionary];
-    if ([a objectForKey:ISyncRecordEntityNameKey]) [left setObject:[a objectForKey:ISyncRecordEntityNameKey] forKey:ISyncRecordEntityNameKey];
-    if ([b objectForKey:ISyncRecordEntityNameKey]) [right setObject:[b objectForKey:ISyncRecordEntityNameKey] forKey:ISyncRecordEntityNameKey];
+    if ([a objectForKey:RCRecordEntityNameKey]) [left setObject:[a objectForKey:RCRecordEntityNameKey] forKey:RCRecordEntityNameKey];
+    if ([b objectForKey:RCRecordEntityNameKey]) [right setObject:[b objectForKey:RCRecordEntityNameKey] forKey:RCRecordEntityNameKey];
     if ([a objectForKey:key]) [left setObject:[a objectForKey:key] forKey:key];
     if ([b objectForKey:key]) [right setObject:[b objectForKey:key] forKey:key];
     if (!RCTwoWayRecordsEqual(left,right)) return key;
@@ -552,7 +553,7 @@ NSMutableDictionary *RCCalendarEncodeLocal(void *opaque,NSDictionary *resource,N
 failed:
   icalcomponent_free(calendar); return nil;
 }
-static int RCExchangeCalendars(RCCalendarStore *store,const char *description,BOOL native,BOOL twoWay,long *count,RCError *error)
+int RCExchangeCalendars(RCCalendarStore *store,const char *description,RCBackendExchange exchange,BOOL requireCurrentMapping,BOOL twoWay,long *count,RCError *error)
 {
   RCWriteJournal j=RCCalendarStoreWriteJournal(store); sqlite3_stmt *q=NULL;
   NSMutableDictionary *graph=[NSMutableDictionary dictionary], *calendarIDs=[NSMutableDictionary dictionary];
@@ -570,7 +571,7 @@ static int RCExchangeCalendars(RCCalendarStore *store,const char *description,BO
     @try {
       if(RCCheckCancellation(error)) goto failed;
       NSString *id=[@"calendar-" stringByAppendingString:S((const char *)sqlite3_column_text(q,1))];
-      NSMutableDictionary *record=[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",ISyncRecordEntityNameKey,
+      NSMutableDictionary *record=[NSMutableDictionary dictionaryWithObjectsAndKeys:@"com.apple.calendars.Calendar",RCRecordEntityNameKey,
           RCCalendarNativeTitle(j,id,S((const char *)sqlite3_column_text(q,2))),@"title",
           [NSNumber numberWithBool:NO],@"read only",[NSMutableArray array],@"events",[NSArray array],@"tasks",nil];
       if (sqlite3_column_type(q,3)!=SQLITE_NULL) [record setObject:S((const char *)sqlite3_column_text(q,3)) forKey:@"notes"];
@@ -606,7 +607,7 @@ static int RCExchangeCalendars(RCCalendarStore *store,const char *description,BO
           S((const char *)sqlite3_column_text(q,2)),@"href",etag,@"etag",body,@"body",mapped,@"graph",paths,@"paths",
           [NSNumber numberWithLongLong:generation],@"revision",nil]];
       [graph addEntriesFromDictionary:mapped]; NSEnumerator *it=[mapped keyEnumerator]; NSString *key;
-      while ((key=[it nextObject])) if ([[[mapped objectForKey:key] objectForKey:ISyncRecordEntityNameKey] isEqual:eventEntity])
+      while ((key=[it nextObject])) if ([[[mapped objectForKey:key] objectForKey:RCRecordEntityNameKey] isEqual:eventEntity])
         [[[graph objectForKey:calendar] objectForKey:@"events"] addObject:key];
     } @catch(id exception) {
       RCDrainPoolPreservingException(&resourcePool,exception); @throw;
@@ -615,8 +616,8 @@ static int RCExchangeCalendars(RCCalendarStore *store,const char *description,BO
   if (step!=SQLITE_DONE) goto failed;
   sqlite3_finalize(q); q=NULL;
   RCTwoWayContext c={j,RCCalendarSyncClientIdentifier(accountID),S(description),eventEntity,resources,graph,RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
-  if (!(native ? RCNativeExchange(&c,twoWay,error) : RCTwoWayExchange(&c,error))) return 0;
-  if(native && !currentMapping) c.didPublishAll=NO;
+  if (!exchange(&c,twoWay,error)) return 0;
+  if(requireCurrentMapping && !currentMapping) c.didPublishAll=NO;
   if (c.didPublishAll) {
     if (!RCTwoWaySQL(&j,error,"BEGIN IMMEDIATE")) return 0;
     NSEnumerator *it=[resources objectEnumerator]; NSDictionary *r;
@@ -648,13 +649,4 @@ static int RCExchangeCalendars(RCCalendarStore *store,const char *description,BO
   return 1;
 failed:
   sqlite3_finalize(q); if (!error->code) RCErrorSet(error,1,"Could not build two-way calendar graph"); return 0;
-}
-
-int RCSyncServicesTwoWayCalendars(RCCalendarStore *store,const char *description,long *count,RCError *error)
-{
-  return RCExchangeCalendars(store,description,NO,YES,count,error);
-}
-int RCNativeSyncCalendars(RCCalendarStore *store,BOOL twoWay,long *count,RCError *error)
-{
-  return RCExchangeCalendars(store,NULL,YES,twoWay,count,error);
 }

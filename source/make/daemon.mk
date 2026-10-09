@@ -4,8 +4,16 @@ DAEMON_NAME := rcloudd
 DAEMON_SOURCE_ROOT := $(SOURCE_ROOT)/macOS-daemon
 DAEMON_INFO_PLIST := $(DAEMON_SOURCE_ROOT)/Info.plist
 DAEMON_BUILD_ROOT := $(BUILD_ROOT)/macOS-daemon/$(CONFIG)
-DAEMON_SOURCES := main.m RCCalendarSyncServicesBridge.m RCSyncServicesBridge.m RCSyncConflictSession.m \
-	RCContactConflictResolver.m RCTwoWaySync.m RCNativeSync.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m RCCalendarTwoWay.m RCCalendarOperations.m \
+# Shared Objective-C coordination and graph mapping: no SyncServices linkage.
+SYNC_COMMON_SOURCES := RCContactGraph.m RCCalendarGraph.m RCTwoWaySync.m \
+	RCNativeExchange.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m \
+	RCCalendarTwoWay.m RCCalendarOperations.m
+# Target composition keeps unavailable frameworks out of future iOS builds.
+SYNC_SERVICES_SOURCES := RCSyncServicesBackend.m RCSyncServicesBridge.m \
+	RCCalendarSyncServicesBridge.m RCSyncConflictSession.m RCContactConflictResolver.m
+MAC_NATIVE_SOURCES := RCMacNativeBackend.m RCMacNativeStore.m
+MAC_SYNC_SOURCES := RCMacSyncBackend.m $(SYNC_SERVICES_SOURCES) $(MAC_NATIVE_SOURCES)
+DAEMON_SOURCES := main.m $(SYNC_COMMON_SOURCES) $(MAC_SYNC_SOURCES) \
 	RCMailProxy.c RCLogger.m RCStatus.m
 DAEMON_SOURCE_PATHS := $(addprefix $(DAEMON_SOURCE_ROOT)/,$(DAEMON_SOURCES))
 DAEMON_INTERMEDIATES := $(DAEMON_BUILD_ROOT)/Intermediates

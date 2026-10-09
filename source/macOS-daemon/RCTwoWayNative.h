@@ -10,9 +10,8 @@ NSDictionary *RCContactNativeGraph(RCContactStore *, long long, const char *, NS
 NSDictionary *RCCalendarNativeGraph(RCCalendarStore *, long long, NSString *, NSData *, RCError *);
 NSDictionary *RCCalendarProjectVerified(void *, NSDictionary *, NSData *, RCError *);
 NSDictionary *RCContactProjectVerified(void *, NSDictionary *, NSData *, RCError *);
-/* A successful partial exchange reports -1; its full mirror is not checkpointed. */
-int RCSyncServicesTwoWayContacts(RCContactStore *, const char *, long *, RCError *);
-int RCSyncServicesTwoWayCalendars(RCCalendarStore *, const char *, long *, RCError *);
+int RCExchangeContacts(RCContactStore *, const char *, RCBackendExchange, BOOL, long *, RCError *);
+int RCExchangeCalendars(RCCalendarStore *, const char *, RCBackendExchange, BOOL requireCurrentMapping, BOOL, long *, RCError *);
 /* Used by the offline mapper tests as well as the production coordinator. */
 NSMutableDictionary *RCContactEncodeLocal(void *, NSDictionary *, NSDictionary *, NSString *, RCError *);
 NSMutableDictionary *RCCalendarEncodeLocal(void *, NSDictionary *, NSDictionary *, NSString *, RCError *);

@@ -1,7 +1,7 @@
 #ifndef RC_TWO_WAY_SYNC_H
 #define RC_TWO_WAY_SYNC_H
 #import <Foundation/Foundation.h>
-#import <SyncServices/SyncServices.h>
+#import "RCRecordGraph.h"
 #include "RCWriteJournal.h"
 #include "RCHTTPClient.h"
 
@@ -36,7 +36,7 @@ NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder, void *, NSDictionary 
     NSDictionary *, NSString *, RCError *);
 
 BOOL RCTwoWayInitialize(RCWriteJournal *, RCError *);
-BOOL RCTwoWayExchange(RCTwoWayContext *, RCError *);
+typedef BOOL (*RCBackendExchange)(RCTwoWayContext *, BOOL, RCError *);
 /* Only called in TwoWay mode, with this account's credentials. No sessions or
    SQLite transactions are open while requests run. Returns number attempted. */
 int RCTwoWayRunWrites(RCWriteJournal *, RCHTTPClient *, const char *, RCError *);

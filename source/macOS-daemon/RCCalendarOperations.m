@@ -1,3 +1,4 @@
+#import "RCRecordGraph.h"
 #import "RCAutorelease.h"
 #import "RCSyncRecordEquality.h"
 #import "RCCalendarOperations.h"
@@ -34,7 +35,7 @@ BOOL RCCalendarCollectOperations(RCWriteJournal *j,NSDictionary *truth,NSDiction
   NSEnumerator *it=[truth keyEnumerator]; NSString *identifier;
   while((identifier=[it nextObject])) {
     NSDictionary *record=[truth objectForKey:identifier];
-    if(![[record objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"] || [graph objectForKey:identifier]) continue;
+    if(![[record objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"] || [graph objectForKey:identifier]) continue;
     if(first) {
       if(!RCTwoWaySQL(j,error,"INSERT OR IGNORE INTO calendar_native_baseline VALUES(%lld,%Q)",j->account,[identifier UTF8String])) return NO;
       continue;
@@ -107,7 +108,7 @@ BOOL RCCalendarProtectOperations(RCWriteJournal *j,NSArray *resources,NSDictiona
       [busy addObjectsFromArray:[[[r objectForKey:@"graph"] objectForKey:[r objectForKey:@"root"]] objectForKey:@"calendar"] ?: [NSArray array]];
     }
     it=[graph keyEnumerator]; NSString *identifier;
-    while((identifier=[it nextObject])) if([[[graph objectForKey:identifier] objectForKey:ISyncRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"]) {
+    while((identifier=[it nextObject])) if([[[graph objectForKey:identifier] objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"]) {
       NSString *collection=NativeCollectionURL(j,identifier); if(collection && [target hasPrefix:collection]) [busy addObject:identifier];
     }
   }

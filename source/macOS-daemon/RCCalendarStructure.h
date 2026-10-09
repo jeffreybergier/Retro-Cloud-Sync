@@ -1,3 +1,4 @@
+#import "RCRecordGraph.h"
 /* Structural edits are validated by the production forward mapper before any
    outbox write. Clone existing components to retain unrepresented extensions. */
 static void RemoveProperties(icalcomponent *c,icalproperty_kind kind)
@@ -81,7 +82,7 @@ static BOOL ChildChanges(NSDictionary *old,NSDictionary *record,NSString *link,N
 }
 static BOOL StructuralFieldChanged(NSDictionary *old,NSDictionary *record,NSString *key)
 {
-  return !old || !RCNativePropertyValuesEqual([record objectForKey:ISyncRecordEntityNameKey],key,[old objectForKey:key],[record objectForKey:key]);
+  return !old || !RCNativePropertyValuesEqual([record objectForKey:RCRecordEntityNameKey],key,[old objectForKey:key],[record objectForKey:key]);
 }
 static BOOL UpdateAlarm(icalcomponent *alarm,NSDictionary *old,NSDictionary *record,BOOL audio,RCError *error)
 {

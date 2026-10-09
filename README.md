@@ -16,6 +16,25 @@ only the affected service. System iCloud sign-in is unnecessary; DAV credentials
 remain in Keychain.
 The mail proxy continues independently.
 
+The daemon selects a publication backend through `RCSyncBackend.h`.
+`RCMacSyncBackend.m` preserves the Mac version/slice selection policy;
+`RCSyncServicesBackend.m` owns legacy sessions and conflict resolution, while
+`RCMacNativeBackend.m` and `RCMacNativeStore.m` own Mac AddressBook/EventKit access.
+The worker uses the same access and publication interface for both backends.
+The build lists these separately as `SYNC_COMMON_SOURCES`,
+`SYNC_SERVICES_SOURCES`, and `MAC_NATIVE_SOURCES`.
+
+Forward graphs (`RCContactGraph.m`, `RCCalendarGraph.m`), reverse mapping,
+write journals and verified-receipt completion are shared. Their historical
+record keys and persisted schemas remain unchanged. `RCNativeExchange.m` uses
+the `RCNativeStore` protocol and an injected, retained store factory; it has no
+SyncServices dependency or CPU-width gate. A future iOS backend can implement
+that contract with iOS AddressBook/EventKit and supply its own target selection,
+authorization and storage lifecycle. This refactor does not implement iOS
+publication: legacy Foundation date representations and platform-specific
+EventKit mapping still require iOS adaptation. The existing Mac native mapper,
+including its alarm handling and recovery rules, remains Mac-specific.
+
 The native backend owns an account-specific Contacts group and local calendars.
 One-way mode imports the retained server mirror. Two-way mode detects edits and
 new records in those managed containers, then uses the existing conditional DAV
