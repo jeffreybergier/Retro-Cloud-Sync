@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+case "$1" in
+  configure)
+    mkdir -p '/var/mobile/Library/Application Support/rCloud' /var/mobile/Library/Logs/RetroCloudSync
+    chown mobile:mobile '/var/mobile/Library/Application Support/rCloud' /var/mobile/Library/Logs/RetroCloudSync
+    chmod 700 '/var/mobile/Library/Application Support/rCloud' /var/mobile/Library/Logs/RetroCloudSync
+    # Registration must precede launchd: TCC denies unregistered executables.
+    su mobile -c uicache
+    launchctl load /Library/LaunchDaemons/com.altivecintelligence.rcloudd.plist
+    ;;
+esac
+exit 0

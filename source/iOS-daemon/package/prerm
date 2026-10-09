@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+# RC_LIFECYCLE
+case "$1" in
+  remove|upgrade|deconfigure) rc_stop ;;
+esac
+# Account mirrors, pending writes and Keychain credentials survive removal.
+exit 0

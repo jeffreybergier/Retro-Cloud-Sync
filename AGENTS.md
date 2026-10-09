@@ -1,6 +1,6 @@
 # Retro Cloud Sync agent notes
 
-Legacy Mac OS X 10.4+ app: a local TLS mail proxy plus iCloud CardDAV/CalDAV mirrors through Sync Services (10.4–10.8) or AddressBook/EventKit (10.9+). `source/macOS-app` is the GUI; `source/macOS-daemon` is the embedded `rcloudd`; `source/shared` holds DAV, codecs, SQLite stores and write primitives; `source/tests` has offline regressions and Mac integration suites; `source/probes/macOS` has non-shipped read-only DAV probes; `source/make` has build rules. `source/deps/libical` and `source/deps/libvc` are submodules; initialize with `git submodule update --init --recursive` and patch only the build copies under `build/dependencies`.
+Legacy Mac OS X 10.4+ app: a local TLS mail proxy plus iCloud CardDAV/CalDAV mirrors through Sync Services (10.4–10.8) or AddressBook/EventKit (10.9+). `source/macOS-app` is the GUI; `source/macOS-daemon` is the embedded `rcloudd`; `source/iOS-daemon` supplies the registered mobile launchd backend and rootful package; `source/shared` holds DAV, codecs, SQLite stores and write primitives; `source/tests` has offline regressions and Mac integration suites; `source/probes/macOS` has non-shipped read-only DAV probes; `source/make` has build rules. `source/deps/libical` and `source/deps/libvc` are submodules; initialize with `git submodule update --init --recursive` and patch only the build copies under `build/dependencies`.
 
 ## Build and test
 
@@ -10,6 +10,8 @@ Legacy Mac OS X 10.4+ app: a local TLS mail proxy plus iCloud CardDAV/CalDAV mir
 - Narrow portable targets: `test-host-contacts`, `test-host-calendars`, `test-host-writes`, `test-host-sync`, `test-host-policies`, `test-host-calendar-projection`. `make test-mac-mappers TEST_HOST=x4-vm` checks Foundation adapters without native sessions or GUI automation. `make build-mac-tests` builds Mac test tools without running them.
 - Mac tests use `TEST_HOST=x4-vm`: `make test-mac-app`, `test-mac-contacts-syncservices`, `test-mac-calendars-syncservices`, `test-mac-two-way`, `test-mac-conflicts`, `test-mac-logging`. `make test-mac-network` separately needs internet. Stop the production daemon before native Sync Services tests. Remote Mac work stays under `~/Desktop`; GUI/framework tests need a logged-in desktop and Tiger Accessibility (“Enable access for assistive devices”). The app harness can be built/analyzed with `make build-mac-app-tests` / `make analyze-mac-app-tests`.
 - Offline suites use synthetic data and do not validate live iCloud two-way behavior. Use disposable live data for initial integration checks.
+
+- iOS: `make ios-package` builds rootful armv7 (iOS 5.0) / arm64 (iOS 7.0) with the 8.4 SDK. `make analyze-ios` checks the oldest slice. Test only an authorized phone using `make test-ios-native-stores TEST_HOST=koolphone5`; unload the installed rCloud launchd job first. Registration and user-approved TCC access are prerequisites. Keep tests synthetic, as mobile; never treat denied access or a missing owned container as an empty inventory. Do not edit system Contacts/Calendar/TCC databases directly. Device artifacts go under mobile's Library/Caches.
 
 ## Objective-C house rules
 

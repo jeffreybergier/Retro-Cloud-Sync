@@ -44,7 +44,13 @@ args=(-DSTATIC_ONLY=ON -DWITH_CXX_BINDINGS=OFF -DICAL_GLIB=OFF
       -DCMAKE_DISABLE_FIND_PACKAGE_ICU=TRUE
       -DCMAKE_DISABLE_FIND_PACKAGE_BerkeleyDB=TRUE
       -DUSE_BUILTIN_TZDATA=ON -DCMAKE_BUILD_TYPE=Release)
-if [ "$mode" = x86_64 ] || [ "$mode" = arm64 ]; then
+if [ "$mode" = ios-armv7 ] || [ "$mode" = ios-arm64 ]; then
+  arch="${mode#ios-}"; minimum=5.0; [ "$arch" != arm64 ] || minimum=7.0
+  args+=(-DCMAKE_SYSTEM_NAME=Generic "-DCMAKE_SYSTEM_PROCESSOR=$arch"
+         -DCMAKE_C_COMPILER=/usr/bin/clang
+         "-DCMAKE_AR=$toolchain/bin/ar" "-DCMAKE_RANLIB=$toolchain/bin/ranlib"
+         "-DCMAKE_C_FLAGS=-target $arch-apple-ios$minimum -isysroot $toolchain/SDK/iPhoneOS8.4.sdk -B$toolchain/bin -std=c99")
+elif [ "$mode" = x86_64 ] || [ "$mode" = arm64 ]; then
   compiler=$(compgen -G "$toolchain/bin/$mode-apple-darwin*-clang" | head -1)
   minimum=10.9; [ "$mode" != arm64 ] || minimum=11.0
   args+=(-DCMAKE_SYSTEM_NAME=Darwin "-DCMAKE_SYSTEM_PROCESSOR=$mode"

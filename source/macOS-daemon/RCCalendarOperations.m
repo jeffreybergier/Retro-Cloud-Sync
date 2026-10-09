@@ -1,3 +1,5 @@
+#include <libxml/parser.h>
+#include <limits.h>
 #import "RCRecordGraph.h"
 #import "RCAutorelease.h"
 #import "RCSyncRecordEquality.h"
@@ -125,11 +127,19 @@ static BOOL Get(RCHTTPClient *http,NSString *url,RCHTTPResponse *response,RCErro
 {
   return RCHTTPClientRequest(http,"GET",[url UTF8String],NULL,NULL,NULL,0,response,error) && response->effectiveURL && [String(response->effectiveURL) isEqual:url];
 }
-static NSXMLNode *XMLChild(NSXMLNode *node,NSString *name,NSString *uri)
-{
-  NSEnumerator *it=[[node children] objectEnumerator]; NSXMLNode *child;
-  while((child=[it nextObject])) if([[child localName] isEqual:name] && [[child URI] isEqual:uri]) return child;
-  return nil;
+static BOOL XMLMatches(xmlNodePtr node,const char *name,const char *uri) {
+  return node && node->type==XML_ELEMENT_NODE && xmlStrEqual(node->name,BAD_CAST name) &&
+      node->ns && xmlStrEqual(node->ns->href,BAD_CAST uri);
+}
+static xmlNodePtr XMLChild(xmlNodePtr node,const char *name,const char *uri) {
+  xmlNodePtr child; for(child=node ? node->children : NULL;child;child=child->next)
+    if(XMLMatches(child,name,uri)) return child;
+  return NULL;
+}
+static NSString *XMLText(xmlNodePtr node) {
+  if(!node) return nil; xmlChar *text=xmlNodeGetContent(node);
+  NSString *result=text ? [NSString stringWithUTF8String:(const char *)text] : nil;
+  if(text) xmlFree(text); return result;
 }
 static BOOL Created(RCHTTPClient *http,NSString *url,NSString *marker,RCError *error)
 {
@@ -137,23 +147,28 @@ static BOOL Created(RCHTTPClient *http,NSString *url,NSString *marker,RCError *e
   RCHTTPResponse response; RCHTTPResponseInit(&response);
   BOOL ok=RCHTTPClientRequest(http,"PROPFIND",[url UTF8String],"0","application/xml",query,strlen(query),&response,error);
   if(!ok || response.statusCode!=207 || !response.effectiveURL || ![String(response.effectiveURL) isEqual:url]) { RCHTTPResponseClear(&response); return NO; }
-  NSXMLDocument *doc=[[[NSXMLDocument alloc] initWithData:[NSData dataWithBytes:response.body length:response.bodyLength] options:0 error:NULL] autorelease];
+  xmlDocPtr doc=response.bodyLength<=INT_MAX ? xmlReadMemory((const char *)response.body,(int)response.bodyLength,NULL,NULL,
+      XML_PARSE_NONET|XML_PARSE_NOERROR|XML_PARSE_NOWARNING) : NULL;
   BOOL calendar=NO,owned=NO;
-  NSEnumerator *responses=[[[doc rootElement] children] objectEnumerator]; NSXMLNode *entry;
-  while((entry=[responses nextObject])) {
-    if(![[entry localName] isEqual:@"response"] || ![[entry URI] isEqual:@"DAV:"]) continue;
-    NSString *href=[XMLChild(entry,@"href",@"DAV:") stringValue];
-    if(!href || ![[[NSURL URLWithString:href relativeToURL:[NSURL URLWithString:url]] absoluteString] isEqual:url]) continue;
-    NSEnumerator *stats=[[entry children] objectEnumerator]; NSXMLNode *stat;
-    while((stat=[stats nextObject])) {
-      if(![[stat localName] isEqual:@"propstat"] || ![[stat URI] isEqual:@"DAV:"]) continue;
-      NSString *status=[XMLChild(stat,@"status",@"DAV:") stringValue];
-      if(!status || [status rangeOfString:@" 200 "].location==NSNotFound) continue;
-      NSXMLNode *prop=XMLChild(stat,@"prop",@"DAV:");
-      if(XMLChild(XMLChild(prop,@"resourcetype",@"DAV:"),@"calendar",@"urn:ietf:params:xml:ns:caldav")) calendar=YES;
-      if([[XMLChild(prop,@"creation-id",@"urn:retrocloudsync") stringValue] isEqual:marker]) owned=YES;
+  xmlNodePtr root=doc ? xmlDocGetRootElement(doc) : NULL;
+  /* Reject DTD-bearing responses; no entity substitution or external fetches. */
+  if(doc && !doc->intSubset && !doc->extSubset && XMLMatches(root,"multistatus","DAV:")) {
+    xmlNodePtr entry,stat;
+    for(entry=root->children;entry;entry=entry->next) {
+      if(!XMLMatches(entry,"response","DAV:")) continue;
+      NSString *href=XMLText(XMLChild(entry,"href","DAV:"));
+      if(!href || ![[[NSURL URLWithString:href relativeToURL:[NSURL URLWithString:url]] absoluteString] isEqual:url]) continue;
+      for(stat=entry->children;stat;stat=stat->next) {
+        if(!XMLMatches(stat,"propstat","DAV:")) continue;
+        NSString *status=XMLText(XMLChild(stat,"status","DAV:"));
+        if(!status || [status rangeOfString:@" 200 "].location==NSNotFound) continue;
+        xmlNodePtr prop=XMLChild(stat,"prop","DAV:");
+        if(XMLChild(XMLChild(prop,"resourcetype","DAV:"),"calendar","urn:ietf:params:xml:ns:caldav")) calendar=YES;
+        if([XMLText(XMLChild(prop,"creation-id","urn:retrocloudsync")) isEqual:marker]) owned=YES;
+      }
     }
   }
+  if(doc) xmlFreeDoc(doc);
   if(!calendar || !owned) RCErrorSet(error,1,"Calendar verification lacks resource type or ownership marker");
   RCHTTPResponseClear(&response); return calendar && owned;
 }

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ConfigurationVersion</key>
+	<integer>1</integer>
+	<key>Contacts</key>
+	<dict>
+		<key>CalendarHistoryYears</key>
+		<integer>2</integer>
+		<key>CalendarsSyncMode</key>
+		<string>OneWay</string>
+		<key>ContactsSyncMode</key>
+		<string>OneWay</string>
+		<key>ServiceURL</key>
+		<string>https://contacts.icloud.com</string>
+		<key>SyncIntervalSeconds</key>
+		<integer>300</integer>
+		<key>Username</key>
+		<string>replace-with-your-apple-account</string>
+	</dict>
+	<key>MailProxy</key>
+	<dict>
+		<key>IMAP</key>
+		<dict>
+			<key>LocalPort</key>
+			<integer>1143</integer>
+			<key>RemoteHost</key>
+			<string>imap.mail.me.com</string>
+			<key>RemotePort</key>
+			<integer>993</integer>
+		</dict>
+		<key>SMTP</key>
+		<dict>
+			<key>LocalPort</key>
+			<integer>1587</integer>
+			<key>RemoteHost</key>
+			<string>smtp.mail.me.com</string>
+			<key>RemotePort</key>
+			<integer>587</integer>
+		</dict>
+	</dict>
+</dict>
+</plist>

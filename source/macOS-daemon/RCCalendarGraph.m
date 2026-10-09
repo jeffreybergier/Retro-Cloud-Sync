@@ -1,3 +1,4 @@
+#import "RCPlatformDate.h"
 #import "RCRecordGraph.h"
 #import "RCAutorelease.h"
 #import "RCLogger.h"
@@ -53,20 +54,20 @@ static icaltimezone *RCEventZone(icalcomponent *root, icalproperty *p,
   return RCCalendarSourceZone(root,p);
 }
 /* Dates are constructed from calendar fields, never through 32-bit time_t. */
-static NSCalendarDate *Date(icalcomponent *root, icalproperty *p, struct icaltimetype t,
+static RCCalendarDate *Date(icalcomponent *root, icalproperty *p, struct icaltimetype t,
                             icalcomponent *recurring, RCError *error)
 {
   NSTimeZone *native;
   icaltimezone *zone;
   const char *tz = RCICalendarTZID(p);
   int offset, daylight = 0;
-  NSCalendarDate *date;
+  RCCalendarDate *date;
   if (icaltime_is_null_time(t) || !icaltime_is_valid_time(t)) {
     RCErrorSet(error, 1, "Event contains a missing or invalid date");
     return nil;
   }
   if (t.is_date)
-    return [NSCalendarDate dateWithYear:t.year
+    return [RCCalendarDate dateWithYear:t.year
                                   month:t.month
                                     day:t.day
                                    hour:12
@@ -97,7 +98,7 @@ static NSCalendarDate *Date(icalcomponent *root, icalproperty *p, struct icaltim
   struct icaltimetype probe=t; probe.month=1; probe.day=15; probe.hour=12;
   while(matches && probe.year<=t.year+5) {
     int expected=icaltimezone_get_utc_offset(zone,&probe,&daylight);
-    NSCalendarDate *nd=RCCalendarWallDate(probe,[NSTimeZone timeZoneForSecondsFromGMT:expected]);
+    RCCalendarDate *nd=RCCalendarWallDate(probe,[NSTimeZone timeZoneForSecondsFromGMT:expected]);
     matches=[native secondsFromGMTForDate:nd]==expected;
     if(++probe.month>12) { probe.month=1; probe.year++; }
   }
@@ -162,7 +163,7 @@ static int Recurrence(RCCalendarStore *store, icalcomponent *root, icalcomponent
     [rule setObject:[NSNumber numberWithInt:r.count] forKey:@"count"];
   if (!icaltime_is_null_time(r.until)) {
     icalproperty *basis=icalcomponent_get_first_property(event,ICAL_DTSTART_PROPERTY);
-    NSCalendarDate *until = Date(root, icaltime_is_utc(r.until) ? p : basis, r.until, NULL, error);
+    RCCalendarDate *until = Date(root, icaltime_is_utc(r.until) ? p : basis, r.until, NULL, error);
     if (!until)
       return 0;
     [rule setObject:until forKey:@"until"];
@@ -318,7 +319,7 @@ static int Alarms(RCCalendarStore *store, icalcomponent *root, icalcomponent *ev
     trigger = icalproperty_get_trigger(p);
     if (!icaltime_is_null_time(trigger.time)) {
       if(!icaltime_is_utc(trigger.time)) { RCErrorSet(error,1,"Absolute reminders must use UTC"); return 0; }
-      NSCalendarDate *date = Date(root, p, trigger.time, NULL, error);
+      RCCalendarDate *date = Date(root, p, trigger.time, NULL, error);
       if (!date)
         return 0;
       [a setObject:date forKey:@"triggerdate"];
@@ -428,13 +429,13 @@ NSMutableDictionary *RCCalendarResourceGraph(RCCalendarStore *store, long long r
     icalcomponent *recurring = icalcomponent_count_properties(event, ICAL_RRULE_PROPERTY) > 0 ? event : NULL;
     struct icaltimetype start = icalcomponent_get_dtstart(event),
                         end = icalcomponent_get_dtend(event);
-    NSCalendarDate *startDate, *endDate;
+    RCCalendarDate *startDate, *endDate;
     NSMutableArray *exceptions = [NSMutableArray array];
     free(key);
     if (!id)
       goto done;
     if (event != master) {
-      NSCalendarDate *original;
+      RCCalendarDate *original;
       p = icalcomponent_get_first_property(event, ICAL_RECURRENCEID_PROPERTY);
       if (icalproperty_get_first_parameter(p, ICAL_RANGE_PARAMETER)) {
         RCErrorSet(error, 1, "Ranged recurrence exceptions are not yet supported");
@@ -498,7 +499,7 @@ NSMutableDictionary *RCCalendarResourceGraph(RCCalendarStore *store, long long r
     }
     for (p = icalcomponent_get_first_property(event, ICAL_EXDATE_PROPERTY); p;
          p = icalcomponent_get_next_property(event, ICAL_EXDATE_PROPERTY)) {
-      NSCalendarDate *date = Date(root, p, icalproperty_get_exdate(p), NULL, error);
+      RCCalendarDate *date = Date(root, p, icalproperty_get_exdate(p), NULL, error);
       if (!date)
         goto done;
       [exceptions addObject:date];

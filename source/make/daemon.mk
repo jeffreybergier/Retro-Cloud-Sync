@@ -6,7 +6,7 @@ DAEMON_INFO_PLIST := $(DAEMON_SOURCE_ROOT)/Info.plist
 DAEMON_BUILD_ROOT := $(BUILD_ROOT)/macOS-daemon/$(CONFIG)
 # Shared Objective-C coordination and graph mapping: no SyncServices linkage.
 SYNC_COMMON_SOURCES := RCContactGraph.m RCCalendarGraph.m RCTwoWaySync.m \
-	RCNativeExchange.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m \
+	RCNativeExchange.m RCNativeSystemStore.m RCPlatformDate.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m \
 	RCCalendarTwoWay.m RCCalendarOperations.m
 # Target composition keeps unavailable frameworks out of future iOS builds.
 SYNC_SERVICES_SOURCES := RCSyncServicesBackend.m RCSyncServicesBridge.m \
@@ -30,7 +30,7 @@ DAEMON_I386_OBJECTS := $(addprefix \
 	$(DAEMON_INTERMEDIATES)/i386/,$(DAEMON_OBJECT_NAMES))
 $(DAEMON_PPC_OBJECTS) $(DAEMON_I386_OBJECTS): $(wildcard $(SHARED_SOURCE_ROOT)/*.h) \
 	$(wildcard $(DAEMON_SOURCE_ROOT)/*.h)
-DAEMON_COMPILE_FLAGS = $(ICAL_FLAGS) -I$(ALTIVECCORE_ROOT)/include
+DAEMON_COMPILE_FLAGS = -I$(SDK)/usr/include/libxml2 $(ICAL_FLAGS) -I$(ALTIVECCORE_ROOT)/include
 DAEMON_LINK_FLAGS := -framework Foundation -framework CoreFoundation \
 		-framework SystemConfiguration -framework Security -lxml2 \
 		-framework SyncServices \

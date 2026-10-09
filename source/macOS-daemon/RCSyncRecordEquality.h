@@ -1,3 +1,4 @@
+#import "RCPlatformDate.h"
 #ifndef RC_SYNC_RECORD_EQUALITY_H
 #define RC_SYNC_RECORD_EQUALITY_H
 #import <Foundation/Foundation.h>
@@ -62,11 +63,11 @@ static inline id RCNativeDefaultValue(NSString *entity, NSString *key)
 }
 static inline BOOL RCNativeFloatingDate(id value)
 {
-  return [value isKindOfClass:[NSCalendarDate class]] && [value timeZone]==[NSTimeZone localTimeZone];
+  return [value isKindOfClass:[RCCalendarDate class]] && [value timeZone]==[NSTimeZone localTimeZone];
 }
 static inline NSString *RCNativeFloatingWallTime(NSDate *value)
 {
-  return [value descriptionWithCalendarFormat:@"%Y%m%dT%H%M%S" timeZone:[NSTimeZone localTimeZone] locale:nil];
+  return [value rc_descriptionWithCalendarFormat:@"%Y%m%dT%H%M%S" timeZone:[NSTimeZone localTimeZone] locale:nil];
 }
 static inline BOOL RCNativePropertyValuesEqual(NSString *entity, NSString *key, id x, id y)
 {
@@ -80,7 +81,7 @@ static inline BOOL RCNativePropertyValuesEqual(NSString *entity, NSString *key, 
   }
   return (RCNativeEmptyValue(x) && RCNativeEmptyValue(y)) || [x isEqual:y];
 }
-/* Tiger NSCalendarDate hashes can differ across timezones for the same
+/* Tiger RCCalendarDate hashes can differ across timezones for the same
    instant. Canonicalize dates before hashing unordered relationship values. */
 static inline NSSet *RCNativeUnorderedValues(NSArray *values)
 {

@@ -9,6 +9,7 @@ and `test-mac-*` commands remain supported.
 | Linux business logic | `make test-business-linux` | Native C parsing, stores, DAV mirrors/tokens, journals, conflict recovery, resource patching, local HTTP/TLS, photos, status, connection diagnostics, field/receipt policies and calendar projection |
 | macOS business integration | `make test-business-mac TEST_HOST=x4-vm` | Logging/status, shutdown, contacts/calendars Sync Services, conflict sessions, full two-way sync (contacts and calendars), plus the dedicated photo/partial-field scenarios |
 | macOS native stores (10.9+) | `make test-mac-native-stores TEST_HOST=x9-local` | AddressBook/EventKit import, edit, journal acknowledgement and owned-record cleanup; synthetic offline fixtures |
+| iOS native stores | `make test-ios-native-stores TEST_HOST=koolphone5` | Mobile launchd, iOS AddressBook/EventKit, synthetic import/edit/delete, exact receipts, restart/recovery, EXDATE and invitation preservation |
 | macOS UI | `make test-ui-mac TEST_HOST=x4-vm` | Preferences, Accessibility, validation feedback, Start/Stop and installed service interaction |
 
 Linux tests run synthetic fixtures without credentials or external servers. The
@@ -160,3 +161,20 @@ implicit-default uploads, and unchanged wire alarms during later title edits.
 Changed event fields, alarm triggers or added reminders block legacy repair.
 After repair, a newly added local reminder may upload without copying the unchanged automatic default, and a reorder between
 queue and acknowledgement must not manufacture a newer edit or another upload.
+
+## iOS device tests
+
+Build/install the rootful package with `make ios-package` and approve normal
+Contacts/Calendar access on the test phone. Unload the installed rCloud launchd
+job before `make test-ios-native-stores TEST_HOST=koolphone5`. The runner uses the
+registered app identity, runs as mobile, refuses simultaneous production/test
+jobs, and restores the installed executable on completion. A timed-out test is
+left intact for inspection; do not replace its executable while it is running.
+Fixtures use `.invalid` DAV URLs and simulated write confirmations, with no live
+network calls or account credentials. A unique synthetic Keychain item is saved,
+read, updated and removed to verify daemon credential access. Cleanup is restricted to journal-owned fixtures;
+the contact snapshot must match its pre-test value. Retain failed-run journals
+for targeted cleanup. `make analyze-ios` checks the armv7/iOS 5 path.
+
+The Mac native harness runs framework operations on a worker with a live main
+run loop, matching the daemon and allowing AddressBook privacy replies to arrive.

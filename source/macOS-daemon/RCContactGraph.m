@@ -1,3 +1,4 @@
+#import "RCPlatformDate.h"
 #import "RCRecordGraph.h"
 #import "RCAutorelease.h"
 #import "RCTwoWayNative.h"
@@ -138,7 +139,7 @@ static NSDate *RCBirthday(const char *value)
   if (value == NULL || sscanf(value, "%d-%d-%d%c", &year, &month, &day,
                               &trailing) != 3 ||
       year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return nil;
-  return [NSCalendarDate dateWithYear:year month:month day:day hour:12 minute:0
+  return [RCCalendarDate dateWithYear:year month:month day:day hour:12 minute:0
       second:0 timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
 }
 

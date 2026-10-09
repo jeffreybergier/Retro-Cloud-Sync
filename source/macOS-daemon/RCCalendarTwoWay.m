@@ -1,3 +1,4 @@
+#import "RCPlatformDate.h"
 #import "RCRecordGraph.h"
 #import "RCTwoWaySync.h"
 #import "RCAutorelease.h"
@@ -39,7 +40,7 @@ static NSString *DateValue(NSDate *date, BOOL allDay, NSTimeZone *zone)
 {
   if (![date isKindOfClass:[NSDate class]]) return nil;
   if(!allDay && !zone && RCCalendarFloatingDate(date)) zone=[NSTimeZone localTimeZone];
-  return [date descriptionWithCalendarFormat:allDay ? @"%Y%m%d" : zone ? @"%Y%m%dT%H%M%S" : @"%Y%m%dT%H%M%SZ"
+  return [date rc_descriptionWithCalendarFormat:allDay ? @"%Y%m%d" : zone ? @"%Y%m%dT%H%M%S" : @"%Y%m%dT%H%M%SZ"
       timeZone:zone ?: [NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil];
 }
 static NSString *SoundValue(id sound)

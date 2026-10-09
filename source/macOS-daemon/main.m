@@ -1,3 +1,5 @@
+#import <TargetConditionals.h>
+#import "RCPlatformDate.h"
 #import "RCSyncBackend.h"
 #import "RCStatus.h"
 #import "RCCalendarOperations.h"
@@ -14,9 +16,13 @@
 #include "RCMailProxy.h"
 #include "RCCardDAVMirror.h"
 #include "RCICloudCredentials.h"
+#if !TARGET_OS_IPHONE
 #include "RCSyncServicesBridge.h"
+#endif
 #include "RCCalDAVMirror.h"
+#if !TARGET_OS_IPHONE
 #include "RCCalendarSyncServicesBridge.h"
+#endif
 #import "RCTwoWayNative.h"
 
 #include <Security/Security.h>
@@ -32,6 +38,13 @@
 #include <fcntl.h>
 #include <errno.h>
 
+static NSString *RCResourceDirectory(NSString *dataDirectory) {
+#if TARGET_OS_IPHONE
+  (void)dataDirectory; return [[NSBundle mainBundle] bundlePath];
+#else
+  return dataDirectory;
+#endif
+}
 static NSString * const kRCCertificateName = @"cacert.pem";
 static NSString * const kRCSyncClientDescriptionName = @"SyncClient.plist";
 
@@ -174,6 +187,18 @@ static BOOL RCHasPendingWrites(RCWriteJournal *journal)
 static BOOL RCCopyPasswordForWorker(RCSyncWorker *worker, char **password,
                                     size_t *length, RCError *error)
 {
+#if TARGET_OS_IPHONE
+  /* SecItem reads do not present the Mac login-Keychain ACL dialog. */
+  if(RCCheckCancellation(error)) return NO;
+  NSDictionary *current=[NSDictionary dictionaryWithContentsOfFile:[NSString stringWithUTF8String:worker->configurationPath]];
+  id settings=[current objectForKey:@"Contacts"];
+  id username=[settings isKindOfClass:[NSDictionary class]] ? [settings objectForKey:@"Username"] : nil;
+  if(![username isKindOfClass:[NSString class]] ||
+      [username caseInsensitiveCompare:[NSString stringWithUTF8String:worker->username]]!=NSOrderedSame) {
+    RCErrorSet(error,1,"Account configuration changed; restart the daemon"); return NO;
+  }
+  return RCICloudCredentialsCopyPassword(worker->username,password,length,error);
+#else
   NSTask *task=[[[NSTask alloc] init] autorelease];
   NSPipe *pipe=[NSPipe pipe];
   NSString *directory=[[NSString stringWithUTF8String:worker->databasePath] stringByDeletingLastPathComponent];
@@ -217,6 +242,7 @@ static BOOL RCCopyPasswordForWorker(RCSyncWorker *worker, char **password,
   if(ok) { buffer[used]=0; *password=buffer; *length=used; }
   else { RCICloudCredentialsClearPassword(buffer,4097); if(!RCCheckCancellation(error)) RCErrorSet(error,1,"Saved password unavailable"); }
   return ok;
+#endif
 }
 
 static int RCReadCredentialsHelper(const char *configurationPath)
@@ -406,7 +432,7 @@ contacts_finished:
         RCStatusPhase(@"Calendars",@"Downloading");
         if (password != NULL) {
           char historyStart[17];
-          const char *today = [[[NSDate date] descriptionWithCalendarFormat:@"%Y%m%d"
+          const char *today = [[[NSDate date] rc_descriptionWithCalendarFormat:@"%Y%m%d"
               timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil] UTF8String];
           if ((worker->calendarHistoryYears == 0 ||
                RCCalDAVHistoryStart(today, worker->calendarHistoryYears, historyStart, &error)) &&
@@ -548,7 +574,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
     return NO;
   }
   databasePath = [daemonDirectory stringByAppendingPathComponent:@"Contacts.sqlite"];
-  certificatePath = [daemonDirectory stringByAppendingPathComponent:kRCCertificateName];
+  certificatePath = [RCResourceDirectory(daemonDirectory) stringByAppendingPathComponent:kRCCertificateName];
   syncClientDescriptionPath =
       [daemonDirectory stringByAppendingPathComponent:kRCSyncClientDescriptionName];
   worker->username = RCCopyCString([username UTF8String]);
@@ -563,7 +589,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
   worker->calendarDescriptionPath = RCCopyCString(
       [[daemonDirectory stringByAppendingPathComponent:@"CalendarSyncClient.plist"]
           fileSystemRepresentation]);
-  set_zone_directory([[daemonDirectory stringByAppendingPathComponent:@"zoneinfo"]
+  set_zone_directory([[RCResourceDirectory(daemonDirectory) stringByAppendingPathComponent:@"zoneinfo"]
       fileSystemRepresentation]);
   worker->interval = [interval unsignedIntValue];
   RCLogger(RCLogInfo, "Account", "Startup",
@@ -719,7 +745,7 @@ int main(int argc, char *argv[])
 {
   NSAutoreleasePool *processPool;
   NSPort *keepAlivePort;
-  NSString *daemonPath;
+
   NSString *daemonDirectory;
   NSString *certificatePath;
   NSString *configurationPath = nil;
@@ -801,6 +827,7 @@ int main(int argc, char *argv[])
     if (!ok) fprintf(stderr,"%s\n",error.message);
     [processPool release]; return ok ? 0 : 1;
   }
+#if !TARGET_OS_IPHONE
   if (argc == 4 && strcmp(argv[1], "--test-calendar-syncservices") == 0) {
     RCError error;
     RCCalendarStore *store=RCCalendarStoreOpen(argv[2],"calendar-test",&error);
@@ -848,6 +875,7 @@ int main(int argc, char *argv[])
     [processPool release];
     return status ? 0 : 1;
   }
+#endif
   if (argc == 3 && strcmp(argv[1], "--config") == 0) {
     configurationPath = [NSString stringWithUTF8String:argv[2]];
     if (configurationPath == nil) {
@@ -876,10 +904,18 @@ int main(int argc, char *argv[])
     [processPool release];
     return 1;
   }
-  daemonPath = [NSString stringWithUTF8String:argv[0]];
-  daemonDirectory = [daemonPath stringByDeletingLastPathComponent];
-  certificatePath = [daemonDirectory
+
+#if TARGET_OS_IPHONE
+  daemonDirectory = [configurationPath stringByDeletingLastPathComponent];
+#else
+  daemonDirectory = [[NSString stringWithUTF8String:argv[0]] stringByDeletingLastPathComponent];
+#endif
+  certificatePath = [RCResourceDirectory(daemonDirectory)
       stringByAppendingPathComponent:kRCCertificateName];
+#if TARGET_OS_IPHONE
+  mailProxy = NULL; /* This package imports contacts/calendars only. */
+  (void)certificatePath;
+#else
   mailProxy = RCMailProxyStart(mailConfigs, 2,
       [certificatePath fileSystemRepresentation]);
   if (mailProxy == NULL) {
@@ -888,6 +924,7 @@ int main(int argc, char *argv[])
     [processPool release];
     return 1;
   }
+#endif
   RCStatusStart(configurationPath,configuration);
   if (configuration != nil) {
     if (!RCSyncWorkerStart(&syncWorker, configuration, daemonDirectory, configurationPath)) {

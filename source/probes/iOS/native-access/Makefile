@@ -7,6 +7,9 @@
 # This probe deliberately does not request permissions or bypass TCC.
 # Observed on koolphone5 / iOS 8.4.1 (12H321): both SSH su-mobile and launchd
 # returned contacts.authorization=denied and calendars.authorization=denied.
+# Follow-up: an installed/registered rCloud.app executable launched as mobile
+# can request normal TCC prompts. After user approval, a fresh launchd process
+# opened both stores on the same phone. See the root README's iOS instructions.
 # The armv7 binary targets iOS 5.0; that runtime still needs device validation.
 SDK ?= /osxcross/modern/SDK/iPhoneOS8.4.sdk
 BIN ?= /osxcross/modern/bin

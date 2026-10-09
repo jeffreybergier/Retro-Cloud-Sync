@@ -4,6 +4,7 @@
 #import "../../../macOS-daemon/RCMacNativeBackend.h"
 #import "../../../macOS-daemon/RCTwoWayNative.h"
 #include <unistd.h>
+#include <dispatch/dispatch.h>
 static RCError error;
 static NSMutableArray *extraContacts;
 #define CHECK(x) do { RCErrorClear(&error); if(!(x)) [NSException raise:@"TestFailure" format:@"line %d: %s: %s",__LINE__,#x,error.message]; } while(0)
@@ -680,14 +681,14 @@ static void AudioAlarmTests(NSString *directory)
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
 }
-int main(int argc,char **argv)
+static int RunTests(int argc,char **argv)
 {
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init]; setbuf(stdout,NULL); int result=1;
   if(argc==2) {
     NSString *log=[[NSString stringWithUTF8String:argv[1]] stringByAppendingPathComponent:@"test.log"];
     freopen([log fileSystemRepresentation],"a",stdout); freopen([log fileSystemRepresentation],"a",stderr); setbuf(stdout,NULL);
   }
-  [NSApplication sharedApplication]; extraContacts=[NSMutableArray array];
+  extraContacts=[NSMutableArray array];
   RCContactStore *contacts=NULL; RCCalendarStore *calendars=NULL;
   @try {
     CHECK(argc==2); CHECK(!RCUsesNativeStoresForVersion(10,8)); CHECK(RCUsesNativeStoresForVersion(10,9)); CHECK(RCUsesNativeStoresForVersion(11,0)); CHECK(RCUsesNativeStores());
@@ -803,4 +804,25 @@ int main(int argc,char **argv)
   RCContactStoreClose(contacts); RCCalendarStoreClose(calendars);
   if(!result) puts("PASS: Native store offline suite; disposable contacts, events and containers removed");
   [pool release]; return result;
+}
+
+int main(int argc,char **argv)
+{
+  NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
+  [NSApplication sharedApplication];
+  /* Keep AppKit's actual event loop alive for privacy dialogs. Framework
+     operations run on a worker, as they do in the production daemon. */
+  __block int status=1;
+  dispatch_async(dispatch_get_main_queue(),^{
+    [NSApp activateIgnoringOtherApps:YES];
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT,0),^{
+      int result=RunTests(argc,argv);
+      dispatch_async(dispatch_get_main_queue(),^{
+        status=result; [NSApp stop:nil];
+        [NSApp postEvent:[NSEvent otherEventWithType:NSApplicationDefined location:NSZeroPoint
+            modifierFlags:0 timestamp:0 windowNumber:0 context:nil subtype:0 data1:0 data2:0] atStart:NO];
+      });
+    });
+  });
+  [NSApp run]; [pool drain]; return status;
 }

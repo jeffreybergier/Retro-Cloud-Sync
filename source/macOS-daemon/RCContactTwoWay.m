@@ -1,3 +1,4 @@
+#import "RCPlatformDate.h"
 #import "RCRecordGraph.h"
 #import "RCTwoWaySync.h"
 #import "RCAutorelease.h"
@@ -191,7 +192,7 @@ static BOOL PhotoEdit(RCVCardDocument *doc, id image, NSMutableArray *edits, RCE
 }
 static NSString *Birthday(id date)
 {
-  return [date isKindOfClass:[NSDate class]] ? [date descriptionWithCalendarFormat:@"%Y-%m-%d"
+  return [date isKindOfClass:[NSDate class]] ? [date rc_descriptionWithCalendarFormat:@"%Y-%m-%d"
       timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil] : nil;
 }
 static NSString *ChildValue(NSDictionary *child,int kind)

@@ -2,8 +2,8 @@
 CONFLICT_TEST_ROOT := $(BUILD_ROOT)/tests/macOS/conflicts
 CONFLICT_TEST_SOURCES := $(SOURCE_ROOT)/tests/macOS/contacts-syncservices/SessionCancellationTests.m \
  $(SOURCE_ROOT)/tests/macOS/contacts-syncservices/ConflictSessionTests.m \
-	$(DAEMON_SOURCE_ROOT)/RCSyncConflictSession.m $(DAEMON_SOURCE_ROOT)/RCContactConflictResolver.m
-CONFLICT_TEST_HEADERS := $(DAEMON_SOURCE_ROOT)/RCSyncRecordEquality.h \
+	$(DAEMON_SOURCE_ROOT)/RCSyncConflictSession.m $(DAEMON_SOURCE_ROOT)/RCContactConflictResolver.m $(DAEMON_SOURCE_ROOT)/RCPlatformDate.m
+CONFLICT_TEST_HEADERS := $(DAEMON_SOURCE_ROOT)/RCPlatformDate.h $(DAEMON_SOURCE_ROOT)/RCSyncRecordEquality.h \
 	$(DAEMON_SOURCE_ROOT)/RCSyncFieldScope.h \
 	$(DAEMON_SOURCE_ROOT)/RCSyncConflictSession.h \
 	$(DAEMON_SOURCE_ROOT)/RCContactConflictResolver.h $(wildcard $(SHARED_SOURCE_ROOT)/*.h)

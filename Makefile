@@ -178,3 +178,5 @@ analyze: validate-analyzer $(ICAL_I386_LIBRARY) $(LIBVC_I386_LIBRARY)
 	build-all analyze
 
 include $(SOURCE_ROOT)/make/mac-two-way-tests.mk
+
+include $(SOURCE_ROOT)/make/ios.mk

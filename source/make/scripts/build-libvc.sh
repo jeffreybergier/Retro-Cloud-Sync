@@ -39,6 +39,11 @@ case "$mode" in
     flags+=(-arch "$mode" -isysroot "$toolchain/SDK/MacOSX10.5.sdk"
             -mmacosx-version-min=10.4 -fno-stack-protector -D_DARWIN_C_SOURCE)
     ;;
+  ios-armv7|ios-arm64)
+    arch="${mode#ios-}"; minimum=5.0; [ "$arch" != arm64 ] || minimum=7.0
+    compiler=/usr/bin/clang; archiver="$toolchain/bin/ar"; ranlib="$toolchain/bin/ranlib"
+    flags+=(-target "$arch-apple-ios$minimum" -isysroot "$toolchain/SDK/iPhoneOS8.4.sdk" -D_DARWIN_C_SOURCE)
+    ;;
   x86_64|arm64)
     compiler=$(compgen -G "$toolchain/bin/$mode-apple-darwin*-clang" | head -1)
     minimum=10.9; [ "$mode" != arm64 ] || minimum=11.0
