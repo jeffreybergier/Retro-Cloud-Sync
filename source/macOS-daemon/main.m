@@ -56,6 +56,9 @@ static const char kRCSMTPServer[] = "smtp.mail.me.com";
 static const unsigned short kRCSMTPServerPort = 587;
 
 static volatile sig_atomic_t gShouldKeepRunning = 1;
+#if TARGET_OS_IPHONE
+static volatile sig_atomic_t gTerminationRequested = 0;
+#endif
 
 typedef struct {
   pthread_t thread;
@@ -652,6 +655,9 @@ static void RCSyncWorkerStop(RCSyncWorker *worker)
 static void HandleTerminationSignal(int signalNumber)
 {
   (void)signalNumber;
+#if TARGET_OS_IPHONE
+  gTerminationRequested = 1;
+#endif
   RCStopRequested = 1;
   gShouldKeepRunning = 0;
 }
@@ -912,19 +918,19 @@ int main(int argc, char *argv[])
 #endif
   certificatePath = [RCResourceDirectory(daemonDirectory)
       stringByAppendingPathComponent:kRCCertificateName];
+  BOOL mailEnabled=YES;
 #if TARGET_OS_IPHONE
-  mailProxy = NULL; /* This package imports contacts/calendars only. */
-  (void)certificatePath;
-#else
-  mailProxy = RCMailProxyStart(mailConfigs, 2,
-      [certificatePath fileSystemRepresentation]);
-  if (mailProxy == NULL) {
+  /* Existing iOS configurations do not silently start new listeners. */
+  mailEnabled=[[[configuration objectForKey:@"MailProxy"] objectForKey:@"Enabled"] boolValue];
+#endif
+  mailProxy = mailEnabled ? RCMailProxyStart(mailConfigs, 2,
+      [certificatePath fileSystemRepresentation]) : NULL;
+  if (mailEnabled && mailProxy == NULL) {
     curl_global_cleanup();
     [configuration release];
     [processPool release];
     return 1;
   }
-#endif
   RCStatusStart(configurationPath,configuration);
   if (configuration != nil) {
     if (!RCSyncWorkerStart(&syncWorker, configuration, daemonDirectory, configurationPath)) {
@@ -938,6 +944,9 @@ int main(int argc, char *argv[])
                               forMode:NSDefaultRunLoopMode];
   RCLogger(RCLogInfo, "Daemon", "Startup", @"Ready");
 
+#if TARGET_OS_IPHONE
+  BOOL reloadConfiguration=NO;
+#endif
   while (gShouldKeepRunning) {
     NSAutoreleasePool *iterationPool;
     NSDate *wakeDate;
@@ -948,7 +957,11 @@ int main(int argc, char *argv[])
 #if TARGET_OS_IPHONE
     /* Settings are replaced atomically by UIKit; finish durable work before reload. */
     NSDictionary *latest=[NSDictionary dictionaryWithContentsOfFile:configurationPath];
-    if(latest && ![latest isEqual:configuration]) HandleTerminationSignal(SIGTERM);
+    if(latest && ![latest isEqual:configuration] && !gTerminationRequested) {
+      reloadConfiguration=YES;
+      RCStopRequested=1;
+      gShouldKeepRunning=0;
+    }
 #endif
     [iterationPool release];
   }
@@ -968,5 +981,9 @@ int main(int argc, char *argv[])
   [configuration release];
   [processPool release];
 
+#if TARGET_OS_IPHONE
+  /* launchd restarts a settings reload, but not an intentional SIGTERM stop. */
+  if(reloadConfiguration && !gTerminationRequested) return 75;
+#endif
   return 0;
 }

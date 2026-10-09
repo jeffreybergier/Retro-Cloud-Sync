@@ -1,12 +1,39 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>Label</key><string>com.altivecintelligence.rcloudd</string>
-<key>ProgramArguments</key><array><string>/Applications/rCloud.app/rCloud</string><string>--daemon</string></array>
-<key>UserName</key><string>mobile</string><key>GroupName</key><string>mobile</string>
-<key>EnvironmentVariables</key><dict><key>HOME</key><string>/var/mobile</string></dict>
-<key>RunAtLoad</key><true/><key>StartInterval</key><integer>300</integer>
-<key>ThrottleInterval</key><integer>30</integer>
-<key>StandardOutPath</key><string>/var/mobile/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log</string>
-<key>StandardErrorPath</key><string>/var/mobile/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log</string>
-</dict></plist>
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.altivecintelligence.rcloudd</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Applications/rCloud.app/rCloud</string>
+		<string>--daemon</string>
+	</array>
+	<key>UserName</key>
+	<string>mobile</string>
+	<key>GroupName</key>
+	<string>mobile</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>/var/mobile</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>StandardOutPath</key>
+	<string>/var/mobile/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/mobile/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log</string>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>WatchPaths</key>
+	<array>
+		<string>/var/mobile/Library/Application Support/rCloud/Config.plist</string>
+	</array>
+</dict>
+</plist>

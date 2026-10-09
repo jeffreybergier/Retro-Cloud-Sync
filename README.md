@@ -1,6 +1,6 @@
 # Retro-Cloud-Sync
 
-Legacy Mac OS X mail proxy and contacts/calendar synchronization, with a jailbroken iOS contacts/calendar daemon.
+Legacy Mac OS X mail proxy and contacts/calendar synchronization, with a jailbroken iOS mail proxy and contacts/calendar daemon.
 
 The app and daemon are quad-fat binaries: PPC and i386 use the 10.5 SDK
 (minimum OS 10.4); x86_64 and arm64 use the 11.3 SDK (minimum OS 10.9
@@ -82,7 +82,7 @@ than guessing which alarm owns retained attachment data.
 armv7 targets iOS 5.0 and arm64 targets iOS 7.0. Native integration has been tested
 on `koolphone5` running iOS 8.4.1; iOS 5 and arm64 device execution remain untested.
 This package supports rootful installation. It imports contacts and calendars;
-the Mac mail proxy is not started on iOS.
+the mail proxy can be enabled independently in the iOS app.
 
 Install with `dpkg -i rCloud-rootful.deb`. Registration via `uicache` is required:
 launchd runs `/Applications/rCloud.app/rCloud --daemon` as **mobile**, preserving
@@ -99,12 +99,29 @@ password. Choose the Contacts and Calendars modes, interval, and history, then
 tap **Save**. A blank password keeps the existing Keychain password for that
 account. New GUI setups start with both services disabled; two-way sync is an
 explicit choice. Set both services to Disabled to stop syncing. Back discards
-unsaved settings. Saving safely stops the current daemon; launchd picks up the
-new configuration within five minutes after shutdown. Passwords never enter
+unsaved settings. Saving safely stops the current daemon; launchd restarts it promptly with the
+new configuration. First setup triggers launchd through a configuration-file watch.
+A five-second throttle prevents rapid restart loops; active work must finish
+stopping safely before the replacement daemon starts. Passwords never enter
 the configuration or log. The status and log screens have Refresh buttons.
 All screens use standard UIKit table controllers and navigation. Portrait launch
 images cover the original iPhone, iPhone 5, iPhone 6/6 Plus, and iPad, including
 `Default-568h@2x.png` to avoid the iPhone 4 compatibility viewport.
+
+Open **rCloud → Mail Proxy**, enable the proxy, and tap **Save** to use Mail
+through localhost. Existing installations leave the proxy disabled until enabled.
+A mail-only setup does not require a Contacts/Calendar account or credentials in
+rCloud. It preserves any existing sync configuration.
+
+In the iPhone's manually configured Mail account, use **127.0.0.1**, incoming
+port **1143**, outgoing port **1587**, and **SSL off** for both local connections.
+Use Password authentication and enter your iCloud mail credentials/app-specific
+password in Mail itself. The proxy listens only on IPv4 loopback and verifies
+upstream TLS certificates and hostnames: IMAP TLS to `imap.mail.me.com:993`,
+SMTP STARTTLS to `smtp.mail.me.com:587`. Local and upstream ports/hosts can be
+changed in the standard table-based Mail Proxy screen. Port conflicts or TLS
+failures appear in the daemon log. Mail account migration is manual; installation
+does not change Mail accounts or remove another proxy/tweak.
 
 Command-line setup remains available via `/usr/share/rcloud/Config.example.plist`
 and `rCloud --set-password USERNAME` as mobile, with the password supplied on

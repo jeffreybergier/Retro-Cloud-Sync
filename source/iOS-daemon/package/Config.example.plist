@@ -39,6 +39,8 @@
 			<key>RemotePort</key>
 			<integer>587</integer>
 		</dict>
+		<key>Enabled</key>
+		<false/>
 	</dict>
 </dict>
 </plist>

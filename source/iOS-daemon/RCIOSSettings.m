@@ -100,7 +100,7 @@ static BOOL Save(NSDictionary *config) {
   (void)table;
   if(section==0) return @"Use an app-specific password. Leave the password blank to keep the saved password for this account. Passwords are stored in Keychain.";
   if(section==1) return @"Download only copies iCloud data to this device. Two-way also uploads supported local changes. Choose Disabled for both services to stop syncing. Save to apply your changes.";
-  return @"All future events are included. Changes take effect within five minutes after current work stops safely. Sync continues when this app is closed.";
+  return @"All future events are included. Save to apply your changes. Sync continues when this app is closed.";
 }
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
   (void)table; UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil] autorelease];
@@ -146,10 +146,112 @@ static BOOL Save(NSDictionary *config) {
   if(!Save(config_)) { Message(@"Cannot save",@"The configuration could not be saved. Any password already saved remains in Keychain."); return; }
   if(enabled) RCIOSRequestAccess(![[settings_ objectForKey:@"ContactsSyncMode"] isEqual:@"Disabled"],
       ![[settings_ objectForKey:@"CalendarsSyncMode"] isEqual:@"Disabled"]);
-  Message(@"Saved",@"Your settings will take effect within five minutes after current work stops safely.");
+  Message(@"Saved",@"Your settings have been saved.");
   [[self navigationController] popViewControllerAnimated:YES];
 }
 - (void)dealloc { [config_ release]; [settings_ release]; [username_ release]; [password_ release]; [super dealloc]; }
+@end
+
+@interface RCMailTable : UITableViewController <UITextFieldDelegate> {
+  UISwitch *enabled_; NSArray *fields_; NSMutableDictionary *config_; BOOL unreadable_;
+}
+@end
+@implementation RCMailTable
+- (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
+- (void)viewDidLoad {
+  [super viewDidLoad]; [self setTitle:@"Mail Proxy"];
+  BOOL exists=[[NSFileManager defaultManager] fileExistsAtPath:ConfigPath()];
+  NSDictionary *loaded=[NSDictionary dictionaryWithContentsOfFile:ConfigPath()];
+  unreadable_=exists && !loaded;
+  if(!exists) {
+    loaded=[NSDictionary dictionaryWithContentsOfFile:[[NSBundle mainBundle] pathForResource:@"Config.example" ofType:@"plist"]];
+  }
+  config_=[loaded mutableCopy];
+  if(!exists) {
+    NSMutableDictionary *contacts=[[[config_ objectForKey:@"Contacts"] mutableCopy] autorelease];
+    [contacts setObject:@"" forKey:@"Username"];
+    [contacts setObject:@"Disabled" forKey:@"ContactsSyncMode"];
+    [contacts setObject:@"Disabled" forKey:@"CalendarsSyncMode"];
+    if(contacts) [config_ setObject:contacts forKey:@"Contacts"];
+  }
+  id mail=[config_ objectForKey:@"MailProxy"];
+  if(![mail isKindOfClass:[NSDictionary class]]) { unreadable_=YES; mail=nil; }
+  enabled_=[[UISwitch alloc] init]; [enabled_ setOn:[[mail objectForKey:@"Enabled"] boolValue]];
+  NSMutableArray *fields=[NSMutableArray array];
+  for(NSString *service in @[@"IMAP",@"SMTP"]) {
+    id values=[mail objectForKey:service];
+    if(![values isKindOfClass:[NSDictionary class]]) { unreadable_=YES; values=nil; }
+    for(NSString *key in @[@"LocalPort",@"RemoteHost",@"RemotePort"]) {
+      UITextField *field=[[[UITextField alloc] initWithFrame:CGRectMake(0,0,180,32)] autorelease];
+      [field setText:[[values objectForKey:key] description]];
+      [field setContentVerticalAlignment:UIControlContentVerticalAlignmentCenter];
+      [field setAutocorrectionType:UITextAutocorrectionTypeNo];
+      [field setAutocapitalizationType:UITextAutocapitalizationTypeNone];
+      [field setKeyboardType:[key isEqual:@"RemoteHost"] ? UIKeyboardTypeURL : UIKeyboardTypeNumberPad];
+      [field setReturnKeyType:UIReturnKeyDone]; [field setDelegate:self];
+      [fields addObject:field];
+    }
+  }
+  fields_=[fields copy];
+  [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave target:self action:@selector(save)] autorelease]];
+}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 3; }
+- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section { (void)table; return section ? 3 : 1; }
+- (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
+  (void)table; return [@[@"Proxy",@"Incoming (IMAP)",@"Outgoing (SMTP)"] objectAtIndex:section];
+}
+- (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
+  (void)table;
+  if(section==0) return @"Mail works independently of Contacts and Calendars. Save to apply changes.";
+  if(section==1) return @"In Mail account settings, use 127.0.0.1 and the local IMAP port (1143 by default), with SSL off. Enter your iCloud mail username and app-specific password in Mail.";
+  return @"For outgoing mail, use 127.0.0.1 and the local SMTP port (1587 by default), SSL off, and Password authentication. The proxy verifies TLS to the upstream servers. Use IMAP TLS port 993 and SMTP STARTTLS port 587 upstream. Local ports must be different and between 1024 and 65535.";
+}
+- (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
+  (void)table;
+  UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil] autorelease];
+  [[cell textLabel] setText:[path section] ? [@[@"Local port",@"Server",@"Server port"] objectAtIndex:[path row]] : @"Enabled"];
+  [cell setAccessoryView:[path section] ? [fields_ objectAtIndex:([path section]-1)*3+[path row]] : enabled_];
+  [cell setSelectionStyle:UITableViewCellSelectionStyleNone]; return cell;
+}
+- (BOOL)textFieldShouldReturn:(UITextField *)field { [field resignFirstResponder]; return YES; }
+- (void)save {
+  [[self view] endEditing:YES];
+  if(unreadable_ || !config_) { Message(@"Cannot save",@"The existing configuration could not be read. It has been left unchanged."); return; }
+  NSMutableDictionary *mail=[NSMutableDictionary dictionary];
+  [mail setObject:[NSNumber numberWithBool:[enabled_ isOn]] forKey:@"Enabled"];
+  NSInteger firstPort=0;
+  for(NSUInteger service=0;service<2;service++) {
+    NSMutableDictionary *values=[NSMutableDictionary dictionary];
+    for(NSUInteger row=0;row<3;row++) {
+      NSString *value=[[[fields_ objectAtIndex:service*3+row] text] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+      NSString *key=[@[@"LocalPort",@"RemoteHost",@"RemotePort"] objectAtIndex:row];
+      if(row==1) {
+        NSCharacterSet *allowed=[NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-"];
+        if(![value length] || [value rangeOfCharacterFromSet:[allowed invertedSet]].location!=NSNotFound) {
+          Message(@"Invalid server",@"Enter a server hostname without a scheme, port, or path."); return;
+        }
+        [values setObject:value forKey:key];
+      } else {
+        NSInteger port=[value integerValue];
+        if(![value length] || [value rangeOfCharacterFromSet:[[NSCharacterSet characterSetWithCharactersInString:@"0123456789"] invertedSet]].location!=NSNotFound || port<(row==0 ? 1024 : 1) || port>65535) {
+          Message(@"Invalid port",@"Local ports must be 1024–65535. Server ports must be 1–65535."); return;
+        }
+        if(row==0) {
+          if(service==0) firstPort=port;
+          else if(firstPort==port) { Message(@"Invalid ports",@"IMAP and SMTP need different local ports."); return; }
+        }
+        [values setObject:[NSNumber numberWithInteger:port] forKey:key];
+      }
+    }
+    [mail setObject:values forKey:service ? @"SMTP" : @"IMAP"];
+  }
+  [config_ setObject:mail forKey:@"MailProxy"];
+  [config_ setObject:[NSDate date] forKey:@"SettingsUpdatedAt"];
+  if(!Save(config_)) { Message(@"Cannot save",@"The configuration could not be saved."); return; }
+  Message(@"Saved",@"Mail proxy settings have been saved.");
+  [[self navigationController] popViewControllerAnimated:YES];
+}
+- (void)dealloc { [enabled_ release]; [fields_ release]; [config_ release]; [super dealloc]; }
 @end
 
 @interface RCLogTable : UITableViewController { NSArray *lines_; }
@@ -203,7 +305,7 @@ static NSString *StatusDate(id value, NSString *fallback) {
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self refresh]; }
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 4; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
-  (void)table; return section==0 ? 2 : (section==3 ? 1 : 5);
+  (void)table; return section==0 ? 3 : (section==3 ? 1 : 5);
 }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
   (void)table; return [@[@"Settings",@"Contacts",@"Calendars",@"Daemon"] objectAtIndex:section];
@@ -215,7 +317,7 @@ static NSString *StatusDate(id value, NSString *fallback) {
   (void)table;
   UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:[path section] ? UITableViewCellStyleValue1 : UITableViewCellStyleDefault reuseIdentifier:nil] autorelease];
   if(![path section]) {
-    [[cell textLabel] setText:[path row] ? @"Log" : @"Account & Sync"];
+    [[cell textLabel] setText:[@[@"Account & Sync",@"Mail Proxy",@"Log"] objectAtIndex:[path row]]];
     [cell setAccessoryType:UITableViewCellAccessoryDisclosureIndicator];
   } else {
     NSString *label, *value;
@@ -243,7 +345,7 @@ static NSString *StatusDate(id value, NSString *fallback) {
 - (void)dealloc { [status_ release]; [super dealloc]; }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
   [table deselectRowAtIndexPath:path animated:YES]; if([path section]) return;
-  UITableViewController *screen=[path row] ? [[RCLogTable alloc] initWithStyle:UITableViewStylePlain] : [[RCAccountTable alloc] init];
+  UITableViewController *screen=[path row]==0 ? [[RCAccountTable alloc] init] : ([path row]==1 ? [[RCMailTable alloc] init] : [[RCLogTable alloc] initWithStyle:UITableViewStylePlain]);
   [[self navigationController] pushViewController:screen animated:YES]; [screen release];
 }
 @end
@@ -300,6 +402,14 @@ void RCIOSRunUITests(UIWindow *window) {
     NSCAssert(![[password text] length], @"Password field cleared");
     [checks addObject:@"Save action: private config, Keychain password, secure field cleared"];
     [form release];
+    RCMailTable *mail=[[RCMailTable alloc] init]; [mail view];
+    [(UISwitch *)[mail valueForKey:@"enabled_"] setOn:YES];
+    [mail save];
+    NSDictionary *mailConfig=[NSDictionary dictionaryWithContentsOfFile:ConfigPath()];
+    NSCAssert([[[mailConfig objectForKey:@"MailProxy"] objectForKey:@"Enabled"] boolValue], @"Mail enabled setting saved");
+    NSCAssert([[mailConfig objectForKey:@"Contacts"] isEqual:[saved objectForKey:@"Contacts"]], @"Mail settings preserve sync account");
+    [checks addObject:@"Mail settings save independently and preserve sync configuration"];
+    [mail release];
     RCLogTable *logs=[[RCLogTable alloc] initWithStyle:UITableViewStylePlain]; [logs view]; [logs refresh];
     NSCAssert([logs tableView:[logs tableView] numberOfRowsInSection:0]>0,@"Log loaded"); [logs release];
     [checks addObject:@"Bounded log screen"];

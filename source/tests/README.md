@@ -198,3 +198,33 @@ isolated under `/var/mobile/Library/Caches/RetroCloudUITests`; it never enables 
 sync service or configures the production daemon. It removes the synthetic
 password and configuration and retains `result.plist`, `status.png` and
 `account.png` in that directory. The test build is not shipped in the package.
+
+### iOS mail proxy network check
+
+The UIKit smoke test also saves the Mail Proxy switch/settings to its isolated
+configuration and verifies that the sync account remains unchanged. No daemon
+uses that test configuration.
+
+For an authorized phone, run a separate mobile launchd test job with the installed
+rCloud executable and `--config` pointing into a private cache directory. Use the
+package example configuration with both sync modes Disabled, an empty username,
+MailProxy.Enabled true, and local IMAP/SMTP ports 11143/11587. Keep production
+ports and Mail accounts untouched. Then run:
+
+```
+python3 source/tests/iOS/mail-proxy/check-tunnel.py koolphone5
+```
+
+This opens SSH loopback forwards and checks IMAP CAPABILITY/LOGOUT and SMTP
+EHLO/QUIT against the configured upstream servers. It requires network access,
+uses no credentials, and does not submit mail. Passing verifies transport and
+protocol relay, not authenticated send/receive or Notes synchronization. Send
+SIGTERM to the test job, wait for its clean exit, and unload it afterward.
+
+The iOS launchd job watches Config.plist for first setup and uses
+KeepAlive.SuccessfulExit=false. A configuration reload finishes normal shutdown
+and returns 75 to request a restart; explicit SIGTERM/SIGINT returns 0. Test both
+first-file creation and atomic replacement with a synthetic launchd job, and
+verify an explicit SIGTERM does not respawn it. The five-second throttle bounds
+rapid retries. Keep this distinction intact so package hooks can stop the daemon
+without a replacement racing the upgrade.
