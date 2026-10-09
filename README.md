@@ -97,7 +97,9 @@ service, never exposing an empty store to deletion logic.
 Open **rCloud → Sync** to enter your Apple Account and app-specific
 password. Choose the Contacts and Calendars modes, interval, and history, then
 tap **Save**. A blank password keeps the existing Keychain password for that
-account. New GUI setups start with both services disabled; two-way sync is an
+account. The password field shows “Saved in Keychain” when that account has a
+saved credential. With no configured account, a single saved rCloud account is
+prefilled from Keychain metadata. New GUI setups start with both services disabled; two-way sync is an
 explicit choice. Set both services to Disabled to stop syncing. Use Save to apply changes. Saving safely stops the current daemon; launchd restarts it promptly with the
 new configuration. First setup triggers launchd through a configuration-file watch.
 A five-second throttle prevents rapid restart loops; active work must finish

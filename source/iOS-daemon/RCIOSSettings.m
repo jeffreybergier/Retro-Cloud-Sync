@@ -1,6 +1,7 @@
 #import "RCIOSSettings.h"
 #import <AltivecCocoa/AIFontAwesome.h>
 #import "RCIOSAccess.h"
+#import <Security/Security.h>
 #include "RCICloudCredentials.h"
 #include <sys/stat.h>
 #include <errno.h>
@@ -60,6 +61,25 @@ static BOOL Save(NSDictionary *config) {
 - (void)dealloc { [settings_ release]; [key_ release]; [values_ release]; [labels_ release]; [help_ release]; [super dealloc]; }
 @end
 
+/* Account discovery reads attributes only, never the saved password. Do not
+   guess which account to use if several credentials have been retained. */
+static NSString *SingleSavedAccount(void) {
+  NSDictionary *query=@{(id)kSecClass:(id)kSecClassGenericPassword,
+      (id)kSecAttrService:@"com.altivecintelligence.rcloud.icloud",
+      (id)kSecAttrAccessGroup:@"com.altivecintelligence.rcloud",
+      (id)kSecReturnAttributes:@YES, (id)kSecMatchLimit:(id)kSecMatchLimitAll};
+  CFTypeRef result=NULL;
+  OSStatus status=SecItemCopyMatching((CFDictionaryRef)query,&result);
+  NSString *account=nil;
+  if(status==errSecSuccess && result && CFGetTypeID(result)==CFArrayGetTypeID() && [(NSArray *)result count]==1) {
+    id attributes=[(NSArray *)result objectAtIndex:0];
+    id name=[attributes isKindOfClass:[NSDictionary class]] ? [attributes objectForKey:(id)kSecAttrAccount] : nil;
+    if([name isKindOfClass:[NSString class]] && [name length]) account=[[name copy] autorelease];
+  }
+  if(result) CFRelease(result);
+  return account;
+}
+
 @interface RCAccountTable : UITableViewController <UITextFieldDelegate> {
   NSMutableDictionary *config_; NSMutableDictionary *settings_; UITextField *username_; UITextField *password_; BOOL unreadable_;
 }
@@ -88,10 +108,31 @@ static BOOL Save(NSDictionary *config) {
     [field setContentVerticalAlignment:UIControlContentVerticalAlignmentCenter]; [field setDelegate:self]; [field setReturnKeyType:UIReturnKeyDone];
   }
   [username_ setKeyboardType:UIKeyboardTypeEmailAddress]; [username_ setPlaceholder:@"Apple ID"]; [username_ setText:[settings_ objectForKey:@"Username"]];
-  [password_ setSecureTextEntry:YES]; [password_ setPlaceholder:@"Password"];
+  [password_ setSecureTextEntry:YES];
+  [username_ addTarget:self action:@selector(updateSavedPassword) forControlEvents:UIControlEventEditingChanged];
+  if(!unreadable_ && ![[username_ text] length]) {
+    NSString *account=SingleSavedAccount();
+    if(account) [username_ setText:account];
+  }
+  [self updateSavedPassword];
   [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave target:self action:@selector(save)] autorelease]];
 }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [[self tableView] reloadData]; }
+- (void)updateSavedPassword {
+  NSString *username=[[username_ text] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+  char *saved=NULL; RCError error;
+  BOOL found=[username length] && RCICloudCredentialsCopyUsername([username UTF8String],&saved,&error);
+  free(saved);
+  [password_ setPlaceholder:found ? @"Saved in Keychain" : @"Password"];
+}
+- (void)viewWillAppear:(BOOL)animated {
+  [super viewWillAppear:animated];
+  if(!unreadable_ && ![[username_ text] length]) {
+    NSString *account=SingleSavedAccount();
+    if(account) [username_ setText:account];
+  }
+  [self updateSavedPassword];
+  [[self tableView] reloadData];
+}
 - (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; [[self view] endEditing:YES]; }
 
 - (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 4; }
@@ -156,6 +197,7 @@ static BOOL Save(NSDictionary *config) {
   if(!Save(config_)) { Message(@"Cannot save",@"The configuration could not be saved. Any password already saved remains in Keychain."); return; }
   if(enabled) RCIOSRequestAccess(![[settings_ objectForKey:@"ContactsSyncMode"] isEqual:@"Disabled"],
       ![[settings_ objectForKey:@"CalendarsSyncMode"] isEqual:@"Disabled"]);
+  [self updateSavedPassword];
   Message(@"Saved",@"Your settings have been saved.");
   [[self navigationController] popViewControllerAnimated:YES];
 }
@@ -435,6 +477,11 @@ void RCIOSRunUITests(UIWindow *window) {
     BOOL matches=length==strlen("synthetic-ui-password") && !memcmp(secret,"synthetic-ui-password",length);
     RCICloudCredentialsClearPassword(secret,length); NSCAssert(matches, @"Saved secret");
     NSCAssert(![[password text] length], @"Password field cleared");
+    NSCAssert([[password placeholder] isEqual:@"Saved in Keychain"], @"Saved password status is visible without reading it");
+    RCAccountTable *reopened=[[RCAccountTable alloc] init]; [reopened view];
+    NSCAssert([[(UITextField *)[reopened valueForKey:@"username_"] text] isEqual:account], @"Reopened saved account");
+    NSCAssert([[(UITextField *)[reopened valueForKey:@"password_"] placeholder] isEqual:@"Saved in Keychain"], @"Reopened saved password status");
+    [reopened release];
     [checks addObject:@"Save action: private config, Keychain password, secure field cleared"];
     [form release];
     RCMailTable *mail=[[RCMailTable alloc] init]; [mail view];
