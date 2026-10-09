@@ -945,6 +945,11 @@ int main(int argc, char *argv[])
     iterationPool = [[NSAutoreleasePool alloc] init];
     wakeDate = [NSDate dateWithTimeIntervalSinceNow:1.0];
     [[NSRunLoop currentRunLoop] runUntilDate:wakeDate];
+#if TARGET_OS_IPHONE
+    /* Settings are replaced atomically by UIKit; finish durable work before reload. */
+    NSDictionary *latest=[NSDictionary dictionaryWithContentsOfFile:configurationPath];
+    if(latest && ![latest isEqual:configuration]) HandleTerminationSignal(SIGTERM);
+#endif
     [iterationPool release];
   }
 

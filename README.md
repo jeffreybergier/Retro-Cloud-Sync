@@ -94,22 +94,21 @@ iOS 5 uses the older AddressBook initializer and Calendar APIs; iOS 6+ privacy
 APIs are weak-linked/runtime-guarded. Permission denial stops the affected
 service, never exposing an empty store to deletion logic.
 
-The small rCloud app requests access; account setup is currently manual:
+Open **rCloud → Account & Sync** to enter your Apple Account and app-specific
+password. Choose the Contacts and Calendars modes, interval, and history, then
+tap **Save**. A blank password keeps the existing Keychain password for that
+account. New GUI setups start with both services disabled; two-way sync is an
+explicit choice. Set both services to Disabled to stop syncing. Back discards
+unsaved settings. Saving safely stops the current daemon; launchd picks up the
+new configuration within five minutes after shutdown. Passwords never enter
+the configuration or log. The status and log screens have Refresh buttons.
+All screens use standard UIKit table controllers and navigation. Portrait launch
+images cover the original iPhone, iPhone 5, iPhone 6/6 Plus, and iPad, including
+`Default-568h@2x.png` to avoid the iPhone 4 compatibility viewport.
 
-1. Copy `/usr/share/rcloud/Config.example.plist` to
-   `/var/mobile/Library/Application Support/rCloud/Config.plist` and set the
-   account's `Username`. Keep that file owned by mobile and mode 0600.
-2. Save an app-specific password in the mobile Keychain. Run the command below
-   from a **mobile** shell using an interactive Bash password prompt. The
-   password travels through stdin, never command arguments or the config file.
-3. Load/start `com.altivecintelligence.rcloudd` with launchctl, or wait for its
-   five-minute launch interval. Approve the normal system privacy prompts.
-
-```bash
-read -r -s -p 'App-specific password: ' rcloud_password; printf '\n'
-printf '%s' "$rcloud_password" | /Applications/rCloud.app/rCloud --set-password 'your-account@example.com'
-unset rcloud_password
-```
+Command-line setup remains available via `/usr/share/rcloud/Config.example.plist`
+and `rCloud --set-password USERNAME` as mobile, with the password supplied on
+stdin. The GUI and daemon share `/var/mobile/Library/Application Support/rCloud/Config.plist`.
 
 Both services default to `OneWay` in the example; each independently accepts
 `Disabled`, `OneWay`, or explicit `TwoWay`. No account is configured during

@@ -178,3 +178,23 @@ for targeted cleanup. `make analyze-ios` checks the armv7/iOS 5 path.
 
 The Mac native harness runs framework operations on a worker with a live main
 run loop, matching the daemon and allowing AddressBook privacy replies to arrive.
+
+### iOS UIKit smoke test
+
+`make ios-ui-tests` builds a test-only rCloud executable. On an authorized iPhone 5,
+unload the production launchd job, back up its installed executable, copy the test
+executable from `build/iOS-ui-tests/rCloud.app/rCloud` to a new filename in the
+installed bundle, then rename it to `rCloud` and launch through SpringBoard.
+Always replace signed executables using a new inode to avoid stale code-signing
+cache entries. The installed bundle must include the
+release launch images, Info.plist and Config.example.plist. Restore the release
+executable and reload the production job after the app exits.
+
+The smoke test runs on the UIKit main thread, traverses all options screens,
+checks the 568-point window, uses the actual Save action with synthetic Keychain
+credentials, checks mode-0600 configuration persistence and opens the bounded log
+viewer. Navigation assertions wait for UIKit transitions. Its configuration is
+isolated under `/var/mobile/Library/Caches/RetroCloudUITests`; it never enables a
+sync service or configures the production daemon. It removes the synthetic
+password and configuration and retains `result.plist`, `status.png` and
+`account.png` in that directory. The test build is not shipped in the package.

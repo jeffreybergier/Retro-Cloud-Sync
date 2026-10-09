@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import "RCIOSAccess.h"
+#import "RCIOSSettings.h"
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
@@ -15,12 +16,18 @@ int RCCloudDaemonMain(int argc,char **argv);
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
   (void)application; (void)options;
   window_=[[UIWindow alloc] initWithFrame:[[UIScreen mainScreen] bounds]];
-  UIViewController *view=[[[UIViewController alloc] init] autorelease];
-  UILabel *label=[[[UILabel alloc] initWithFrame:CGRectInset([[UIScreen mainScreen] bounds],20,60)] autorelease];
-  [label setText:@"rCloud\nContacts and Calendar sync"]; [label setNumberOfLines:0];
-  [[view view] addSubview:label]; [window_ setRootViewController:view]; [window_ makeKeyAndVisible];
-  RCIOSPromptForAccess(); return YES;
+  RCIOSSettings *settings=[[RCIOSSettings alloc] init];
+  UINavigationController *navigation=[[UINavigationController alloc] initWithRootViewController:settings];
+  [settings release]; [window_ setRootViewController:navigation]; [navigation release];
+  [window_ makeKeyAndVisible];
+#ifdef RCIOS_UI_TESTS
+  [self performSelector:@selector(runUITests) withObject:nil afterDelay:1];
+#endif
+  return YES;
 }
+#ifdef RCIOS_UI_TESTS
+- (void)runUITests { extern void RCIOSRunUITests(UIWindow *); RCIOSRunUITests(window_); }
+#endif
 - (void)dealloc { [window_ release]; [super dealloc]; }
 @end
 int main(int argc,char **argv) {
