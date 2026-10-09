@@ -184,28 +184,63 @@ static BOOL Save(NSDictionary *config) {
 - (void)dealloc { [lines_ release]; [super dealloc]; }
 @end
 
+static NSString *StatusDate(id value, NSString *fallback) {
+  if(![value isKindOfClass:[NSDate class]]) return fallback;
+  NSDateFormatter *formatter=[[[NSDateFormatter alloc] init] autorelease];
+  [formatter setDateStyle:NSDateFormatterShortStyle];
+  [formatter setTimeStyle:NSDateFormatterShortStyle];
+  return [formatter stringFromDate:value];
+}
+
 @implementation RCIOSSettings
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad { [super viewDidLoad]; [self setTitle:@"rCloud"]; [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(refresh)] autorelease]]; }
-- (void)refresh { [[self tableView] reloadData]; }
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self refresh]; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 2; }
-- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section { (void)table; return section ? 3 : 2; }
-- (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section { (void)table; return section ? @"Status" : @"Settings"; }
-- (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section { (void)table; return section ? @"Status shows the daemon’s last saved report. Tap Refresh to update. Sync runs in the background." : nil; }
-- (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
-  (void)table; UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:nil] autorelease];
-  if(![path section]) { [[cell textLabel] setText:[path row] ? @"Log" : @"Account & Sync"]; [cell setAccessoryType:UITableViewCellAccessoryDisclosureIndicator]; }
-  else {
-    NSDictionary *status=[NSDictionary dictionaryWithContentsOfFile:[Directory stringByAppendingPathComponent:@"Status.plist"]];
-    NSString *name=[@[@"Contacts",@"Calendars",@"Last report"] objectAtIndex:[path row]]; [[cell textLabel] setText:name];
-    if([path row]==2) [[cell detailTextLabel] setText:[[status objectForKey:@"UpdatedAt"] description] ?: @"No report yet"];
-    else { NSDictionary *service=[status objectForKey:name]; NSString *phase=[service objectForKey:@"Phase"] ?: @"Not started";
-      [[cell detailTextLabel] setText:[NSString stringWithFormat:@"%@ • Last success: %@%@",phase,[[service objectForKey:@"LastSuccess"] description] ?: @"Never",[service objectForKey:@"ErrorCode"] ? [NSString stringWithFormat:@" • %@",[service objectForKey:@"ErrorCode"]] : @""]]; }
-    [[cell detailTextLabel] setNumberOfLines:0]; [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
-  } return cell;
+- (void)refresh {
+  [status_ release];
+  status_=[[NSDictionary dictionaryWithContentsOfFile:[Directory stringByAppendingPathComponent:@"Status.plist"]] retain];
+  [[self tableView] reloadData];
 }
-- (CGFloat)tableView:(UITableView *)table heightForRowAtIndexPath:(NSIndexPath *)path { (void)table; return [path section] ? 88 : 44; }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; [self refresh]; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 4; }
+- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section {
+  (void)table; return section==0 ? 2 : (section==3 ? 1 : 5);
+}
+- (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
+  (void)table; return [@[@"Settings",@"Contacts",@"Calendars",@"Daemon"] objectAtIndex:section];
+}
+- (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
+  (void)table; return section==3 ? @"Status shows the daemon’s last saved report. Tap Refresh to update. Sync runs in the background." : nil;
+}
+- (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
+  (void)table;
+  UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:[path section] ? UITableViewCellStyleValue1 : UITableViewCellStyleDefault reuseIdentifier:nil] autorelease];
+  if(![path section]) {
+    [[cell textLabel] setText:[path row] ? @"Log" : @"Account & Sync"];
+    [cell setAccessoryType:UITableViewCellAccessoryDisclosureIndicator];
+  } else {
+    NSString *label, *value;
+    if([path section]==3) {
+      label=@"Last report";
+      value=StatusDate([status_ objectForKey:@"UpdatedAt"],@"None");
+    } else {
+      id service=[status_ objectForKey:[path section]==1 ? @"Contacts" : @"Calendars"];
+      if(![service isKindOfClass:[NSDictionary class]]) service=nil;
+      label=[@[@"Status",@"Last success",@"Pending changes",@"Next attempt",@"Error"] objectAtIndex:[path row]];
+      switch([path row]) {
+        case 0: value=[service objectForKey:@"Phase"] ?: @"Not started"; break;
+        case 1: value=StatusDate([service objectForKey:@"LastSuccess"],@"Never"); break;
+        case 2: value=[[service objectForKey:@"PendingCount"] description] ?: @"Unknown"; break;
+        case 3: value=StatusDate([service objectForKey:@"NextAttempt"],@"Not scheduled"); break;
+        default: value=[[service objectForKey:@"ErrorCode"] description] ?: @"None"; break;
+      }
+    }
+    [[cell textLabel] setText:label];
+    [[cell detailTextLabel] setText:value];
+    [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
+  }
+  return cell;
+}
+- (void)dealloc { [status_ release]; [super dealloc]; }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
   [table deselectRowAtIndexPath:path animated:YES]; if([path section]) return;
   UITableViewController *screen=[path row] ? [[RCLogTable alloc] initWithStyle:UITableViewStylePlain] : [[RCAccountTable alloc] init];
