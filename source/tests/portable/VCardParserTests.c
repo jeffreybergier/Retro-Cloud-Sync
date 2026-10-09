@@ -15,6 +15,10 @@ typedef struct {
 } RCVCardCase;
 
 static const RCVCardCase cases[] = {
+  { "lowercase property", "email:a@example.test\r\n", "EMAIL", NULL,
+    -1, "a@example.test" },
+  { "name range boundaries", "X->@AZ\\^`az{}~:Boundary\r\n",
+    "X->@AZ\\^`az{}~", NULL, -1, "Boundary" },
   { "plain name", "N:Smith;Alice;;;\r\n", "N", "G",
     1, "Alice" },
   { "UTF-8 name", "N:Fixture;Renée;;;\r\n", "N", "G",

@@ -4,6 +4,40 @@
 #include <string.h>
 #include <unistd.h>
 
+static int testTimezoneTruncation(void)
+{
+  const char *starts[] = { "20100101T000000", "20160101T000000" };
+  size_t i;
+  for (i = 0; i < sizeof(starts) / sizeof(starts[0]); i++) {
+    char body[512];
+    icalcomponent *zone, *standard;
+    icalproperty *property;
+    int ok;
+    snprintf(body, sizeof(body),
+             "BEGIN:VTIMEZONE\r\nTZID:Fixture\r\nBEGIN:STANDARD\r\n"
+             "DTSTART:%s\r\nTZNAME:Fixture\r\nTZOFFSETFROM:+0000\r\n"
+             "TZOFFSETTO:+0000\r\nRRULE:FREQ=YEARLY\r\n"
+             "END:STANDARD\r\nEND:VTIMEZONE\r\n", starts[i]);
+    zone = icalparser_parse_string(body);
+    if (!zone) return 0;
+    /* Retain the last onset before the exclusive window close, either as
+       RRULE UNTIL or as RDATE for a rule spanning only one year. */
+    icaltimezone_truncate_vtimezone(zone, icaltime_null_time(),
+                                   icaltime_from_string("20180101T000000Z"), 0);
+    standard = icalcomponent_get_first_component(zone, ICAL_XSTANDARD_COMPONENT);
+    property = standard ? icalcomponent_get_first_property(
+      standard, i ? ICAL_RDATE_PROPERTY : ICAL_RRULE_PROPERTY) : NULL;
+    ok = property && !icaltime_compare(
+      i ? icalproperty_get_rdate(property).time : icalproperty_get_rrule(property).until,
+      icaltime_from_string("20170101T000000Z"));
+    if (i && standard && icalcomponent_get_first_property(standard, ICAL_RRULE_PROPERTY))
+      ok = 0;
+    icalcomponent_free(zone);
+    if (!ok) return 0;
+  }
+  return 1;
+}
+
 static long long scalar(RCCalendarStore *s, const char *sql)
 {
   sqlite3_stmt *q = NULL;
@@ -38,6 +72,8 @@ int main(void)
   char *first = NULL, *again = NULL;
   RCDAVCollection collection = {"https://example.test/cal/", "RCS Calendar Test", NULL,
                                 NULL, NULL, 0};
+  RCErrorClear(&error);
+  CHECK(testTimezoneTruncation());
   /* Only empty URLs with valid supported parameters are tolerated; unrelated parser errors still fail. */
   {
     const char *valid = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:empty-url\r\nDTSTART:20300620T090000Z\r\nurl:\r\nuRl;vAlUe=uRi:\r\nURL:https://example.test/keep\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";

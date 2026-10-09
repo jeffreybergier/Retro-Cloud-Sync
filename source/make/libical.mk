@@ -6,6 +6,7 @@ ICAL_REVISION := $(ICAL_ROOT)/libical-revision
 ICAL_SOURCE := $(ICAL_ROOT)/libical-3.0.20
 ICAL_PREPARE := $(ICAL_ROOT)/libical-source.stamp
 ICAL_SCRIPT := $(SOURCE_ROOT)/make/scripts/build-libical.sh
+ICAL_PATCH := $(SOURCE_ROOT)/make/scripts/libical-legacy.patch
 ICAL_PPC_LIBRARY := $(ICAL_ROOT)/libical-ppc/lib/libical.a
 ICAL_I386_LIBRARY := $(ICAL_ROOT)/libical-i386/lib/libical.a
 ICAL_HOST_LIBRARY := $(ICAL_ROOT)/libical-host/lib/libical.a
@@ -26,7 +27,7 @@ $(ICAL_REVISION): libical-revision-check | libical-checkout-check
 libical-revision-check:
 .PHONY: libical-revision-check
 
-$(ICAL_PREPARE): $(ICAL_SCRIPT) $(SOURCE_ROOT)/make/libical.mk \
+$(ICAL_PREPARE): $(ICAL_SCRIPT) $(ICAL_PATCH) $(SOURCE_ROOT)/make/libical.mk \
 		$(ICAL_CHECKOUT_FILES) $(ICAL_REVISION) \
 		| libical-checkout-check
 	@bash "$(ICAL_SCRIPT)" prepare "$(ICAL_ROOT)" "$(LEGACY_TOOLCHAIN)"

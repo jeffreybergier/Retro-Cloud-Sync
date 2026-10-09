@@ -77,6 +77,9 @@
    }
  
  /****************************************
+@@ -96 +97 @@
+-NAME-CHAR       [\x21-\x2B\x2D\x2F-\x39\x3C\x3E-\x5A\x5C\x5E-\x7E]
++NAME-CHAR       [\x21-\x2B\x2D\x2F-\x39\x3C\x3E-\x40A-Z\x5C\x5E-\x60a-z\x7B-\x7E]
 @@ -109,7 +110,7 @@
  {LF}                      { move_pos("\n"); yylval = NULL; return yytext[0]; }
  "."                       { move_pos("."); yylval = NULL; return yytext[0]; }

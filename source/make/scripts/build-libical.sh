@@ -1,5 +1,5 @@
 #!/bin/bash
-# Submodule source; the two patches only remove diagnostics unsupported by GCC 4.2.
+# Patch build copies only; leave the pinned submodule untouched.
 set -euo pipefail
 mode="$1"
 deps="$2"
@@ -25,6 +25,7 @@ if [ "$mode" = prepare ] || [ "$mode" = prepare-archive ]; then
   # Recreate the build copy so removed upstream files cannot survive a checkout.
   rm -rf "$src"
   tar -xzf "$archive" -C "$deps"
+  patch --batch --forward -d "$src" -p1 < "$(dirname "$0")/libical-legacy.patch"
   python3 - "$src" <<'PY'
 from pathlib import Path
 import sys
@@ -71,12 +72,15 @@ elif [ "$mode" != host ]; then
          "-DCMAKE_RANLIB=$toolchain/bin/i386-apple-darwin9-ranlib"
          "-DCMAKE_OSX_SYSROOT=$toolchain/SDK/MacOSX10.5.sdk"
          "-DCMAKE_OSX_ARCHITECTURES=$mode" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.4
+         # GCC 4.2 misreports optimized assertions and constant branches as
+         # unreachable. Keep -Wall/-Wextra and modern unreachable checks.
+         -DHAVE_GCC_UNREACHABLE_CODE=FALSE
          '-DCMAKE_C_FLAGS=-std=c99 -fno-stack-protector')
 fi
 if ! cmake -S "$src" -B "$out" "${args[@]}" > "$deps/libical-$mode-configure.log" 2>&1; then
   cat "$deps/libical-$mode-configure.log"; exit 1
 fi
-if ! cmake --build "$out" --target "$target" --parallel 4 > "$deps/libical-$mode-build.log" 2>&1; then
+if ! (unset MAKEFLAGS MFLAGS; cmake --build "$out" --target "$target" --parallel 4) > "$deps/libical-$mode-build.log" 2>&1; then
   cat "$deps/libical-$mode-build.log"; exit 1
 fi
 # Some CMake versions cache the host's archive rule while identifying this old
