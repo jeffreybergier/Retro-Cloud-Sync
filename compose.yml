@@ -48,7 +48,7 @@
 
 services:
   altivec:
-    image: ghcr.io/jeffreybergier/altivec-intelligence:latest
+    image: ${ALTIVEC_IMAGE:-altivec-intelligence:local}
     working_dir: /repo/user
     environment:
       ALTIVEC_SDK_ARCHIVE_DIR: /altivec-sdk
@@ -70,7 +70,7 @@ services:
   altivec-sdk:
     profiles:
       - tools
-    image: ghcr.io/jeffreybergier/altivec-intelligence:latest
+    image: ${ALTIVEC_IMAGE:-altivec-intelligence:local}
     environment:
       ALTIVEC_SDK_ARCHIVE_DIR: /altivec-sdk
     volumes:
@@ -82,7 +82,7 @@ services:
     entrypoint: altivec-sdk
 
   altivec-intelligence:
-    image: ghcr.io/jeffreybergier/altivec-intelligence:latest
+    image: ${ALTIVEC_IMAGE:-altivec-intelligence:local}
     stdin_open: true
     tty: true
     environment:

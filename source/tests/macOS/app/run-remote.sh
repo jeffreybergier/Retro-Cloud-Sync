@@ -8,7 +8,7 @@ run_name="RetroCloudSync-app-Tests-$(date +%Y%m%d-%H%M%S)-$$"
 remote_relative="Desktop/${run_name}"
 
 ssh "${test_host}" "mkdir -p '${remote_relative}/screenshots'"
-scp -r "${build_root}/macOS-app/release/rCloud.app" \
+scp -r "${build_root}/macOS/release/rCloud.app" \
   "${test_host}:${remote_relative}/"
 scp "${build_root}/tests/macOS/app/release/RetroCloudAppGUITests" \
   "${test_host}:${remote_relative}/"

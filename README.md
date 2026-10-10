@@ -89,7 +89,7 @@ than guessing which alarm owns retained attachment data.
 
 ## Jailbroken iOS daemon
 
-`make ios-package` builds `build/iOS/rCloud-rootful.deb` using the iOS 8.4 SDK:
+`make ios-package` builds `build/iOS/release/rCloud-rootful.deb` using the iOS 8.4 SDK:
 armv7 targets iOS 5.0 and arm64 targets iOS 7.0. Native integration has been tested
 on `koolphone5` running iOS 8.4.1; iOS 5 and arm64 device execution remain untested.
 This package supports rootful installation. It imports contacts and calendars;
