@@ -153,7 +153,8 @@ write journals and `Status.plist` beside `Config.plist`; logs are in
 then stop only the SpringBoard job matching the rCloud bundle identity. They
 unregister the app on upgrade/removal and refresh the icon cache after removal.
 The package version and staged bundle metadata derive from the existing Mac
-release version source; packaging rejects mismatched bundle versions.
+release version source; packaging rejects mismatched bundle versions. The GUI
+and daemon run the same versioned executable (launchd uses `rCloud --daemon`).
 Removal preserves account data and
 Keychain credentials. `--access`, `--request-access`, `--inspect-recovery` and
 `--export-recovery` are available on the installed executable.
@@ -214,8 +215,10 @@ make test-ui-mac TEST_HOST=x4-vm
 for dependencies, suite membership, narrower targets and Mac desktop requirements.
 
 GitHub Actions runs `make test-business-linux` once per branch push. A `vMAJOR.MINOR.PATCH`
-tag builds the macOS app ZIP and attaches `Retro-Cloud-Sync-VERSION-macOS.zip`
-to its GitHub Release after checking that the tag and app version match. The
+tag builds the macOS app ZIP and rootful iOS package, attaching
+`Retro-Cloud-Sync-VERSION-macOS.zip` and
+`Retro-Cloud-Sync-VERSION-iOS-rootful.deb` to its GitHub Release after checking
+that the tag, bundle versions, and Debian package version match. The
 release workflow needs three repository secrets containing HTTPS URLs for the
 checksum-verified SDK archives: `ALTIVEC_SDK_MACOS_105_URL`,
 `ALTIVEC_SDK_MACOS_113_URL`, and `ALTIVEC_SDK_IPHONEOS_84_URL`.

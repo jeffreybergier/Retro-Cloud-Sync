@@ -1,4 +1,4 @@
-name: Build macOS release
+name: Build macOS and iOS release
 
 on:
   push:
@@ -86,7 +86,7 @@ jobs:
             -v "$archive_dir:/altivec-sdk:ro" \
             "$BUILD_IMAGE" preflight
 
-      - name: Build and stage the Mac app ZIP
+      - name: Build and stage the Mac ZIP and iOS package
         run: |
           set -euo pipefail
           docker run --rm \
@@ -102,43 +102,22 @@ jobs:
             "$BUILD_IMAGE" \
             -lc 'altivec-sdk install && altivec-release build && altivec-release stage "$RELEASE_VERSION"'
 
-      - name: Validate release asset
+      - name: Validate release assets
         run: |
           set -euo pipefail
-          asset="dist/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip"
-          test -s "$asset"
-          unzip -t "$asset" >/dev/null
-          RELEASE_ASSET="$asset" python3 - <<'PY'
-          import os
-          import plistlib
-          import zipfile
+          python3 source/make/scripts/validate-release.py "$RELEASE_VERSION" dist
+          sha256sum "dist/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip" \
+            "dist/Retro-Cloud-Sync-${RELEASE_VERSION}-iOS-rootful.deb"
 
-          with zipfile.ZipFile(os.environ["RELEASE_ASSET"]) as archive:
-              names = set(archive.namelist())
-              required = {
-                  "rCloud.app/Contents/Info.plist",
-                  "rCloud.app/Contents/MacOS/rCloud",
-                  "rCloud.app/Contents/Library/LaunchServices/rcloudd",
-              }
-              missing = required - names
-              if missing:
-                  raise SystemExit("Missing app files: " + ", ".join(sorted(missing)))
-              info = plistlib.loads(archive.read("rCloud.app/Contents/Info.plist"))
-              version = os.environ["RELEASE_VERSION"]
-              for key in ("CFBundleShortVersionString", "CFBundleVersion"):
-                  if info.get(key) != version:
-                      raise SystemExit(f"{key} does not match {version}")
-          PY
-          sha256sum "$asset"
-
-      - name: Publish GitHub release asset
+      - name: Publish GitHub release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          asset="dist/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip"
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" \
               --verify-tag --target "$RELEASE_SHA" --generate-notes
           fi
-          gh release upload "$RELEASE_TAG" "$asset" --clobber
+          gh release upload "$RELEASE_TAG" \
+            "dist/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip" \
+            "dist/Retro-Cloud-Sync-${RELEASE_VERSION}-iOS-rootful.deb" --clobber
