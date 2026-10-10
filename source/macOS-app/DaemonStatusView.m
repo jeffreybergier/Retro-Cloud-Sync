@@ -1,3 +1,4 @@
+#import "RCSettingsPresentation.h"
 //
 //  DaemonStatusView.m
 //  RetroCloudSync
@@ -254,7 +255,7 @@ static NSString *RCStatusDate(id value)
       [NSArray arrayWithObjects:@"Status",message,nil]);
   [statusLabel_ setAttributedStringValue:details];
   [statusLabel_ setToolTip:[details string]];
-  [serviceIcon_ setImage:RCStatusIcon(severity,paused,[[self window] XP_backingScaleFactor])];
+  [serviceIcon_ setImage:RCStatusIcon(severity,paused,RCWindowBackingScale([self window]))];
 }
 
 - (void)updateSyncStatus;
@@ -262,32 +263,15 @@ static NSString *RCStatusDate(id value)
   NSString *path=[[[RCConfiguration configurationPath] stringByDeletingLastPathComponent]
       stringByAppendingPathComponent:@"Status.plist"];
   NSDictionary *snapshot=[NSDictionary dictionaryWithContentsOfFile:path];
-  int pid=[[snapshot objectForKey:@"PID"] intValue];
-  BOOL live=[[snapshot objectForKey:@"Running"] boolValue] && pid>0 &&
-      (kill(pid,0)==0 || errno==EPERM) && [serviceController_ isServiceRunning];
+  BOOL live=RCStatusIsLive(snapshot) && [serviceController_ isServiceRunning];
   int i;
   for(i=0;i<2;i++) {
     id entry=[snapshot objectForKey:i==0 ? @"Contacts" : @"Calendars"];
     NSDictionary *s=[entry isKindOfClass:[NSDictionary class]] ? entry : nil;
     NSString *phase=[s objectForKey:@"Phase"], *code=[s objectForKey:@"ErrorCode"];
     BOOL disabled=[phase isEqual:@"Disabled"];
-    NSString *message=@"Waiting for daemon status";
-    if([phase isEqual:@"UpToDate"]) message=@"Up to date";
-    else if([phase isEqual:@"Stopping"]) message=@"Stopping — saving progress…";
-    else if([phase isEqual:@"Waiting"]) message=@"Waiting to sync";
-    else if([phase isEqual:@"Downloading"]) message=@"Downloading from iCloud…";
-    else if([phase isEqual:@"Applying"]) message=i==0 ? @"Applying to Address Book…" : @"Applying to iCal…";
-    else if([phase isEqual:@"Uploading"]) message=@"Uploading to iCloud…";
-    else if([phase isEqual:@"Attention"]) message=@"Changes need attention";
-    if([code isEqual:@"Credentials"]) message=@"Saved password unavailable — check Keychain";
-    else if([code isEqual:@"Configuration"]) message=@"Check your account settings — see log";
-    else if([code isEqual:@"Database"]) message=@"Could not open the sync database";
-    else if([code isEqual:@"Download"]) message=@"Could not download from iCloud — see log";
-    else if([code isEqual:@"Apply"]) message=@"Could not apply local changes — see log";
-    else if([code isEqual:@"Upload"]) message=@"Could not finish uploading — see log";
-    if(disabled) message=@"Disabled";
-    else if(!live && s) message=@"Paused — background service stopped";
-    [syncIcon_[i] setImage:RCStatusIcon(live && !disabled ? [s objectForKey:@"Severity"] : @"yellow",!live || disabled,[[self window] XP_backingScaleFactor])];
+    NSString *message=RCStatusText(s,live);
+    [syncIcon_[i] setImage:RCStatusIcon(live && !disabled ? [s objectForKey:@"Severity"] : @"yellow",!live || disabled,RCWindowBackingScale([self window]))];
     id next=[s objectForKey:@"NextAttempt"]; long pending=[[s objectForKey:@"PendingCount"] longValue];
     NSString *heading=code ? @"Next retry" : @"Next sync";
     NSString *detail=disabled ? @"Disabled" : !live ? @"Not scheduled" : @"Waiting for schedule";
@@ -297,6 +281,8 @@ static NSString *RCStatusDate(id value)
       heading=@"Pending items";
       detail=[NSString stringWithFormat:@"%ld%@",pending,live ? @" — see log" : @""];
     }
+    NSString *progress=[s objectForKey:@"Progress"];
+    if(live && [progress length]) { heading=@"Progress"; detail=progress; }
     NSAttributedString *details=RCStatusDetails(message,
         RCStatusDate([s objectForKey:@"LastSuccess"]),heading,detail);
     [syncDetails_[i] setAttributedStringValue:details];

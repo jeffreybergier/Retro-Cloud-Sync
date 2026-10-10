@@ -1,5 +1,6 @@
 # Jailbroken, rootful iOS 5+; app registration supplies the daemon's TCC identity.
 IOS_ROOT := $(SOURCE_ROOT)/iOS-daemon
+IOS_ENTITLEMENTS ?= $(IOS_ROOT)/Entitlements.plist
 IOS_OUT := $(BUILD_ROOT)/iOS
 IOS_SDK ?= /osxcross/modern/SDK/iPhoneOS8.4.sdk
 IOS_BIN ?= /osxcross/modern/bin
@@ -10,7 +11,7 @@ IOS_FLAGS = $(IOS_TEST_FLAGS) -isysroot $(IOS_SDK) -B$(IOS_BIN) -std=c99 -O2 -g 
   -Wno-semicolon-before-method-body -I$(SHARED_SOURCE_ROOT) -I$(DAEMON_SOURCE_ROOT) -I$(IOS_ROOT) \
   -I$(IOS_CORE)/include -I$(IOS_COCOA)/include -I$(IOS_SDK)/usr/include/libxml2 $(ICAL_FLAGS) $(LIBVC_FLAGS)
 IOS_COMMON := $(SYNC_COMMON_SOURCES) RCLogger.m RCStatus.m RCMailProxy.c
-IOS_PLATFORM := RCIOSNativeBackend.m RCIOSNativeStore.m RCIOSAccess.m RCIOSCredentials.c RCIOSSettings.m main.m
+IOS_PLATFORM := RCIOSNativeBackend.m RCIOSNativeStore.m RCIOSAccess.m RCIOSCredentials.c RCIOSSettings.m RCIOSConfiguration.m RCAccountTable.m RCMailTable.m RCLogTable.m RCIOSUITests.m main.m
 IOS_C := $(filter-out $(SHARED_SOURCE_ROOT)/RCICloudCredentials.c,$(SHARED_SOURCE_PATHS))
 IOS_SOURCES := $(addprefix $(DAEMON_SOURCE_ROOT)/,$(IOS_COMMON)) $(addprefix $(IOS_ROOT)/,$(IOS_PLATFORM)) $(IOS_C) $(IOS_TEST_SOURCE)
 IOS_HEADERS := $(wildcard $(DAEMON_SOURCE_ROOT)/*.h $(IOS_ROOT)/*.h $(SHARED_SOURCE_ROOT)/*.h)
@@ -30,14 +31,15 @@ $(IOS_OUT)/$(1)/rCloud: $(IOS_SOURCES) $(IOS_HEADERS) $(IOS_OUT)/$(1)/daemon.o $
 endef
 $(eval $(call RC_IOS_ARCH,armv7,5.0))
 $(eval $(call RC_IOS_ARCH,arm64,7.0))
-$(IOS_OUT)/rCloud.app/rCloud: $(IOS_OUT)/armv7/rCloud $(IOS_OUT)/arm64/rCloud $(IOS_ROOT)/Entitlements.plist
+$(IOS_OUT)/rCloud.app/rCloud: $(IOS_OUT)/armv7/rCloud $(IOS_OUT)/arm64/rCloud $(IOS_ENTITLEMENTS)
 	@mkdir -p "$(dir $@)"
 	$(IOS_BIN)/lipo -create $(filter %/rCloud,$^) -output "$@"
-	ldid -S$(IOS_ROOT)/Entitlements.plist "$@"
+	ldid -S$(IOS_ENTITLEMENTS) "$@"
 ios-release: $(IOS_OUT)/rCloud.app/rCloud
 	cp $(IOS_ROOT)/Resources/*.png $(IOS_OUT)/rCloud.app/
 	cp $(IOS_ROOT)/package/Config.example.plist $(IOS_OUT)/rCloud.app/
 	cp $(IOS_ROOT)/Info.plist $(IOS_OUT)/rCloud.app/Info.plist
+	python3 $(SOURCE_ROOT)/make/scripts/ios-version.py $(SOURCE_ROOT) $(IOS_OUT)/rCloud.app/Info.plist --stamp $(if $(filter 1,$(IOS_UI_TESTS)),--ui-tests,)
 	mkdir -p $(IOS_OUT)/rCloud.app/Fonts
 	cp $(IOS_COCOA)/Resources/Fonts/*.otf $(IOS_COCOA)/Resources/Fonts/LICENSE-Font-Awesome.txt $(IOS_OUT)/rCloud.app/Fonts/
 	cp $(IOS_CORE)/lib/cacert.pem $(IOS_OUT)/rCloud.app/cacert.pem
@@ -58,5 +60,9 @@ analyze-ios: $(ICAL_ROOT)/libical-ios-armv7/lib/libical.a $(LIBVC_ROOT)/libvc-io
 
 # Installs separately from the native-store harness; launch through SpringBoard.
 ios-ui-tests:
-	$(MAKE) --no-print-directory ios-release IOS_OUT="$(BUILD_ROOT)/iOS-ui-tests" IOS_TEST_FLAGS=-DRCIOS_UI_TESTS=1 IOS_LINK="$(IOS_LINK) -framework QuartzCore"
+	$(MAKE) --no-print-directory ios-release IOS_OUT="$(BUILD_ROOT)/iOS-ui-tests" IOS_UI_TESTS=1 IOS_ENTITLEMENTS="$(SOURCE_ROOT)/tests/iOS/Entitlements.plist" IOS_TEST_FLAGS=-DRCIOS_UI_TESTS=1 IOS_LINK="$(IOS_LINK) -framework QuartzCore"
 .PHONY: ios-ui-tests
+
+test-ios-ui: ios-ui-tests
+	TEST_HOST="$(TEST_HOST)" BUILD_ROOT="$(BUILD_ROOT)" python3 "$(SOURCE_ROOT)/tests/iOS/run-ui.py"
+.PHONY: test-ios-ui

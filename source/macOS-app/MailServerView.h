@@ -11,12 +11,14 @@
 #endif
 {
  @private
+  BOOL hasDraft_;
   NSTextField *imapLocalPortField_;
   NSTextField *imapServerField_;
   NSTextField *imapServerPortField_;
   NSTextField *smtpLocalPortField_;
   NSTextField *smtpServerField_;
   NSTextField *smtpServerPortField_;
+  NSButton *enabledButton_;
   BOOL showingError_;
   NSString *pendingErrorMessage_;
 }

@@ -9,6 +9,7 @@
 
 @interface ContactsView : NSView {
  @private
+  BOOL hasDraft_;
   NSMatrix *contactsSyncMatrix_;
   NSMatrix *calendarsSyncMatrix_;
   NSPopUpButton *calendarHistoryPopup_;
@@ -18,7 +19,7 @@
   NSTextField *intervalLabel_;
   long long syncIntervalSeconds_;
   NSButton *accountButton_;
-  BOOL hasCredentials_;
+  BOOL credentialsChanged_;
 }
 
 - (void)reloadSettings;

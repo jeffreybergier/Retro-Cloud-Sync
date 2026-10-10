@@ -1,4 +1,5 @@
 #import "RCStatus.h"
+#import "RCSettingsPresentation.h"
 #include <sys/stat.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -6,6 +7,20 @@
 static NSDictionary *Read(NSString *path) { return [[NSDictionary dictionaryWithContentsOfFile:path] objectForKey:@"Contacts"]; }
 int RCStatusTests(void)
 {
+  CHECK(RCMailFieldError(@"0",NO,YES)!=nil);
+  CHECK(RCMailFieldError(@"65536",NO,NO)!=nil);
+  CHECK(RCMailFieldError(@"1024",NO,YES)==nil);
+  CHECK(RCMailFieldError(@"65535",NO,YES)==nil);
+  CHECK(RCMailFieldError(@"1.5",NO,NO)!=nil);
+  CHECK(RCMailFieldError(@"https://icloud.com",YES,NO)!=nil);
+  CHECK(RCMailFieldError(@"imap.mail.me.com",YES,NO)==nil);
+  CHECK([RCIntervalText(1) isEqual:@"1 minute"] && [RCIntervalText(300) isEqual:@"300 minutes"]);
+  NSDictionary *photo=[NSDictionary dictionaryWithObject:@"Photos" forKey:@"Phase"];
+  CHECK([RCStatusText(photo,YES) isEqual:@"Checking contact photos…"]);
+  CHECK([RCStatusText(photo,NO) isEqual:@"Paused — background service stopped"]);
+  CHECK([RCStatusErrorText(@"Credentials") isEqual:@"Saved password unavailable — check Keychain"]);
+  CHECK(RCStatusIsLive([NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:getpid()],@"PID",[NSNumber numberWithBool:YES],@"Running",nil]));
+  CHECK(!RCStatusIsLive([NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithInt:getpid()],@"PID",[NSNumber numberWithBool:NO],@"Running",nil]));
   char directory[]="StatusTests-XXXXXX";
   CHECK(mkdtemp(directory));
   NSString *root=[NSString stringWithUTF8String:directory];

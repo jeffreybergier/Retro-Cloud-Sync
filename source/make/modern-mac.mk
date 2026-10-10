@@ -48,7 +48,7 @@ $(DAEMON_INTERMEDIATES)/$(1).bin: $(addprefix $(DAEMON_INTERMEDIATES)/$(1)/,$(DA
 	@MACOSX_DEPLOYMENT_TARGET=$$(MODERN_$(1)_MIN) $$(MODERN_$(1)_CC) $$(MODERN_$(1)_FLAGS) --ld-path=/usr/bin/ld64.lld -Wl,-platform_version,macos,$$(MODERN_$(1)_MIN),11.3 $$(filter %.o %.a,$$^) $$(MODERN_DAEMON_LINK) -o "$$@"
 	@bash "$$(MODERN_SIGN_SCRIPT)" "$$@" com.altivecintelligence.rcloudd "$$(DAEMON_INFO_PLIST)" "$$(RCLOUD_SIGNING_PEM)" $(1)
 
-$(APP_INTERMEDIATES)/$(1)/%.o: $(APP_SOURCE_ROOT)/%.m $(wildcard $(APP_SOURCE_ROOT)/*.h) $(SOURCE_ROOT)/make/modern-mac.mk
+$(APP_INTERMEDIATES)/$(1)/%.o: $(APP_SOURCE_ROOT)/%.m $(wildcard $(APP_SOURCE_ROOT)/*.h $(SHARED_SOURCE_ROOT)/*.h) $(SOURCE_ROOT)/make/modern-mac.mk
 	@mkdir -p "$$(dir $$@)"
 	@MACOSX_DEPLOYMENT_TARGET=$$(MODERN_$(1)_MIN) $$(MODERN_$(1)_CC) $$(MODERN_$(1)_FLAGS) $$(APP_COMPILE_FLAGS) -c "$$<" -o "$$@"
 $(APP_INTERMEDIATES)/$(1)/libAltivecCocoa.a: $(ALTIVECCOCOA_STATIC_LIBRARY)

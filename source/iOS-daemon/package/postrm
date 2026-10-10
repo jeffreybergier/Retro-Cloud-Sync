@@ -1,0 +1,9 @@
+#!/bin/sh
+set -e
+case "$1" in
+  remove|purge)
+    # Retain mirrors, journals, configuration, and Keychain credentials.
+    su mobile -c uicache
+    ;;
+esac
+exit 0

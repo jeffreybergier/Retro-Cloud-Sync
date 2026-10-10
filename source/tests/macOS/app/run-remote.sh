@@ -13,6 +13,8 @@ scp -r "${build_root}/macOS-app/release/rCloud.app" \
 scp "${build_root}/tests/macOS/app/release/RetroCloudAppGUITests" \
   "${test_host}:${remote_relative}/"
 
+scp "${PROJECT_ROOT:?}/source/tests/macOS/app/Fixture.plist" "${test_host}:${remote_relative}/"
+
 echo "--- Running app tests on ${test_host} ---"
 if ssh "${test_host}" \
   "cd '${remote_relative}' && chmod +x RetroCloudAppGUITests && ./RetroCloudAppGUITests --app \"\$HOME/${remote_relative}/rCloud.app\" --screenshots \"\$HOME/${remote_relative}/screenshots\""; then

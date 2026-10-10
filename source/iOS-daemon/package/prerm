@@ -2,7 +2,7 @@
 set -e
 # RC_LIFECYCLE
 case "$1" in
-  remove|upgrade|deconfigure) rc_stop ;;
+  remove|upgrade|deconfigure) rc_stop; rc_stop_ui; rc_unregister ;;
 esac
 # Account mirrors, pending writes and Keychain credentials survive removal.
 exit 0

@@ -13,6 +13,11 @@ version:
       keys:
         - CFBundleVersion
 
+    - path: source/iOS-daemon/Info.plist
+      keys:
+        - CFBundleShortVersionString
+        - CFBundleVersion
+
 release:
   commit_message: "chore: bump version to {version}"
 

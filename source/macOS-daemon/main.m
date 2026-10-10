@@ -932,11 +932,20 @@ int main(int argc, char *argv[])
 #endif
   certificatePath = [RCResourceDirectory(daemonDirectory)
       stringByAppendingPathComponent:kRCCertificateName];
-  BOOL mailEnabled=YES;
+  id mailSetting=[[configuration objectForKey:@"MailProxy"] objectForKey:@"Enabled"];
 #if TARGET_OS_IPHONE
   /* Existing iOS configurations do not silently start new listeners. */
-  mailEnabled=[[[configuration objectForKey:@"MailProxy"] objectForKey:@"Enabled"] boolValue];
+  BOOL mailEnabled=mailSetting ? [mailSetting boolValue] : NO;
+#else
+  /* Preserve the historical Mac default when upgrading old configurations. */
+  BOOL mailEnabled=mailSetting ? [mailSetting boolValue] : YES;
 #endif
+#if TARGET_OS_IPHONE
+  BOOL paused=[[configuration objectForKey:@"ServicePaused"] boolValue];
+#else
+  BOOL paused=NO;
+#endif
+  mailEnabled=mailEnabled && !paused;
   mailProxy = mailEnabled ? RCMailProxyStart(mailConfigs, 2,
       [certificatePath fileSystemRepresentation]) : NULL;
   if (mailEnabled && mailProxy == NULL) {
@@ -946,7 +955,8 @@ int main(int argc, char *argv[])
     return 1;
   }
   RCStatusStart(configurationPath,configuration);
-  if (configuration != nil) {
+  if(paused) { RCStatusStopping(); RCStatusStop(); }
+  if (configuration != nil && !paused) {
     if (!RCSyncWorkerStart(&syncWorker, configuration, daemonDirectory, configurationPath)) {
       RCLogger(RCLogError, "Account", "Startup", @"Sync initialization failed; mail proxy remains available");
       RCStatusFailure(@"Contacts",@"Configuration");

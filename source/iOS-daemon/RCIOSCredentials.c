@@ -1,4 +1,5 @@
 #include "RCICloudCredentials.h"
+#include "RCIOSCredentialIdentity.h"
 #include <Security/Security.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,7 +9,8 @@ static CFMutableDictionaryRef Query(const char *username,RCError *error) {
   if(!account) { RCErrorSet(error,-50,"Invalid account encoding"); return NULL; }
   CFMutableDictionaryRef q=CFDictionaryCreateMutable(NULL,0,&kCFTypeDictionaryKeyCallBacks,&kCFTypeDictionaryValueCallBacks);
   CFDictionarySetValue(q,kSecClass,kSecClassGenericPassword);
-  CFDictionarySetValue(q,kSecAttrService,CFSTR("com.altivecintelligence.rcloud.icloud"));
+  CFDictionarySetValue(q,kSecAttrAccessGroup,CFSTR(RCIOS_KEYCHAIN_GROUP));
+  CFDictionarySetValue(q,kSecAttrService,CFSTR(RCIOS_KEYCHAIN_SERVICE));
   CFDictionarySetValue(q,kSecAttrAccount,account); CFRelease(account); return q;
 }
 static int Result(OSStatus status,RCError *error) {

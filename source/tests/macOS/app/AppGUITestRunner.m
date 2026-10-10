@@ -52,6 +52,7 @@ static NSString * const kRCTestDaemonName = @"rcloudd";
 - (BOOL)waitForFileAtPath:(NSString *)path timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForListenerOnPort:(unsigned short)port
                       timeout:(NSTimeInterval)timeout;
+- (BOOL)waitForListenerOnPort:(unsigned short)port available:(BOOL)available timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForStatus:(NSString *)status timeout:(NSTimeInterval)timeout;
 - (BOOL)waitForWindowWithTimeout:(NSTimeInterval)timeout;
 @end
@@ -165,6 +166,7 @@ static BOOL ConfigurationMatches(NSString *path,
   NSFileManager *fileManager = [NSFileManager defaultManager];
   NSData *originalConfigurationData = nil;
   BOOL mailSettingsChanged = NO;
+  BOOL createdConfiguration = NO;
   BOOL succeeded = NO;
 
   if (![self launchApplication] ||
@@ -207,15 +209,24 @@ static BOOL ConfigurationMatches(NSString *path,
   /* Exercise preferences with no account synchronization. Restore the exact
      original bytes after the app exits, including on a failed assertion. */
   originalConfigurationData = [NSData dataWithContentsOfFile:configurationPath];
+  if(!originalConfigurationData && ![fileManager fileExistsAtPath:configurationPath]) {
+    NSDictionary *fixture=[NSDictionary dictionaryWithContentsOfFile:@"Fixture.plist"];
+    if(![fileManager fileExistsAtPath:supportDirectory])
+      [fileManager createDirectoryAtPath:supportDirectory attributes:nil];
+    if(!fixture || ![fixture writeToFile:configurationPath atomically:YES]) {
+      PrintFail(@"Could not create isolated first-run fixture"); goto cleanup;
+    }
+    createdConfiguration=YES;
+  }
   {
     NSMutableDictionary *isolated = [NSMutableDictionary
         dictionaryWithContentsOfFile:configurationPath];
     NSMutableDictionary *contacts;
-    if (originalConfigurationData == nil || isolated == nil) {
+    if ((!createdConfiguration && originalConfigurationData == nil) || isolated == nil) {
       PrintFail(@"Could not snapshot the original configuration");
       goto cleanup;
     }
-    if (screenshotsDirectory_ != nil &&
+    if (originalConfigurationData != nil && screenshotsDirectory_ != nil &&
         ![originalConfigurationData writeToFile:[screenshotsDirectory_
             stringByAppendingPathComponent:@"Configuration-original.plist"]
             atomically:YES]) {
@@ -244,11 +255,8 @@ static BOOL ConfigurationMatches(NSString *path,
     }
   }
 
-  /* Views cache configuration and the saved account when they are created.
-     Reload them against the fixture, without editing the user's preferences
-     or Keychain. The argument-domain override lasts only for this process. */
+  /* Reload the views against the fixture without editing user preferences or Keychain. */
   [self cleanUp];
-  isolatedAccount_ = YES;
   if (![self launchApplication] || ![self waitForWindowWithTimeout:10.0]) {
     PrintFail(@"Could not relaunch with the isolated account configuration");
     goto cleanup;
@@ -282,7 +290,7 @@ static BOOL ConfigurationMatches(NSString *path,
     PrintFail(@"Changed mail preferences were not saved");
     goto cleanup;
   }
-  PrintPass(@"Changed mail preferences were saved before leaving the field");
+  PrintPass(@"Mail preferences were committed by Save");
 
   if (![self setMailFieldsWithIMAPLocalPort:@"1143"
                                   imapServer:@"imap.mail.me.com"
@@ -303,15 +311,15 @@ static BOOL ConfigurationMatches(NSString *path,
   }
   PrintPass(@"Default mail preferences were restored and saved");
   if (![self testMailFieldValidationAtPath:configurationPath]) {
-    PrintFail(@"Mail field autosave or validation on editing end failed");
+    PrintFail(@"Mail Save validation failed");
     goto cleanup;
   }
-  PrintPass(@"Invalid mail values save immediately and alert only on editing end");
+  PrintPass(@"Invalid Mail drafts are rejected by Save without changing disk");
   mailSettingsChanged = NO;
   if (![self pressControlNamed:@"Sync" segment:0] ||
       ![self waitForElementNamed:@"iCloud Account" timeout:5.0] ||
       ![self waitForElementNamed:@"Contacts" timeout:5.0] ||
-      ![self waitForElementNamed:@"Calendar" timeout:5.0] ||
+      ![self waitForElementNamed:@"Calendars" timeout:5.0] ||
       ![self waitForElementNamed:@"Interval" timeout:5.0] ||
       ![self waitForElementNamed:@"Apple ID:" timeout:5.0] ||
       ![self waitForElementNamed:@"Password:" timeout:5.0] ||
@@ -378,7 +386,7 @@ static BOOL ConfigurationMatches(NSString *path,
       }
     }
   }
-  PrintPass(@"Credential Save/Reset button is inside the box and account fields match its state");
+  PrintPass(@"Account Save and Reset controls are present and fields remain editable");
   {
     AXUIElementRef slider = [self findElementWithRole:kAXSliderRole
         inElement:windowElement_ depth:0];
@@ -401,6 +409,7 @@ static BOOL ConfigurationMatches(NSString *path,
         passed = NO;
         break;
       }
+      if(![self pressControlNamed:@"Save" segment:0]) { passed=NO; break; }
       deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
       while ([deadline timeIntervalSinceNow] > 0.0) {
         NSDictionary *current = [NSDictionary
@@ -424,7 +433,7 @@ static BOOL ConfigurationMatches(NSString *path,
       goto cleanup;
     }
     if (!passed || ![self pressControlNamed:@"Sync" segment:0]) {
-      PrintFail(@"Interval slider endpoints, readout, or autosave failed");
+      PrintFail(@"Interval slider endpoints, readout, or Save failed");
       goto cleanup;
     }
   }
@@ -438,50 +447,17 @@ static BOOL ConfigurationMatches(NSString *path,
     if ([[contacts objectForKey:@"Username"] isEqualToString:@""] &&
         [[contacts objectForKey:@"ContactsSyncMode"]
             isEqualToString:@"Disabled"]) {
-      BOOL saved = NO;
-      BOOL restored = NO;
-      NSDate *deadline;
-
-      if ([self pressControlNamed:@"1-way Sync: iCloud → Address Book"
-                         segment:0]) {
-        deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
-        while ([deadline timeIntervalSinceNow] > 0.0) {
-          NSDictionary *current = [NSDictionary
-              dictionaryWithContentsOfFile:configurationPath];
-          NSDictionary *currentContacts = [current objectForKey:@"Contacts"];
-
-          if ([[currentContacts objectForKey:@"ContactsSyncMode"]
-                  isEqualToString:@"OneWay"] &&
-              [[currentContacts objectForKey:@"Username"]
-                  isEqualToString:@""]) {
-            saved = YES;
-            break;
-          }
-          usleep(100000);
-        }
+      if(![self pressControlNamed:@"1-way Sync: iCloud → Address Book" segment:0]) goto cleanup;
+      if(![self pressControlNamed:@"Status" segment:0] || ![self pressControlNamed:@"Sync" segment:0]) goto cleanup;
+      usleep(100000);
+      if(![[NSDictionary dictionaryWithContentsOfFile:configurationPath] isEqual:original]) {
+        PrintFail(@"Sync changes must remain drafts until Save"); goto cleanup;
       }
-      if (saved && [self pressControlNamed:@"Disabled" segment:0]) {
-        deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
-        while ([deadline timeIntervalSinceNow] > 0.0) {
-          NSDictionary *current = [NSDictionary
-              dictionaryWithContentsOfFile:configurationPath];
-
-          if ([current isEqualToDictionary:original]) {
-            restored = YES;
-            break;
-          }
-          usleep(100000);
-        }
+      if(![self pressControlNamed:@"Save" segment:0] || ![self waitForElementNamed:@"Enter an Apple ID and an app-specific password." timeout:5.0]) {
+        PrintFail(@"Enabling sync without an account must fail"); goto cleanup;
       }
-      if (!restored && ![original writeToFile:configurationPath atomically:YES]) {
-        PrintFail(@"Could not restore configuration after the sync radio test");
-        goto cleanup;
-      }
-      if (!saved || !restored) {
-        PrintFail(@"Sync radio changes were not saved with a blank Apple ID");
-        goto cleanup;
-      }
-      PrintPass(@"Sync radio changes save with a blank Apple ID and restore correctly");
+      if(![self pressControlNamed:@"OK" segment:0] || ![self pressControlNamed:@"Disabled" segment:0] || ![self pressControlNamed:@"Save" segment:0]) goto cleanup;
+      PrintPass(@"Sync drafts and account validation preserve disabled configuration");
     }
   }
   if (![self pressControlNamed:@"Status" segment:0] ||
@@ -572,6 +548,27 @@ static BOOL ConfigurationMatches(NSString *path,
       @"SMTP listener accepts connections on 127.0.0.1:%u",
       (unsigned int)smtpPort]);
 
+  if(![self pressControlNamed:@"Mail" segment:0] ||
+      ![self setMailFieldsWithIMAPLocalPort:@"2143" imapServer:@"127.0.0.1" imapServerPort:@"9"
+          smtpLocalPort:@"2587" smtpServer:@"127.0.0.1" smtpServerPort:@"9"] ||
+      ![self waitForListenerOnPort:2143 timeout:15.0] || ![self waitForListenerOnPort:2587 timeout:15.0] ||
+      ![self waitForListenerOnPort:1143 available:NO timeout:15.0] || ![self waitForListenerOnPort:1587 available:NO timeout:15.0]) {
+    PrintFail(@"Mail Save did not replace the running proxy listeners"); goto cleanup;
+  }
+  if(![self pressControlNamed:@"Enable Mail proxy" segment:0] || ![self pressControlNamed:@"Save" segment:0] ||
+      ![self waitForDaemonRunning:YES timeout:15.0] || ![self waitForListenerOnPort:2143 available:NO timeout:15.0] ||
+      ![self waitForListenerOnPort:2587 available:NO timeout:15.0]) {
+    PrintFail(@"Mail disable must close listeners while leaving the daemon running"); goto cleanup;
+  }
+  if(![self pressControlNamed:@"Enable Mail proxy" segment:0] ||
+      ![self setMailFieldsWithIMAPLocalPort:@"1143" imapServer:@"imap.mail.me.com" imapServerPort:@"993"
+          smtpLocalPort:@"1587" smtpServer:@"smtp.mail.me.com" smtpServerPort:@"587"] ||
+      ![self waitForListenerOnPort:1143 timeout:15.0] || ![self waitForListenerOnPort:1587 timeout:15.0] ||
+      ![self pressControlNamed:@"Status" segment:0] || ![self waitForStatus:@"Running" timeout:15.0]) {
+    PrintFail(@"Mail enable did not restore the listeners"); goto cleanup;
+  }
+  PrintPass(@"Running Mail changes apply on Save; enable/disable preserves the daemon");
+
   if (![self pressControlNamed:@"Stop" segment:1]) {
     PrintFail(@"Stop control could not be pressed");
     goto cleanup;
@@ -614,6 +611,7 @@ cleanup:
     PrintFail(@"Could not restore the original configuration; use the recovery copy");
     succeeded = NO;
   }
+  if(createdConfiguration) [fileManager removeFileAtPath:configurationPath handler:nil];
   return succeeded;
 }
 
@@ -867,12 +865,8 @@ cleanup:
 
   applicationTask_ = [[NSTask alloc] init];
   [applicationTask_ setLaunchPath:executablePath];
-  if (isolatedAccount_) {
-    [applicationTask_ setArguments:[NSArray arrayWithObjects:
-        @"-RCKeychainSavedAppleID", @"", nil]];
-  }
   [applicationTask_ setStandardOutput:[NSFileHandle fileHandleWithNullDevice]];
-  [applicationTask_ setStandardError:[NSFileHandle fileHandleWithNullDevice]];
+  [applicationTask_ setStandardError:[NSFileHandle fileHandleWithStandardError]];
   [applicationTask_ launch];
   applicationElement_ = AXUIElementCreateApplication(
       [applicationTask_ processIdentifier]);
@@ -889,11 +883,15 @@ cleanup:
   AXUIElementRef control = [self findElementNamed:name
                                         inElement:windowElement_
                                             depth:0];
+  if(control==NULL) control=[self findElementNamed:name inElement:applicationElement_ depth:0];
   AXError error;
 
   if (control != NULL) {
     error = AXUIElementPerformAction(control, kAXPressAction);
-    if (error == kAXErrorSuccess) {
+    /* Tiger may time out while a synchronous service action is still running.
+       A second physical click can immediately undo Start/Stop. Let the
+       subsequent state assertion confirm completion instead of retrying. */
+    if (error == kAXErrorSuccess || error == kAXErrorCannotComplete) {
       CFRelease(control);
       return YES;
     }
@@ -1047,9 +1045,9 @@ cleanup:
   NSArray *originals = [NSArray arrayWithObjects:@"1143", @"993",
       @"imap.mail.me.com", nil];
   NSArray *messages = [NSArray arrayWithObjects:
-      @"The IMAP local port must be a whole number from 1024 to 65535.",
-      @"The IMAP server port must be a whole number from 1 to 65535.",
-      @"The IMAP server must be a hostname without whitespace, a scheme, a port, or a path.",
+      @"Local ports must be 1024–65535. Server ports must be 1–65535.",
+      @"Local ports must be 1024–65535. Server ports must be 1–65535.",
+      @"Enter a server hostname without whitespace, a scheme, port, or path.",
       nil];
   unsigned int index;
 
@@ -1066,26 +1064,11 @@ cleanup:
     if (![self replaceTextInField:field withString:[values objectAtIndex:index]]) {
       return NO;
     }
-    deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
-    while ([deadline timeIntervalSinceNow] > 0.0) {
-      NSDictionary *configuration = [NSDictionary dictionaryWithContentsOfFile:path];
-      id value = [[[configuration objectForKey:@"MailProxy"] objectForKey:@"IMAP"]
-          objectForKey:[keys objectAtIndex:index]];
-
-      if ([[value description] isEqualToString:[values objectAtIndex:index]]) {
-        saved = YES;
-        break;
-      }
-      usleep(100000);
-    }
-    okay = [self findElementNamed:@"OK" inElement:applicationElement_ depth:0];
-    if (!saved || okay != NULL) {
-      if (okay != NULL) CFRelease(okay);
-      return NO;
-    }
-    /* Tab ends editing and presents the validation sheet. */
-    CGPostKeyboardEvent(0, 48, true);
-    CGPostKeyboardEvent(0, 48, false);
+    if(![self pressControlNamed:@"Save" segment:0]) return NO;
+    NSDictionary *configuration=[NSDictionary dictionaryWithContentsOfFile:path];
+    id value=[[[configuration objectForKey:@"MailProxy"] objectForKey:@"IMAP"] objectForKey:[keys objectAtIndex:index]];
+    saved=[[value description] isEqualToString:[originals objectAtIndex:index]];
+    if(!saved) return NO;
     deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
     while ([deadline timeIntervalSinceNow] > 0.0 && message == NULL) {
       message = [self findElementNamed:[messages objectAtIndex:index]
@@ -1119,6 +1102,7 @@ cleanup:
       return NO;
     }
   }
+  if(![self pressControlNamed:@"Save" segment:0]) return NO;
   return [self waitForConfigurationAtPath:path imapLocalPort:1143
       imapServer:@"imap.mail.me.com" imapServerPort:993 smtpLocalPort:1587
       smtpServer:@"smtp.mail.me.com" smtpServerPort:587 timeout:5.0];
@@ -1151,7 +1135,7 @@ cleanup:
     }
   }
   usleep(100000);
-  return YES;
+  return [self pressControlNamed:@"Save" segment:0];
 }
 
 - (BOOL)waitForConfigurationAtPath:(NSString *)path
@@ -1194,7 +1178,7 @@ cleanup:
 
   while ([deadline timeIntervalSinceNow] > 0.0) {
     AXUIElementRef element = [self findElementNamed:name
-                                         inElement:windowElement_
+                                         inElement:applicationElement_
                                              depth:0];
     if (element != NULL) {
       CFRelease(element);
@@ -1218,27 +1202,21 @@ cleanup:
   return NO;
 }
 
-- (BOOL)waitForListenerOnPort:(unsigned short)port
-                      timeout:(NSTimeInterval)timeout;
+- (BOOL)waitForListenerOnPort:(unsigned short)port timeout:(NSTimeInterval)timeout;
 {
-  NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
-
-  while ([deadline timeIntervalSinceNow] > 0.0) {
-    int socketDescriptor = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in address;
-
-    if (socketDescriptor >= 0) {
-      memset(&address, 0, sizeof(address));
-      address.sin_family = AF_INET;
-      address.sin_port = htons(port);
-      address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-      if (connect(socketDescriptor, (struct sockaddr *)&address,
-                  sizeof(address)) == 0) {
-        close(socketDescriptor);
-        return YES;
-      }
-      close(socketDescriptor);
-    }
+  return [self waitForListenerOnPort:port available:YES timeout:timeout];
+}
+- (BOOL)waitForListenerOnPort:(unsigned short)port available:(BOOL)available timeout:(NSTimeInterval)timeout;
+{
+  NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:timeout];
+  while([deadline timeIntervalSinceNow]>0) {
+    int fd=socket(AF_INET,SOCK_STREAM,0); BOOL listening=NO;
+    if(fd<0) return NO;
+    struct sockaddr_in address; memset(&address,0,sizeof(address));
+    address.sin_family=AF_INET; address.sin_port=htons(port); address.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+    listening=connect(fd,(struct sockaddr *)&address,sizeof(address))==0;
+    close(fd);
+    if(listening==available) return YES;
     usleep(250000);
   }
   return NO;

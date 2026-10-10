@@ -212,7 +212,7 @@ static NSString * const kRCWindowFrameAutosaveName = @"RetroCloudSyncPreferences
 }
 - (void)rebuildToolbarImagesForWindow:(NSWindow *)window;
 {
-  CGFloat scale=[window XP_backingScaleFactor]; if(scale<1.0) scale=1.0;
+  CGFloat scale=RCWindowBackingScale(window); if(scale<1.0) scale=1.0;
   NSImage **images[]={&daemonToolbarImage_,&mailToolbarImage_,&contactsToolbarImage_,&logToolbarImage_};
   AIFontAwesomeIcon icons[]={AIFAGauge,AIFAEnvelope,AIFAAddressBook,AIFAFileLines};
   for(unsigned int n=0;n<4;n++) {

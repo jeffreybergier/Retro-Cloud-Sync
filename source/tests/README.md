@@ -181,14 +181,11 @@ run loop, matching the daemon and allowing AddressBook privacy replies to arrive
 
 ### iOS UIKit smoke test
 
-`make ios-ui-tests` builds a test-only rCloud executable. On an authorized iPhone 5,
-unload the production launchd job, back up its installed executable, copy the test
-executable from `build/iOS-ui-tests/rCloud.app/rCloud` to a new filename in the
-installed bundle, then rename it to `rCloud` and launch through SpringBoard.
-Always replace signed executables using a new inode to avoid stale code-signing
-cache entries. The installed bundle must include the
-release launch images, Info.plist and Config.example.plist. Restore the release
-executable and reload the production job after the app exits.
+`make test-ios-ui TEST_HOST=koolphone5` builds and runs a separate test-only
+rCloud app on an authorized, unlocked iPhone 5. It has its own bundle identifier
+and Keychain group. The runner registers it, opens its test URL, collects results,
+and removes it afterward. The installed production executable and launchd job
+remain untouched. `make ios-ui-tests` builds the bundle without running it.
 
 The smoke test runs on the UIKit main thread, verifies the Mac pane order (Status, Mail, Sync, Log), traverses all options screens,
 checks the 568-point window, uses the actual Save action with synthetic Keychain
@@ -228,3 +225,23 @@ first-file creation and atomic replacement with a synthetic launchd job, and
 verify an explicit SIGTERM does not respawn it. The five-second throttle bounds
 rapid retries. Keep this distinction intact so package hooks can stop the daemon
 without a replacement racing the upgrade.
+
+### Settings and package alignment regressions
+
+- `python3 source/tests/packaging/test_ios_package.py` checks archive metadata,
+  executable hook permissions, version mismatch rejection, and safe daemon/UI
+  shutdown order, including refusal on timeout. It mocks lifecycle commands and
+  never signals an installed process.
+- `make test-mac-logging TEST_HOST=x4-vm` includes shared status wording, stopped
+  process detection, interval wording, and Mail validation boundaries.
+- `make test-mac-app TEST_HOST=x4-vm` exercises explicit Save, rejected Mail
+  drafts, interval endpoints, and missing-account validation through Tiger's
+  Accessibility API. A first-run fixture is removed on completion; existing
+  configuration bytes are restored.
+- `make test-ios-ui TEST_HOST=koolphone5` installs a separate, temporary test
+  bundle with its own Keychain group. The installed production app/daemon are
+  not replaced. It tests readable/live status, credentials and reset, settings
+  preservation, invalid Mail drafts, and a separate offline launchd fixture's
+  Pause/Resume and Mail enable transitions on ports 24143/24587. Logs and
+  screenshots are retained under `build/tests/iOS/UI`; device artifacts use
+  mobile's Library/Caches. The phone must be unlocked for UIKit tests.

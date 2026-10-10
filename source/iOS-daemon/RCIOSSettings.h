@@ -3,6 +3,7 @@
   NSDictionary *status_;
   NSTimer *refreshTimer_;
 }
+- (void)refresh;
 @end
 
 UIViewController *RCIOSRootController(void);

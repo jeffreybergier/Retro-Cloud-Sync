@@ -1,3 +1,4 @@
 .altivec-sdk
 /build/
 /dist/
+__pycache__/

@@ -16,6 +16,17 @@ only the affected service. System iCloud sign-in is unnecessary; DAV credentials
 remain in Keychain.
 The mail proxy continues independently.
 
+Both configuration apps use Status, Mail, Sync, and Log. In Mail, **Enable Mail
+proxy** is independent of Contacts and Calendars. **Save** validates the entire
+Mail form before writing and applies it to a running service. Existing Mac
+configurations with no Mail enable flag retain the historical enabled default;
+iOS defaults to disabled. In Sync, **Save** applies the account, modes, history,
+and interval together. Both platforms allow 1–300 minutes. A blank password
+keeps the saved password. **Reset** disables Contacts and Calendars and removes
+the committed account's password, preserving Mail, mirrors, and journals.
+The Mac Status pane retains Start/Stop for its per-user launch agent.
+
+
 The daemon selects a publication backend through `RCSyncBackend.h`.
 `RCMacSyncBackend.m` preserves the Mac version/slice selection policy;
 `RCSyncServicesBackend.m` owns legacy sessions and conflict resolution, while
@@ -94,18 +105,21 @@ iOS 5 uses the older AddressBook initializer and Calendar APIs; iOS 6+ privacy
 APIs are weak-linked/runtime-guarded. Permission denial stops the affected
 service, never exposing an empty store to deletion logic.
 
-Open **rCloud → Sync** to enter your Apple Account and app-specific
+Open **rCloud → Sync** to enter your Apple ID and app-specific
 password. Choose the Contacts and Calendars modes, interval, and history, then
 tap **Save**. A blank password keeps the existing Keychain password for that
 account. The password field shows “Saved in Keychain” when that account has a
 saved credential. With no configured account, a single saved rCloud account is
 prefilled from Keychain metadata. New GUI setups start with both services disabled; two-way sync is an
-explicit choice. Set both services to Disabled to stop syncing. Use Save to apply changes. Saving safely stops the current daemon; launchd restarts it promptly with the
+explicit choice. Set both services to Disabled to stop syncing; Mail is unaffected.
+**Pause** in Status stops Mail and sync after durable work has stopped safely.
+**Resume** restores the configured services. The iOS launchd process remains
+available while paused to observe configuration changes; pausing is persistent
+across app exits and device restarts. Use Save to apply settings changes. Saving safely stops the current daemon; launchd restarts it promptly with the
 new configuration. First setup triggers launchd through a configuration-file watch.
 A five-second throttle prevents rapid restart loops; active work must finish
 stopping safely before the replacement daemon starts. Passwords never enter
-the configuration or log. Status refreshes automatically while visible; both Status and Log also have
-Refresh buttons. Contact photo checks report progress separately from the card
+the configuration or log. Status and Log refresh automatically while visible and also have Refresh buttons. Both log views show at most the last 1 MiB. Contact photo checks report progress separately from the card
 download, without advancing the last-success time before native import finishes.
 All screens use standard UIKit table controllers and navigation, with the Mac
 pane order and labels: Status, Mail, Sync, Log. Portrait launch
@@ -135,7 +149,11 @@ Both services default to `OneWay` in the example; each independently accepts
 `Disabled`, `OneWay`, or explicit `TwoWay`. No account is configured during
 installation, and no DAV requests occur until setup. The daemon keeps mirrors,
 write journals and `Status.plist` beside `Config.plist`; logs are in
-`/var/mobile/Library/Logs/RetroCloudSync`. Package hooks send SIGTERM and wait for journal-safe shutdown before unloading.
+`/var/mobile/Library/Logs/RetroCloudSync`. Package hooks send SIGTERM and wait for journal-safe shutdown before unloading,
+then stop only the SpringBoard job matching the rCloud bundle identity. They
+unregister the app on upgrade/removal and refresh the icon cache after removal.
+The package version and staged bundle metadata derive from the existing Mac
+release version source; packaging rejects mismatched bundle versions.
 Removal preserves account data and
 Keychain credentials. `--access`, `--request-access`, `--inspect-recovery` and
 `--export-recovery` are available on the installed executable.

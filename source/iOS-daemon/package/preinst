@@ -2,6 +2,6 @@
 set -e
 # RC_LIFECYCLE
 case "$1" in
-  install|upgrade) rc_stop ;;
+  install|upgrade) rc_stop; rc_stop_ui; rc_unregister ;;
 esac
 exit 0

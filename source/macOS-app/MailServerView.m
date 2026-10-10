@@ -6,6 +6,8 @@
 #import "MailServerView.h"
 
 #import "RCConfiguration.h"
+#import "RCServiceController.h"
+#import "RCSettingsPresentation.h"
 
 @interface MailServerView (Private)
 - (NSTextField *)newEditableFieldWithFrame:(NSRect)frame
@@ -18,6 +20,7 @@ autoresizingMask:(unsigned int)mask;
        localPortField:(NSTextField **)localPortField
           serverField:(NSTextField **)serverField
       serverPortField:(NSTextField **)serverPortField;
+- (void)settingsChanged:(id)sender;
 - (void)saveSettings:(id)sender;
 - (NSString *)validationErrorForField:(NSTextField *)field;
 - (void)showError:(NSString *)message;
@@ -39,7 +42,7 @@ autoresizingMask:(unsigned int)mask;
     const float boxHeight = 78;
 
     incomingBoxFrame = NSMakeRect(
-        edgePadding, NSHeight(frame) - edgePadding - boxHeight,
+        edgePadding, NSHeight(frame) - edgePadding - boxHeight - 32,
         NSWidth(frame) - (edgePadding * 2), boxHeight);
     outgoingBoxFrame = NSMakeRect(
         edgePadding, NSMinY(incomingBoxFrame) - boxSpacing - boxHeight,
@@ -60,6 +63,16 @@ autoresizingMask:(unsigned int)mask;
     [smtpServerField_ setNextKeyView:smtpServerPortField_];
     [smtpServerPortField_ setNextKeyView:imapLocalPortField_];
 
+    enabledButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(8, NSHeight(frame)-32, 180, 24)];
+    [enabledButton_ setButtonType:NSSwitchButton];
+    [enabledButton_ setTitle:@"Enable Mail proxy"];
+    [enabledButton_ setTarget:self]; [enabledButton_ setAction:@selector(settingsChanged:)];
+    [enabledButton_ setAutoresizingMask:NSViewMinYMargin];
+    [self addSubview:enabledButton_];
+    NSButton *save = [[[NSButton alloc] initWithFrame:NSMakeRect(NSWidth(frame)-96, NSMinY(outgoingBoxFrame)-38, 88, 28)] autorelease];
+    [save setTitle:@"Save"]; [save setBezelStyle:NSRoundedBezelStyle];
+    [save setTarget:self]; [save setAction:@selector(saveSettings:)];
+    [save setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin]; [self addSubview:save];
     [self reloadSettings];
   }
   return self;
@@ -79,6 +92,7 @@ autoresizingMask:(unsigned int)mask;
   [smtpLocalPortField_ release];
   [smtpServerField_ release];
   [smtpServerPortField_ release];
+  [enabledButton_ release];
   [pendingErrorMessage_ release];
   [super dealloc];
 }
@@ -96,6 +110,7 @@ autoresizingMask:(unsigned int)mask;
 
 - (void)reloadSettings;
 {
+  if(hasDraft_) return;
   NSString *errorMessage = nil;
   NSDictionary *configuration =
       [RCConfiguration loadConfigurationWithError:&errorMessage];
@@ -108,6 +123,7 @@ autoresizingMask:(unsigned int)mask;
     return;
   }
   mailProxy = [configuration objectForKey:@"MailProxy"];
+  [enabledButton_ setState:![mailProxy objectForKey:@"Enabled"] || [[mailProxy objectForKey:@"Enabled"] boolValue] ? NSOnState : NSOffState];
   imap = [mailProxy objectForKey:@"IMAP"];
   smtp = [mailProxy objectForKey:@"SMTP"];
   [imapLocalPortField_ setIntValue:[[imap objectForKey:@"LocalPort"] intValue]];
@@ -249,54 +265,14 @@ autoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
       autoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
 }
 
-- (void)controlTextDidChange:(NSNotification *)notification;
-{
-  [self saveSettings:[notification object]];
-}
-
-- (void)controlTextDidEndEditing:(NSNotification *)notification;
-{
-  NSString *errorMessage = [self validationErrorForField:[notification object]];
-
-  if (errorMessage != nil) [self showError:errorMessage];
-}
+- (void)settingsChanged:(id)sender { (void)sender; hasDraft_=YES; }
+- (void)controlTextDidChange:(NSNotification *)notification { [self settingsChanged:notification]; }
 
 - (NSString *)validationErrorForField:(NSTextField *)field;
 {
-  NSString *service = (field == imapLocalPortField_ ||
-      field == imapServerField_ || field == imapServerPortField_) ?
-      @"IMAP" : @"SMTP";
-  NSString *value = [field stringValue];
-
-  if (field == imapServerField_ || field == smtpServerField_) {
-    NSMutableCharacterSet *invalidCharacters =
-        [[[NSCharacterSet whitespaceAndNewlineCharacterSet] mutableCopy]
-            autorelease];
-
-    [invalidCharacters addCharactersInString:@"/:\\"];
-    if ([value length] == 0 || [value UTF8String] == NULL ||
-        [value rangeOfCharacterFromSet:invalidCharacters].location != NSNotFound) {
-      return [NSString stringWithFormat:
-          @"The %@ server must be a hostname without whitespace, a scheme, "
-           "a port, or a path.", service];
-    }
-  } else {
-    BOOL local = field == imapLocalPortField_ || field == smtpLocalPortField_;
-    int minimum = local ? 1024 : 1;
-    int port;
-    NSScanner *scanner = [NSScanner scannerWithString:
-        [value stringByTrimmingCharactersInSet:
-            [NSCharacterSet whitespaceAndNewlineCharacterSet]]];
-
-    [scanner setCharactersToBeSkipped:nil];
-    if (![scanner scanInt:&port] || ![scanner isAtEnd] ||
-        port < minimum || port > 65535) {
-      return [NSString stringWithFormat:
-          @"The %@ %@ port must be a whole number from %d to 65535.",
-          service, local ? @"local" : @"server", minimum];
-    }
-  }
-  return nil;
+  BOOL host=field==imapServerField_ || field==smtpServerField_;
+  BOOL local=field==imapLocalPortField_ || field==smtpLocalPortField_;
+  return RCMailFieldError([field stringValue],host,local);
 }
 
 - (void)saveSettings:(id)sender;
@@ -307,6 +283,19 @@ autoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
   NSString *errorMessage = nil;
 
   (void)sender;
+  if(![[self window] makeFirstResponder:nil]) return;
+  NSArray *fields=[NSArray arrayWithObjects:imapLocalPortField_,imapServerField_,imapServerPortField_,smtpLocalPortField_,smtpServerField_,smtpServerPortField_,nil];
+  NSEnumerator *enumerator=[fields objectEnumerator]; NSTextField *field;
+  while((field=[enumerator nextObject])) {
+    [field setStringValue:[[field stringValue] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+    NSString *error=[self validationErrorForField:field];
+    if(error) { [self showError:error]; return; }
+  }
+  if([imapLocalPortField_ intValue]==[smtpLocalPortField_ intValue]) {
+    [self showError:@"IMAP and SMTP need different local ports."]; return;
+  }
+  RCServiceController *service=[[[RCServiceController alloc] init] autorelease];
+  BOOL running=[service isServiceRunning];
   imap = [NSDictionary dictionaryWithObjectsAndKeys:
       [NSNumber numberWithInt:[imapLocalPortField_ intValue]], @"LocalPort",
       [imapServerField_ stringValue], @"RemoteHost",
@@ -318,11 +307,15 @@ autoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
       [NSNumber numberWithInt:[smtpServerPortField_ intValue]], @"RemotePort",
       nil];
   mailProxy = [NSDictionary dictionaryWithObjectsAndKeys:
-      imap, @"IMAP", smtp, @"SMTP", nil];
+      imap, @"IMAP", smtp, @"SMTP",
+      [NSNumber numberWithBool:[enabledButton_ state]==NSOnState], @"Enabled", nil];
   if (![RCConfiguration saveMailProxy:mailProxy error:&errorMessage]) {
     [self showError:errorMessage];
     return;
   }
+  hasDraft_=NO;
+  if(running && (![service stopServiceWithError:&errorMessage] || ![service startServiceWithError:&errorMessage]))
+    [self showError:errorMessage];
 }
 
 @end

@@ -125,3 +125,5 @@ $(APP_I386_ALTIVECCOCOA): $(ALTIVECCOCOA_STATIC_LIBRARY)
 	@$(LIPO) "$<" -thin i386 -output "$@"
 
 .PHONY: app-config
+
+$(APP_PPC_OBJECTS) $(APP_I386_OBJECTS): $(wildcard $(APP_SOURCE_ROOT)/*.h $(SHARED_SOURCE_ROOT)/*.h)
