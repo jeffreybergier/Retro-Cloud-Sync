@@ -26,11 +26,11 @@ targets:
     workdir: .
     build:
       - make macOS-release
-    artifact: build/macOS/release/rCloud.zip
+    artifact: build/macOS/release/rCloud/rCloud.zip
     asset_name: Retro-Cloud-Sync-{version}-macOS.zip
   - name: iOS
     workdir: .
     build:
       - make ios-package
-    artifact: build/iOS/release/rCloud-rootful.deb
+    artifact: build/iOS/release/rCloud/rCloud-rootful.deb
     asset_name: Retro-Cloud-Sync-{version}-iOS-rootful.deb

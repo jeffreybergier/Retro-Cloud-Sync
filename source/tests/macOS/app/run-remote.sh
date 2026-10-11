@@ -8,12 +8,12 @@ run_name="RetroCloudSync-app-Tests-$(date +%Y%m%d-%H%M%S)-$$"
 remote_relative="Desktop/${run_name}"
 
 ssh "${test_host}" "mkdir -p '${remote_relative}/screenshots'"
-scp -r "${build_root}/macOS/release/rCloud.app" \
+scp -O -r "${build_root}/macOS/release/rCloud/rCloud.app" \
   "${test_host}:${remote_relative}/"
-scp "${build_root}/tests/macOS/app/release/RetroCloudAppGUITests" \
+scp -O "${build_root}/tests/macOS/app/release/RetroCloudAppGUITests" \
   "${test_host}:${remote_relative}/"
 
-scp "${PROJECT_ROOT:?}/source/tests/macOS/app/Fixture.plist" "${test_host}:${remote_relative}/"
+scp -O "${PROJECT_ROOT:?}/source/tests/macOS/app/Fixture.plist" "${test_host}:${remote_relative}/"
 
 echo "--- Running app tests on ${test_host} ---"
 if ssh "${test_host}" \
@@ -22,7 +22,7 @@ if ssh "${test_host}" \
 else
   local_artifacts="${build_root}/tests/macOS/app/remote-artifacts/${run_name}"
   mkdir -p "${local_artifacts}"
-  scp -r "${test_host}:${remote_relative}/screenshots" \
+  scp -O -r "${test_host}:${remote_relative}/screenshots" \
     "${local_artifacts}/" 2>/dev/null || true
   echo "app test failed; screenshots copied to ${local_artifacts}" >&2
   exit 1

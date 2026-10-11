@@ -1,5 +1,7 @@
-PROJECT_ROOT := $(abspath ../..)
 ALTIVEC_ROOT ?= /altivec
+include $(ALTIVEC_ROOT)/make/entry.mk
+ifeq ($(_altivec_relocated),)
+PROJECT_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))/../..)
 DEPENDENCIES = libical libvc
 SOURCE_DIRS = ../shared ../macOS-daemon
 BUILD_FLAGS = -I../shared -I../macOS-daemon
@@ -41,3 +43,4 @@ rCloud_PACKAGE_SCRIPTS = package/preinst package/postinst package/prerm package/
 rCloud_LIFECYCLE = package/lifecycle.sh
 rCloud_PACKAGE_FILES = package/Config.example.plist=usr/share/rcloud/Config.example.plist
 include $(ALTIVEC_ROOT)/altivec_common_phone.mk
+endif

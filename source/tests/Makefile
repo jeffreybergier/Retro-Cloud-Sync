@@ -1,8 +1,8 @@
 # Offline harness orchestration; production builds live in platform Makefiles.
-PROJECT_ROOT := $(CURDIR)
+PROJECT_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))/../..)
 SOURCE_ROOT := $(PROJECT_ROOT)/source
 BUILD_ROOT ?= $(PROJECT_ROOT)/build
-override BUILD_ROOT := $(abspath $(BUILD_ROOT))
+override BUILD_ROOT := $(abspath $(if $(filter /%,$(BUILD_ROOT)),$(BUILD_ROOT),$(PROJECT_ROOT)/$(BUILD_ROOT)))
 ALTIVEC_ROOT ?= /altivec
 CONFIG ?= release
 ALTIVEC_PLATFORM := macOS
@@ -25,9 +25,9 @@ DAEMON_I386_ALTIVECCORE := $(DAEMON_PPC_ALTIVECCORE)
 DAEMON_INFO_PLIST := $(DAEMON_SOURCE_ROOT)/Info.plist
 DAEMON_LINK_FLAGS := -framework Foundation -framework CoreFoundation -framework SystemConfiguration -framework Security -framework SyncServices -lxml2 -lobjc -lgcc_s.10.4
 DAEMON_COMPILE_FLAGS = -I$(SDK)/usr/include/libxml2 $(ICAL_FLAGS) -I$(ALTIVECCORE_ROOT)/include
-DAEMON_OUTPUT := $(BUILD_ROOT)/macOS/$(CONFIG)/Intermediates/rcloudd/signed/rcloudd
-PPC_SHARED_LIBRARY := $(BUILD_ROOT)/macOS/$(CONFIG)/Intermediates/RetroCloudShared/ppc/libRetroCloudShared.a
-I386_SHARED_LIBRARY := $(BUILD_ROOT)/macOS/$(CONFIG)/Intermediates/RetroCloudShared/i386/libRetroCloudShared.a
+DAEMON_OUTPUT := $(BUILD_ROOT)/macOS/$(CONFIG)/rcloudd/Intermediates/signed/rcloudd
+PPC_SHARED_LIBRARY := $(BUILD_ROOT)/macOS/$(CONFIG)/libRetroCloudShared/Intermediates/ppc/libRetroCloudShared.a
+I386_SHARED_LIBRARY := $(BUILD_ROOT)/macOS/$(CONFIG)/libRetroCloudShared/Intermediates/i386/libRetroCloudShared.a
 ICAL_ROOT = $(DEPENDENCY_ROOT)
 ICAL_SOURCE = $(LIBICAL_PREPARED)
 ICAL_SCRIPT = $(ALTIVEC_ROOT)/make/dependencies/build-libical.sh
@@ -46,7 +46,7 @@ release debug:
 	+$(MAKE) -C $(PROJECT_ROOT) $@ BUILD_ROOT="$(BUILD_ROOT)"
 app-config daemon-config shared-config:
 	+$(MAKE) -C $(PROJECT_ROOT)/source/macOS-app $(CONFIG) BUILD_ROOT="$(BUILD_ROOT)"
-$(PPC_SHARED_LIBRARY) $(I386_SHARED_LIBRARY) $(BUILD_ROOT)/macOS/$(CONFIG)/Intermediates/RetroCloudShared/x86_64/libRetroCloudShared.a $(DAEMON_OUTPUT): | shared-config
+$(PPC_SHARED_LIBRARY) $(I386_SHARED_LIBRARY) $(BUILD_ROOT)/macOS/$(CONFIG)/libRetroCloudShared/Intermediates/x86_64/libRetroCloudShared.a $(DAEMON_OUTPUT): | shared-config
 	@test -f "$@"
 test-host-contacts: shared-test-run
 test-business-linux: test-host
@@ -88,8 +88,8 @@ MODERN_RANLIB = $(RANLIB_MODERN)
 MODERN_x86_64_CC = $(COMPILER_X64)
 MODERN_x86_64_FLAGS = -g -std=c99 -Wall -Wextra -fblocks -target x86_64-apple-macos10.9 -isysroot $(MODERN_SDK) -I$(SHARED_SOURCE_ROOT)
 MODERN_DAEMON_LINK = $(filter-out -lgcc_s.10.4,$(DAEMON_LINK_FLAGS)) -framework AddressBook -weak_framework EventKit -framework CoreServices
-SHARED_BUILD_ROOT = $(BUILD_ROOT)/macOS/$(CONFIG)/Intermediates/RetroCloudShared
-DAEMON_INTERMEDIATES = $(BUILD_ROOT)/macOS/$(CONFIG)/Intermediates/rcloudd
+SHARED_BUILD_ROOT = $(BUILD_ROOT)/macOS/$(CONFIG)/libRetroCloudShared/Intermediates
+DAEMON_INTERMEDIATES = $(BUILD_ROOT)/macOS/$(CONFIG)/rcloudd/Intermediates
 ICAL_x86_64_LIBRARY = $(call libical,x86_64)
 LIBVC_x86_64_LIBRARY = $(call libvc,x86_64)
 MODERN_SIGN_SCRIPT = $(ALTIVEC_ROOT)/make/sign-mac-slice.sh

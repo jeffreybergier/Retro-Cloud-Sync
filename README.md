@@ -89,7 +89,7 @@ than guessing which alarm owns retained attachment data.
 
 ## Jailbroken iOS daemon
 
-`make ios-package` builds `build/iOS/release/rCloud-rootful.deb` using the iOS 8.4 SDK:
+`make ios-package` builds `build/iOS/release/rCloud/rCloud-rootful.deb` using the iOS 8.4 SDK:
 armv7 targets iOS 5.0 and arm64 targets iOS 7.0. Native integration has been tested
 on `koolphone5` running iOS 8.4.1; iOS 5 and arm64 device execution remain untested.
 This package supports rootful installation. It imports contacts and calendars;
@@ -222,3 +222,10 @@ that the tag, bundle versions, and Debian package version match. The
 release workflow needs three repository secrets containing HTTPS URLs for the
 checksum-verified SDK archives: `ALTIVEC_SDK_MACOS_105_URL`,
 `ALTIVEC_SDK_MACOS_113_URL`, and `ALTIVEC_SDK_IPHONEOS_84_URL`.
+
+Build roots are resolved from the project Makefile and inherited by child makes.
+`BUILD_ROOT=custom` is relative to the repository root. Native artifacts live in
+`build/<platform>/<configuration>/<product>/`; `BUILD_VARIANT=name` keeps an
+additional build variant. Use `make macOS-clean PRODUCT=<name>` for one product,
+`make macOS-clean` for a platform, or `make clean-all` for the whole build root.
+CI stages release assets in `build/release` (including the release manifest).

@@ -12,7 +12,7 @@ host = os.environ.get('TEST_HOST', '')
 if not host:
     raise SystemExit('Set TEST_HOST to an authorized test iPhone.')
 build = Path(os.environ['BUILD_ROOT'])
-app = build / 'iOS-ui-tests/iOS/release/rCloud.app'
+app = build / 'tests/iOS/UI/release/rCloud/rCloud.app'
 identity = 'com.altivecintelligence.rcloud.ui-tests'
 info = plistlib.loads((app / 'Info.plist').read_bytes())
 if info['CFBundleIdentifier'] != identity:

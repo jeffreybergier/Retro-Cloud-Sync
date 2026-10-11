@@ -1,5 +1,7 @@
-PROJECT_ROOT := $(abspath ../..)
 ALTIVEC_ROOT ?= /altivec
+include $(ALTIVEC_ROOT)/make/entry.mk
+ifeq ($(_altivec_relocated),)
+PROJECT_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))/../..)
 DEPENDENCIES = libical libvc
 SOURCE_DIRS = ../shared ../macOS-daemon
 BUILD_FLAGS = -I../shared -I../macOS-daemon
@@ -41,3 +43,4 @@ rcloudd_MAC_SIGN = 1
 rcloudd_SIGN_PLIST = ../macOS-daemon/Info.plist
 rcloudd_IDENTIFIER = com.altivecintelligence.rcloudd
 include $(ALTIVEC_ROOT)/altivec_common_mac.mk
+endif

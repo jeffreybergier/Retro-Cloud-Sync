@@ -45,7 +45,7 @@ try:
             'WorkingDirectory': remote,
             'StandardOutPath': remote + '/test.log', 'StandardErrorPath': remote + '/error.log',
         }))
-        copy(build / 'iOS-tests/iOS/release/rCloud.app/rCloud', app + '-test-new')
+        copy(build / 'tests/iOS/native-stores/release/rCloud/rCloud.app/rCloud', app + '-test-new')
         ssh('chmod 755 ' + app + '-test-new; mv ' + app + '-test-new ' + app)
         copy(plist, remote + '/test.plist')
     loaded = True  # A connection failure can leave the remote load successful.

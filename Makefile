@@ -1,5 +1,7 @@
-PROJECT_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ALTIVEC_ROOT ?= /altivec
+include $(ALTIVEC_ROOT)/make/entry.mk
+ifeq ($(_altivec_relocated),)
+PROJECT_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST))))
 PLATFORMS = macOS iOS
 PROJECT_macOS_DIR = source/macOS-app
 PROJECT_iOS_DIR = source/iOS-daemon
@@ -17,3 +19,4 @@ test-% build-% analyze-% compare-%:
 
 carddav-probe carddav-probe-debug caldav-probe:
 	+$(MAKE) -f source/tests/Makefile $@ BUILD_ROOT="$(abspath $(BUILD_ROOT))"
+endif

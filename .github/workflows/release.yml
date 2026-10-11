@@ -100,14 +100,14 @@ jobs:
             -v "$GITHUB_WORKSPACE:/repo/user" \
             -w /repo/user \
             "$BUILD_IMAGE" \
-            -lc 'altivec-sdk install && altivec-release build && altivec-release stage "$RELEASE_VERSION"'
+            -lc 'altivec-sdk install && altivec-release build && altivec-release stage "$RELEASE_VERSION" --dist build/release/artifacts'
 
       - name: Validate release assets
         run: |
           set -euo pipefail
-          python3 source/make/scripts/validate-release.py "$RELEASE_VERSION" dist
-          sha256sum "dist/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip" \
-            "dist/Retro-Cloud-Sync-${RELEASE_VERSION}-iOS-rootful.deb"
+          python3 source/make/scripts/validate-release.py "$RELEASE_VERSION" build/release/artifacts
+          sha256sum "build/release/artifacts/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip" \
+            "build/release/artifacts/Retro-Cloud-Sync-${RELEASE_VERSION}-iOS-rootful.deb"
 
       - name: Publish GitHub release assets
         env:
@@ -119,5 +119,5 @@ jobs:
               --verify-tag --target "$RELEASE_SHA" --generate-notes
           fi
           gh release upload "$RELEASE_TAG" \
-            "dist/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip" \
-            "dist/Retro-Cloud-Sync-${RELEASE_VERSION}-iOS-rootful.deb" --clobber
+            "build/release/artifacts/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip" \
+            "build/release/artifacts/Retro-Cloud-Sync-${RELEASE_VERSION}-iOS-rootful.deb" --clobber
