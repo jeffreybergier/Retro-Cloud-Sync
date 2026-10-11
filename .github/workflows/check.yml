@@ -11,6 +11,8 @@ permissions:
 jobs:
   linux:
     runs-on: ubuntu-24.04
+    env:
+      BUILD_IMAGE: ghcr.io/jeffreybergier/altivec-intelligence:latest
 
     steps:
       - name: Check out source and dependencies
@@ -18,12 +20,14 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes \
-            build-essential bison cmake flex libcurl4-openssl-dev \
-            libsqlite3-dev libssl-dev libxml2-dev openssl perl python3
+      - name: Pull latest build image
+        run: docker pull "$BUILD_IMAGE"
 
-      - name: Run Linux business tests
-        run: make test-business-linux
+      - name: Run offline Linux tests
+        run: |
+          docker run --rm --network none \
+            --entrypoint /bin/bash \
+            -v "$GITHUB_WORKSPACE:/repo/user" \
+            -w /repo/user \
+            "$BUILD_IMAGE" \
+            -lc 'make test-host'
