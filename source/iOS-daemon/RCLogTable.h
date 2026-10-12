@@ -1,4 +1,6 @@
+#import <AltivecCocoa/AICollectionTableViewController.h>
+#import <AltivecCocoa/AICollectionController.h>
 #import <UIKit/UIKit.h>
-@interface RCLogTable : UITableViewController { NSArray *lines_; NSTimer *refreshTimer_; }
+@interface RCLogTable : AICollectionTableViewController { NSArray *lines_; AICollectionController *loader_; NSTimer *refreshTimer_; }
 - (void)refresh;
 @end

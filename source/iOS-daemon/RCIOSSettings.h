@@ -1,5 +1,6 @@
+#import <AltivecCocoa/AICollectionTableViewController.h>
 #import <UIKit/UIKit.h>
-@interface RCIOSSettings : UITableViewController {
+@interface RCIOSSettings : AICollectionTableViewController {
   NSDictionary *status_;
   NSTimer *refreshTimer_;
 }

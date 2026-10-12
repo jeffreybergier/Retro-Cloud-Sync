@@ -3,6 +3,8 @@
 #import "RCMailTable.h"
 
 @implementation RCMailTable
+- (NSArray *)collectionIdentifiersForSection:(NSInteger)section;
+{ return [self collectionFixedIdentifiersForSection:section]; }
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad {
   [super viewDidLoad]; [self setTitle:@"Mail"];

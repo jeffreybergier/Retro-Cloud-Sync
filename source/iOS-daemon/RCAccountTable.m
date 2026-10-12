@@ -5,13 +5,15 @@
 #import <Security/Security.h>
 #include "RCICloudCredentials.h"
 #include "RCIOSCredentialIdentity.h"
-@interface RCChoiceTable : UITableViewController {
+@interface RCChoiceTable : AICollectionTableViewController {
   NSMutableDictionary *settings_; NSString *key_; NSArray *values_; NSArray *labels_; NSString *help_;
 }
 - (id)initWithSettings:(NSMutableDictionary *)settings key:(NSString *)key title:(NSString *)title
     values:(NSArray *)values labels:(NSArray *)labels help:(NSString *)help;
 @end
 @implementation RCChoiceTable
+- (NSArray *)collectionIdentifiersForSection:(NSInteger)section;
+{ return [self collectionFixedIdentifiersForSection:section]; }
 - (id)initWithSettings:(NSMutableDictionary *)settings key:(NSString *)key title:(NSString *)title values:(NSArray *)values labels:(NSArray *)labels help:(NSString *)help {
   if((self=[super initWithStyle:UITableViewStyleGrouped])) { settings_=[settings retain]; key_=[key copy]; values_=[values copy]; labels_=[labels copy]; help_=[help copy]; [self setTitle:title]; } return self;
 }
@@ -24,7 +26,7 @@
   [cell setAccessoryType:[[settings_ objectForKey:key_] isEqual:[values_ objectAtIndex:[path row]]] ? UITableViewCellAccessoryCheckmark : UITableViewCellAccessoryNone]; return cell;
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
-  [settings_ setObject:[values_ objectAtIndex:[path row]] forKey:key_]; [table reloadData];
+  [settings_ setObject:[values_ objectAtIndex:[path row]] forKey:key_]; [self refreshCollection];
   [[self navigationController] popViewControllerAnimated:YES];
 }
 - (void)dealloc { [settings_ release]; [key_ release]; [values_ release]; [labels_ release]; [help_ release]; [super dealloc]; }
@@ -51,6 +53,8 @@ static NSString *SingleSavedAccount(void) {
 
 
 @implementation RCAccountTable
+- (NSArray *)collectionIdentifiersForSection:(NSInteger)section;
+{ return [self collectionFixedIdentifiersForSection:section]; }
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad {
   [super viewDidLoad]; [self setTitle:@"Sync"];
@@ -98,7 +102,7 @@ static NSString *SingleSavedAccount(void) {
     if(account) [username_ setText:account];
   }
   [self updateSavedPassword];
-  [[self tableView] reloadData];
+  [self refreshCollection];
 }
 - (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; [[self view] endEditing:YES]; }
 
@@ -195,7 +199,7 @@ static NSString *SingleSavedAccount(void) {
     }
   }
   [config_ release]; config_=[updated mutableCopy]; [settings_ release]; settings_=[sync mutableCopy];
-  [username_ setText:[sync objectForKey:@"Username"]]; [password_ setText:@""]; [self updateSavedPassword]; [[self tableView] reloadData];
+  [username_ setText:[sync objectForKey:@"Username"]]; [password_ setText:@""]; [self updateSavedPassword]; [self refreshCollection];
 }
 - (void)dealloc { [config_ release]; [settings_ release]; [username_ release]; [password_ release]; [super dealloc]; }
 @end

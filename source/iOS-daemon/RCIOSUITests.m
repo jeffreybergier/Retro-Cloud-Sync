@@ -109,7 +109,12 @@ void RCIOSRunUITests(UIWindow *window) {
     char *removed=NULL;
     NSCAssert(!RCICloudCredentialsCopyUsername([account UTF8String],&removed,&error), @"Reset removes the credential"); free(removed); [reset release];
     RCLogTable *logs=[[RCLogTable alloc] initWithStyle:UITableViewStylePlain]; [logs view]; [logs refresh];
-    NSCAssert([logs tableView:[logs tableView] numberOfRowsInSection:0]>0,@"Log loaded"); [logs release];
+    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:5];
+    while ([logs tableView:[logs tableView] numberOfRowsInSection:0]==0 && [deadline timeIntervalSinceNow]>0)
+      [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+    NSCAssert([logs tableView:[logs tableView] numberOfRowsInSection:0]>0,@"Background log loaded");
+    NSCAssert([[[logs collectionTableAdapter] snapshot] count]>0,@"Log uses collection snapshot");
+    [logs refresh]; [logs release]; /* Pending worker delivery must be invalidated. */
     [checks addObject:@"Bounded log screen"];
   } @catch(NSException *exception) { failure=[exception reason]; }
   RCICloudCredentialsRemove([account UTF8String],&error);

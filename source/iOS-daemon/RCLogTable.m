@@ -10,9 +10,10 @@
   refreshTimer_=[[NSTimer scheduledTimerWithTimeInterval:5.0 target:self selector:@selector(refresh) userInfo:nil repeats:YES] retain];
 }
 - (void)viewWillDisappear:(BOOL)animated {
-  [super viewWillDisappear:animated]; [refreshTimer_ invalidate]; [refreshTimer_ release]; refreshTimer_=nil;
+  [super viewWillDisappear:animated]; [refreshTimer_ invalidate]; [refreshTimer_ release]; refreshTimer_=nil; [loader_ cancel];
 }
-- (void)refresh {
++ (NSDictionary *)buildList:(NSDictionary *)request {
+  (void)request;
   NSFileHandle *file=[NSFileHandle fileHandleForReadingAtPath:@"/var/mobile/Library/Logs/RetroCloudSync/RetroCloudSyncDaemon.log"];
   NSString *tail=nil;
   @try { unsigned long long size=[file seekToEndOfFile]; [file seekToFileOffset:size>1048576 ? size-1048576 : 0];
@@ -20,8 +21,25 @@
     if(!tail && data) tail=[[[NSString alloc] initWithData:data encoding:NSISOLatin1StringEncoding] autorelease];
     if(size>1048576) { NSRange newline=[tail rangeOfString:@"\n"]; if(newline.location!=NSNotFound) tail=[tail substringFromIndex:newline.location+1]; tail=[@"[Earlier log entries are not shown.]\n" stringByAppendingString:tail ?: @""]; }
   } @catch(NSException *exception) { (void)exception; tail=@"Log unavailable."; } @finally { [file closeFile]; }
-  [lines_ release]; lines_=[[(tail ? tail : @"No log yet.") componentsSeparatedByString:@"\n"] copy]; [[self tableView] reloadData];
+  NSArray *lines = [(tail ? tail : @"No log yet.") componentsSeparatedByString:@"\n"];
+  NSDictionary *section = [NSDictionary dictionaryWithObjectsAndKeys:
+      @"log", @"id", lines, @"rows",
+      [lines count] <= AICollectionIdentityLimit ? lines : [NSArray array], @"identifiers", nil];
+  AICollectionSnapshot *snapshot = [[[AICollectionSnapshot alloc]
+      initWithSections:[NSArray arrayWithObject:section]] autorelease];
+  return [NSDictionary dictionaryWithObjectsAndKeys:lines, @"lines", snapshot, @"snapshot", nil];
 }
+- (void)refresh {
+  if (!loader_) loader_ = [[AICollectionController alloc] initWithTarget:self
+      selector:@selector(logLoaded:) builder:[RCLogTable class]];
+  [loader_ request:[NSDictionary dictionary]];
+}
+- (void)logLoaded:(NSDictionary *)result {
+  if ([result objectForKey:@"error"]) return;
+  [lines_ release]; lines_ = [[result objectForKey:@"lines"] retain];
+  [[self collectionTableAdapter] applySnapshot:[result objectForKey:@"snapshot"]];
+}
+- (void)refreshCollection { [self refresh]; }
 - (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section { (void)table; (void)section; return [lines_ count]; }
 - (CGFloat)tableView:(UITableView *)table heightForRowAtIndexPath:(NSIndexPath *)path {
   /* Measure with UIKit's default label font, also available on iOS 5. */
@@ -37,5 +55,5 @@
   if(!cell) cell=[[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"log"] autorelease];
   [[cell textLabel] setNumberOfLines:0]; [[cell textLabel] setText:[lines_ objectAtIndex:[path row]]]; [cell setSelectionStyle:UITableViewCellSelectionStyleNone]; return cell;
 }
-- (void)dealloc { [refreshTimer_ invalidate]; [refreshTimer_ release]; [lines_ release]; [super dealloc]; }
+- (void)dealloc { [loader_ invalidate]; [loader_ release]; [refreshTimer_ invalidate]; [refreshTimer_ release]; [lines_ release]; [super dealloc]; }
 @end

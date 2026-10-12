@@ -14,6 +14,8 @@ static NSString *StatusDate(id value, NSString *fallback) {
 }
 
 @implementation RCIOSSettings
+- (NSArray *)collectionIdentifiersForSection:(NSInteger)section;
+{ return [self collectionFixedIdentifiersForSection:section]; }
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
 - (void)viewDidLoad { [super viewDidLoad]; [self setTitle:@"Status"]; [[self navigationItem] setLeftBarButtonItem:[[[UIBarButtonItem alloc] initWithTitle:@"Pause" style:UIBarButtonItemStylePlain target:self action:@selector(toggleService)] autorelease]]; [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(refresh)] autorelease]]; }
 - (void)refresh {
@@ -24,7 +26,7 @@ static NSString *StatusDate(id value, NSString *fallback) {
   [[[self navigationItem] leftBarButtonItem] setEnabled:configuration!=nil];
   /* Process liveness can change even when Status.plist has not changed. */
   [status_ release]; status_=[latest retain];
-  [[self tableView] reloadData];
+  [self refreshCollection];
 }
 - (void)toggleService {
   NSMutableDictionary *configuration=[NSMutableDictionary dictionaryWithContentsOfFile:RCIOSConfigPath()];
