@@ -3,7 +3,7 @@
 #import "RCIOSSettings.h"
 #import "RCAccountTable.h"
 #import "RCMailTable.h"
-#import "RCLogTable.h"
+#import "RCLogViewController.h"
 #import <AltivecCocoa/AIFontAwesome.h>
 static NSString *StatusDate(id value, NSString *fallback) {
   if(![value isKindOfClass:[NSDate class]]) return fallback;
@@ -17,7 +17,7 @@ static NSString *StatusDate(id value, NSString *fallback) {
 - (NSArray *)collectionIdentifiersForSection:(NSInteger)section;
 { return [self collectionFixedIdentifiersForSection:section]; }
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
-- (void)viewDidLoad { [super viewDidLoad]; [self setTitle:@"Status"]; [[self navigationItem] setLeftBarButtonItem:[[[UIBarButtonItem alloc] initWithTitle:@"Pause" style:UIBarButtonItemStylePlain target:self action:@selector(toggleService)] autorelease]]; [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(refresh)] autorelease]]; }
+- (void)viewDidLoad { [super viewDidLoad]; [self setTitle:@"Status"]; [[self navigationItem] setLeftBarButtonItem:[[[UIBarButtonItem alloc] initWithTitle:@"Pause" style:UIBarButtonItemStylePlain target:self action:@selector(toggleService)] autorelease]]; [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh target:self action:@selector(refresh)] autorelease]]; [self refresh]; }
 - (void)refresh {
   NSDictionary *latest=[NSDictionary dictionaryWithContentsOfFile:[RCIOSSettingsDirectory stringByAppendingPathComponent:@"Status.plist"]];
   NSDictionary *configuration=[NSDictionary dictionaryWithContentsOfFile:RCIOSConfigPath()];
@@ -37,7 +37,7 @@ static NSString *StatusDate(id value, NSString *fallback) {
   [self refresh];
 }
 - (void)viewWillAppear:(BOOL)animated {
-  [super viewWillAppear:animated]; [self refresh];
+  [super viewWillAppear:animated];
   [refreshTimer_ invalidate]; [refreshTimer_ release];
   refreshTimer_=[[NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(refresh) userInfo:nil repeats:YES] retain];
 }
@@ -96,7 +96,7 @@ UIViewController *RCIOSRootController(void) {
   NSArray *screens=@[[[[RCIOSSettings alloc] init] autorelease],
       [[[RCMailTable alloc] init] autorelease],
       [[[RCAccountTable alloc] init] autorelease],
-      [[[RCLogTable alloc] initWithStyle:UITableViewStylePlain] autorelease]];
+      [[[RCLogViewController alloc] init] autorelease]];
   NSArray *titles=@[@"Status",@"Mail",@"Sync",@"Log"];
   AIFontAwesomeIcon icons[]={AIFAGauge,AIFAEnvelope,AIFAAddressBook,AIFAFileLines};
   CGFloat scale=[[UIScreen mainScreen] scale];

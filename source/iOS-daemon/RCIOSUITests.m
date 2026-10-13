@@ -3,7 +3,7 @@
 #import "RCIOSSettings.h"
 #import "RCAccountTable.h"
 #import "RCMailTable.h"
-#import "RCLogTable.h"
+#import "RCLogViewController.h"
 #import <AltivecCocoa/AIFontAwesome.h>
 #import <QuartzCore/QuartzCore.h>
 #include "RCICloudCredentials.h"
@@ -108,14 +108,35 @@ void RCIOSRunUITests(UIWindow *window) {
     NSCAssert([[resetConfig objectForKey:@"MailProxy"] isEqual:[mailConfig objectForKey:@"MailProxy"]], @"Reset preserves Mail");
     char *removed=NULL;
     NSCAssert(!RCICloudCredentialsCopyUsername([account UTF8String],&removed,&error), @"Reset removes the credential"); free(removed); [reset release];
-    RCLogTable *logs=[[RCLogTable alloc] initWithStyle:UITableViewStylePlain]; [logs view]; [logs refresh];
-    NSDate *deadline=[NSDate dateWithTimeIntervalSinceNow:5];
-    while ([logs tableView:[logs tableView] numberOfRowsInSection:0]==0 && [deadline timeIntervalSinceNow]>0)
-      [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
-    NSCAssert([logs tableView:[logs tableView] numberOfRowsInSection:0]>0,@"Background log loaded");
-    NSCAssert([[[logs collectionTableAdapter] snapshot] count]>0,@"Log uses collection snapshot");
-    [logs refresh]; [logs release]; /* Pending worker delivery must be invalidated. */
-    [checks addObject:@"Bounded log screen"];
+    RCLogViewController *logs=[[(UINavigationController *)[[tabs viewControllers] objectAtIndex:3] topViewController] retain];
+    UITextView *logText=(UITextView *)[logs view];
+    NSCAssert([logText isKindOfClass:[UITextView class]] && ![logText isEditable],@"Log is one read-only scrolling text view");
+    NSCAssert([[logText text] length]>0 && ![[logs valueForKey:@"loader_"] isLoading],@"Initial log text is ready before appearance");
+    NSString *initial=[[logText text] copy];
+    [logs viewWillAppear:NO];
+    NSCAssert(![[logs valueForKey:@"loader_"] isLoading] && [[logText text] isEqual:initial],@"Appearance does not reload log text");
+    [logs viewWillDisappear:NO]; [initial release];
+    [tabs setSelectedIndex:3];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
+    NSMutableString *sample=[NSMutableString string];
+    for(NSUInteger line=0;line<100;++line) [sample appendFormat:@"[%lu] Sync complete — saved local changes.\n",(unsigned long)line];
+    [logs performSelector:@selector(logLoaded:) withObject:@{@"text":sample}];
+    [logText layoutIfNeeded];
+    [logText setContentOffset:CGPointMake(0,120) animated:NO];
+    [sample appendString:@"[100] Waiting for next update.\n"];
+    [logs performSelector:@selector(logLoaded:) withObject:@{@"text":sample}];
+    NSCAssert(fabs([logText contentOffset].y-120)<2,@"Live log updates preserve a reader's scroll position");
+    UIGraphicsBeginImageContextWithOptions([window bounds].size,YES,0);
+    [[window layer] renderInContext:UIGraphicsGetCurrentContext()];
+    NSData *logPNG=UIImagePNGRepresentation(UIGraphicsGetImageFromCurrentImageContext()); UIGraphicsEndImageContext();
+    [logPNG writeToFile:[RCIOSSettingsDirectory stringByAppendingPathComponent:@"log.png"] atomically:YES];
+    [tabs setSelectedIndex:0];
+
+    [logs release];
+    RCLogViewController *discarded=[[RCLogViewController alloc] init];
+    [discarded view]; [discarded refresh]; [discarded release]; /* Cancel pending delivery. */
+    [checks addObject:@"Bounded scrolling log text, synchronous initial content and explicit refresh"];
+
   } @catch(NSException *exception) { failure=[exception reason]; }
   RCICloudCredentialsRemove([account UTF8String],&error);
   [[NSFileManager defaultManager] removeItemAtPath:RCIOSConfigPath() error:NULL];

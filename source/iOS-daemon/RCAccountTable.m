@@ -5,6 +5,7 @@
 #import <Security/Security.h>
 #include "RCICloudCredentials.h"
 #include "RCIOSCredentialIdentity.h"
+static NSString *const RCAccountChoiceChanged = @"RCAccountChoiceChanged";
 @interface RCChoiceTable : AICollectionTableViewController {
   NSMutableDictionary *settings_; NSString *key_; NSArray *values_; NSArray *labels_; NSString *help_;
 }
@@ -27,6 +28,7 @@
 }
 - (void)tableView:(UITableView *)table didSelectRowAtIndexPath:(NSIndexPath *)path {
   [settings_ setObject:[values_ objectAtIndex:[path row]] forKey:key_]; [self refreshCollection];
+  [[NSNotificationCenter defaultCenter] postNotificationName:RCAccountChoiceChanged object:settings_];
   [[self navigationController] popViewControllerAnimated:YES];
 }
 - (void)dealloc { [settings_ release]; [key_ release]; [values_ release]; [labels_ release]; [help_ release]; [super dealloc]; }
@@ -53,6 +55,14 @@ static NSString *SingleSavedAccount(void) {
 
 
 @implementation RCAccountTable
+/* Replacement cells must transfer ownership of retained editor controls. */
+- (void)bindAccessory:(UIView *)control toCell:(UITableViewCell *)cell {
+  if(!accessoryCells_) accessoryCells_=[[NSMutableDictionary alloc] init];
+  NSValue *key=[NSValue valueWithNonretainedObject:control];
+  UITableViewCell *old=[accessoryCells_ objectForKey:key];
+  if(old!=cell) [old setAccessoryView:nil];
+  [cell setAccessoryView:control]; [accessoryCells_ setObject:cell forKey:key];
+}
 - (NSArray *)collectionIdentifiersForSection:(NSInteger)section;
 { return [self collectionFixedIdentifiersForSection:section]; }
 - (id)init { return [super initWithStyle:UITableViewStyleGrouped]; }
@@ -85,24 +95,18 @@ static NSString *SingleSavedAccount(void) {
     if(account) [username_ setText:account];
   }
   [self updateSavedPassword];
+  [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(accountChoiceChanged:) name:RCAccountChoiceChanged object:settings_];
+  [self refreshCollection];
   [[self navigationItem] setLeftBarButtonItem:[[[UIBarButtonItem alloc] initWithTitle:@"Reset" style:UIBarButtonItemStylePlain target:self action:@selector(resetAccount)] autorelease]];
   [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave target:self action:@selector(save)] autorelease]];
 }
+- (void)accountChoiceChanged:(NSNotification *)note { (void)note; [self refreshCollection]; }
 - (void)updateSavedPassword {
   NSString *username=[[username_ text] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   char *saved=NULL; RCError error;
   BOOL found=[username length] && RCICloudCredentialsCopyUsername([username UTF8String],&saved,&error);
   free(saved);
   [password_ setPlaceholder:found ? @"Saved in Keychain" : @"Password"];
-}
-- (void)viewWillAppear:(BOOL)animated {
-  [super viewWillAppear:animated];
-  if(!unreadable_ && ![[username_ text] length]) {
-    NSString *account=SingleSavedAccount();
-    if(account) [username_ setText:account];
-  }
-  [self updateSavedPassword];
-  [self refreshCollection];
 }
 - (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; [[self view] endEditing:YES]; }
 
@@ -118,7 +122,7 @@ static NSString *SingleSavedAccount(void) {
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
   (void)table; UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleValue1 reuseIdentifier:nil] autorelease];
   NSInteger row=[path row],section=[path section];
-  if(section==0) { [[cell textLabel] setText:row ? @"Password" : @"Apple ID"]; [cell setAccessoryView:row ? password_ : username_]; [cell setSelectionStyle:UITableViewCellSelectionStyleNone]; }
+  if(section==0) { [[cell textLabel] setText:row ? @"Password" : @"Apple ID"]; [self bindAccessory:row ? password_ : username_ toCell:cell]; [cell setSelectionStyle:UITableViewCellSelectionStyleNone]; }
   else {
     BOOL mode=section==1 || (section==2 && row==0);
     BOOL history=section==2 && row==1;
@@ -201,5 +205,5 @@ static NSString *SingleSavedAccount(void) {
   [config_ release]; config_=[updated mutableCopy]; [settings_ release]; settings_=[sync mutableCopy];
   [username_ setText:[sync objectForKey:@"Username"]]; [password_ setText:@""]; [self updateSavedPassword]; [self refreshCollection];
 }
-- (void)dealloc { [config_ release]; [settings_ release]; [username_ release]; [password_ release]; [super dealloc]; }
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; [accessoryCells_ release]; [config_ release]; [settings_ release]; [username_ release]; [password_ release]; [super dealloc]; }
 @end
