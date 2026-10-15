@@ -11,7 +11,7 @@ rCloud_SOURCES += $(RC_TEST_SOURCE)
 rCloud_GROUPS = daemon_entry
 GROUP_daemon_entry_SOURCES = ../macOS-daemon/main.m
 GROUP_daemon_entry_FLAGS = -Dmain=RCCloudDaemonMain
-rCloud_SOURCES += $(wildcard *.m) RCIOSCredentials.c $(filter-out ../shared/RCICloudCredentials.c,$(wildcard ../shared/*.c)) \
+rCloud_SOURCES += $(wildcard *.m) $(wildcard ../shared/*.c) \
  $(addprefix ../macOS-daemon/,RCContactGraph.m RCCalendarGraph.m RCTwoWaySync.m RCNativeExchange.m RCNativeSystemStore.m RCPlatformDate.m RCTwoWayFields.m RCContactTwoWay.m RCContactPhotoCache.m RCCalendarTwoWay.m RCCalendarOperations.m RCLogger.m RCStatus.m RCMailProxy.c)
 rCloud_CORE = static
 rCloud_COCOA = static
