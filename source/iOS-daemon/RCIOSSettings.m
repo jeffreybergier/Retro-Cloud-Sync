@@ -87,7 +87,6 @@ static NSString *StatusDate(id value, NSString *fallback) {
   [cell setSelectionStyle:UITableViewCellSelectionStyleNone];
   return cell;
 }
-- (CGFloat)tableView:(UITableView *)table heightForRowAtIndexPath:(NSIndexPath *)path { (void)table; (void)path; return 64; }
 - (void)dealloc { [refreshTimer_ invalidate]; [refreshTimer_ release]; [status_ release]; [super dealloc]; }
 @end
 
