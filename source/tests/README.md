@@ -174,7 +174,13 @@ Fixtures use `.invalid` DAV URLs and simulated write confirmations, with no live
 network calls or account credentials. A unique synthetic Keychain item is saved,
 read, updated and removed to verify daemon credential access. Cleanup is restricted to journal-owned fixtures;
 the contact snapshot must match its pre-test value. Retain failed-run journals
-for targeted cleanup. `make analyze-ios` checks the armv7/iOS 5 path.
+for targeted cleanup. The suite enables DEBUG query-window logging (no event
+contents) and verifies local event discovery in 1972, 2040 and 2099, including
+empty windows and duplicate-free replay. Query dates must be Foundation dates:
+archiving the app-only `RCCalendarDate` class into EventKit predicates interrupts
+the calendar service connection on the tested iOS 8.4.1 device. Keep the custom
+date class for journal timezone/floating metadata.
+`make analyze-ios` checks the armv7/iOS 5 path.
 
 The Mac native harness runs framework operations on a worker with a live main
 run loop, matching the daemon and allowing AddressBook privacy replies to arrive.

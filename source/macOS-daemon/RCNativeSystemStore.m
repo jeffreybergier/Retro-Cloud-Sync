@@ -897,14 +897,31 @@ failed:
     NSEnumerator *calendars=[context_->graph keyEnumerator]; NSString *calendar;
     while((calendar=[calendars nextObject])) if([[[context_->graph objectForKey:calendar] objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"]) {
       id container=[self container:calendar create:NO error:error]; if(error->code) return nil; if(!container) continue;
+      NSString *calendarID=[container calendarIdentifier];
+      if(![calendarID length]) { RCErrorSet(error,1,"Managed calendar identity is unavailable; local inventory is incomplete"); return nil; }
       int year; for(year=1970;year<2100;year+=4) {
         NSAutoreleasePool *windowPool=[[NSAutoreleasePool alloc] init];
         @try {
         if(RCCheckCancellation(error)) return nil;
         NSDate *start=[RCCalendarDate dateWithYear:year month:1 day:1 hour:0 minute:0 second:0 timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
         NSDate *end=[RCCalendarDate dateWithYear:year+4 month:1 day:1 hour:0 minute:0 second:0 timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
+        /* EventKit sends predicate dates to calaccessd. RCCalendarDate archives
+           its application-only class, which the service cannot decode. Keep
+           that class in our journal, but send Foundation dates across IPC. */
+        start=[NSDate dateWithTimeIntervalSinceReferenceDate:[start timeIntervalSinceReferenceDate]];
+        end=[NSDate dateWithTimeIntervalSinceReferenceDate:[end timeIntervalSinceReferenceDate]];
         NSPredicate *predicate=[(EKEventStore *)events_ predicateForEventsWithStartDate:start endDate:end calendars:[NSArray arrayWithObject:container]];
-        NSEnumerator *items=[[(EKEventStore *)events_ eventsMatchingPredicate:predicate] objectEnumerator]; id event;
+        RCLogger(RCLogDebug,"Calendars","LocalScan",@"Querying managed calendar window %d-%d",year,year+4);
+        NSArray *matches=[(EKEventStore *)events_ eventsMatchingPredicate:predicate];
+        /* Older EventKit returns nil for an empty date window too. Verify
+           the owned calendar is still available before accepting that result. */
+        EKCalendar *available=[(EKEventStore *)events_ calendarWithIdentifier:calendarID];
+        if(![[available calendarIdentifier] isEqual:calendarID]) {
+          RCErrorSet(error,1,"EventKit local event query failed for %d-%d; inventory is incomplete",year,year+4);
+          return nil;
+        }
+        RCLogger(RCLogDebug,"Calendars","LocalScan",@"Completed managed calendar window %d-%d (%lu events)",year,year+4,(unsigned long)[matches count]);
+        NSEnumerator *items=[matches objectEnumerator]; id event;
         while((event=[items nextObject])) {
           NSString *native=[event valueForKey:@"eventIdentifier"]; if(!native || [known containsObject:native]) continue; [known addObject:native];
           NSString *root=[@"native-event-" stringByAppendingString:native];

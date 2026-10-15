@@ -260,6 +260,34 @@ static void InvitationTests(NSString *directory)
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
 }
+static void CalendarDiscoveryTests(NSString *directory)
+{
+  RCCalendarStore *store=RCCalendarStoreOpen([[directory stringByAppendingPathComponent:@"discovery.sqlite"] fileSystemRepresentation],"offline-discovery-test",&error); CHECK(store);
+  @try {
+    CalendarSeed(store,Data(@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:discovery-seed\r\nDTSTART:20271009T120000Z\r\nDTEND:20271009T130000Z\r\nSUMMARY:Discovery seed\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"),"\"seed\"");
+    SyncCalendar(store,NO,YES);
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
+    EKEvent *seed=[events eventWithIdentifier:[FirstRow(j) objectForKey:@"id"]]; CHECK(seed);
+    EKCalendar *calendar=[seed calendar]; CHECK(calendar);
+    // Exercise early, post-2038 and final query windows with native-only events.
+    int years[]={1972,2040,2099};
+    for(NSUInteger n=0;n<3;n++) {
+      NSDate *date=[RCCalendarDate dateWithYear:years[n] month:6 day:1 hour:12 minute:0 second:0 timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
+      date=[NSDate dateWithTimeIntervalSinceReferenceDate:[date timeIntervalSinceReferenceDate]];
+      EKEvent *event=[EKEvent eventWithEventStore:events]; [event setCalendar:calendar];
+      [event setTitle:[NSString stringWithFormat:@"Offline discovery %d",years[n]]];
+      [event setStartDate:date]; [event setEndDate:[date dateByAddingTimeInterval:3600]];
+      CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    }
+    SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE kind='create' AND state='queued'")==3);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==3);
+    SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==3);
+    puts("PASS: EventKit discovery crosses empty and post-2038 windows; native events queue once without network writes");
+  } @finally { if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); } }
+}
 static void PendingCalendarSave(RCWriteJournal j,NSString *root,BOOL loseIdentity)
 {
   NSData *empty=[NSKeyedArchiver archivedDataWithRootObject:[NSDictionary dictionary]];
@@ -378,7 +406,7 @@ int RCIOSNativeTests(const char *path) {
     CHECK(Count(cj,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
     CHECK(Count(ej,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
     puts("PASS: remote deletion removes only owned native records");
-    ContactRecoveryTests(directory); ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES); InvitationTests(directory);
+    CalendarDiscoveryTests(directory); ContactRecoveryTests(directory); ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES); InvitationTests(directory);
     result=0;
   } @catch(NSException *exception) {
     fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]);

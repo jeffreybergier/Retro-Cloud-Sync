@@ -43,6 +43,7 @@ try:
             'Label': label, 'ProgramArguments': [app, '--native-tests', remote],
             'UserName': 'mobile', 'GroupName': 'mobile', 'RunAtLoad': True,
             'WorkingDirectory': remote,
+            'EnvironmentVariables': {'RETROCLOUDSYNC_LOG_LEVEL': 'DEBUG'},
             'StandardOutPath': remote + '/test.log', 'StandardErrorPath': remote + '/error.log',
         }))
         copy(build / 'tests/iOS/native-stores/release/rCloud/rCloud.app/rCloud', app + '-test-new')
