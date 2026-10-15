@@ -234,14 +234,14 @@ without a replacement racing the upgrade.
   never signals an installed process.
 - `make test-mac-logging TEST_HOST=x4-vm` includes shared status wording, stopped
   process detection, interval wording, and Mail validation boundaries.
-- `make test-mac-app TEST_HOST=x4-vm` exercises explicit Save, rejected Mail
-  drafts, interval endpoints, and missing-account validation through Tiger's
+- `make test-mac-app TEST_HOST=x4-vm` exercises account controls, rejected Mail
+  drafts, automatic Sync option saving, and interval endpoints through Tiger's
   Accessibility API. A first-run fixture is removed on completion; existing
   configuration bytes are restored.
 - `make test-ios-ui TEST_HOST=koolphone5` installs a separate, temporary test
   bundle with its own Keychain group. The installed production app/daemon are
-  not replaced. It tests readable/live status, credentials and reset, settings
-  preservation, invalid Mail drafts, and a separate offline launchd fixture's
+  not replaced. It tests readable/live status, credentials and password removal, automatic Sync options and stepped interval,
+  settings preservation, invalid Mail drafts, and a separate offline launchd fixture's
   Pause/Resume and Mail enable transitions on ports 24143/24587. Logs and
   screenshots are retained under `build/tests/iOS/UI`; device artifacts use
   mobile's Library/Caches. The phone must be unlocked for UIKit tests.

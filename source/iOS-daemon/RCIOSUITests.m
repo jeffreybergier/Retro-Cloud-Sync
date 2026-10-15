@@ -37,18 +37,18 @@ void RCIOSRunUITests(UIWindow *window) {
     NSDictionary *photoStatus=@{@"Running":@YES,@"PID":@(getpid()),@"Contacts":@{@"Phase":@"Photos",@"Progress":@"1 / 2 contacts"}};
     [photoStatus writeToFile:statusPath atomically:YES];
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1.2]];
-    NSIndexPath *progressPath=[NSIndexPath indexPathForRow:1 inSection:1];
+    NSIndexPath *progressPath=[NSIndexPath indexPathForRow:1 inSection:2];
     UITableViewCell *progressCell=[root tableView:[root tableView] cellForRowAtIndexPath:progressPath];
     NSCAssert([[[progressCell detailTextLabel] text] isEqual:@"1 / 2 contacts"], @"Visible status refreshes automatically");
     [@{@"Running":@YES,@"PID":@(getpid()),@"Contacts":@{@"Phase":@"Photos",@"Progress":@"2 / 2 contacts"}} writeToFile:statusPath atomically:YES];
     [root refresh];
     progressCell=[root tableView:[root tableView] cellForRowAtIndexPath:progressPath];
     NSCAssert([[[progressCell detailTextLabel] text] isEqual:@"2 / 2 contacts"], @"Manual status refresh");
-    UITableViewCell *phaseCell=[root tableView:[root tableView] cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:1]];
+    UITableViewCell *phaseCell=[root tableView:[root tableView] cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:2]];
     NSCAssert([[[phaseCell detailTextLabel] text] isEqual:@"Checking contact photos…"], @"Shared readable phase");
     [@{@"Running":@NO,@"Contacts":@{@"Phase":@"Photos",@"Progress":@"2 / 2 contacts"}} writeToFile:statusPath atomically:YES];
     [root refresh];
-    phaseCell=[root tableView:[root tableView] cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:1]];
+    phaseCell=[root tableView:[root tableView] cellForRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:2]];
     NSCAssert([[[phaseCell detailTextLabel] text] isEqual:@"Paused — background service stopped"], @"Stopped daemon must not display stale activity");
     [[NSFileManager defaultManager] removeItemAtPath:statusPath error:NULL];
     [checks addObject:@"Automatic and manual status refresh show current photo progress"];
@@ -56,7 +56,7 @@ void RCIOSRunUITests(UIWindow *window) {
     NSMutableDictionary *settings=[form valueForKey:@"settings_"];
     NSCAssert([[settings objectForKey:@"ContactsSyncMode"] isEqual:@"Disabled"] && [[settings objectForKey:@"CalendarsSyncMode"] isEqual:@"Disabled"], @"Fresh setup must not enable syncing");
     [checks addObject:@"Fresh configuration defaults to disabled"];
-    for(NSArray *position in @[@[@1,@0],@[@2,@0],@[@2,@1],@[@3,@0]]) {
+    for(NSArray *position in @[@[@1,@0],@[@2,@0],@[@2,@1]]) {
       NSIndexPath *path=[NSIndexPath indexPathForRow:[[position objectAtIndex:1] integerValue] inSection:[[position objectAtIndex:0] integerValue]];
       [form tableView:[form tableView] didSelectRowAtIndexPath:path];
       [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];
@@ -65,12 +65,19 @@ void RCIOSRunUITests(UIWindow *window) {
       [choice tableView:[choice tableView] didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:0]];
       [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];
     }
-    [checks addObject:@"Contacts, Calendars, interval and history choices"];
+    NSCAssert(![[form navigationItem] rightBarButtonItem] && ![[form navigationItem] leftBarButtonItem], @"Account actions belong inside the form");
+    NSDictionary *automatic=[NSDictionary dictionaryWithContentsOfFile:RCIOSConfigPath()];
+    NSCAssert([[[automatic objectForKey:@"Contacts"] objectForKey:@"ContactsSyncMode"] isEqual:@"OneWay"], @"Mode saved without Save Account");
+    NSCAssert([[[automatic objectForKey:@"Contacts"] objectForKey:@"Username"] isEqual:@""], @"Options must not save an account draft");
+    UISlider *interval=[form valueForKey:@"intervalSlider_"];
+    [interval setValue:17.6]; [interval sendActionsForControlEvents:UIControlEventValueChanged];
+    NSCAssert([interval value]==18, @"Interval snaps to whole minutes");
+    NSCAssert([[[[NSDictionary dictionaryWithContentsOfFile:RCIOSConfigPath()] objectForKey:@"Contacts"] objectForKey:@"SyncIntervalSeconds"] intValue]==1080, @"Interval saves automatically");
+    [checks addObject:@"Sync choices save immediately and interval snaps to minutes"];
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(CGRectGetWidth([window bounds]),CGRectGetHeight([window bounds])),YES,0);
     [[window layer] renderInContext:UIGraphicsGetCurrentContext()];
     NSData *formPNG=UIImagePNGRepresentation(UIGraphicsGetImageFromCurrentImageContext()); UIGraphicsEndImageContext();
     [formPNG writeToFile:[RCIOSSettingsDirectory stringByAppendingPathComponent:@"account.png"] atomically:YES];
-    [settings setObject:@"Disabled" forKey:@"ContactsSyncMode"]; [settings setObject:@"Disabled" forKey:@"CalendarsSyncMode"];
     UITextField *username=[form valueForKey:@"username_"]; UITextField *password=[form valueForKey:@"password_"];
     NSCAssert([password isSecureTextEntry], @"Password must be secure");
     [username setText:account]; [password setText:@"synthetic-ui-password"];
@@ -92,23 +99,34 @@ void RCIOSRunUITests(UIWindow *window) {
     [checks addObject:@"Save action: private config, Keychain password, secure field cleared"];
     [form release];
     RCMailTable *mail=[[RCMailTable alloc] init]; [mail view];
-    [(UISwitch *)[mail valueForKey:@"enabled_"] setOn:YES];
+    UITableViewCell *mailControl=[root tableView:[root tableView] cellForRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:0]];
+    UISwitch *mailSwitch=(UISwitch *)[mailControl accessoryView];
+    [mailSwitch setOn:YES]; [mailSwitch sendActionsForControlEvents:UIControlEventValueChanged];
     [mail save];
     NSDictionary *mailConfig=[NSDictionary dictionaryWithContentsOfFile:RCIOSConfigPath()];
     NSCAssert([[[mailConfig objectForKey:@"MailProxy"] objectForKey:@"Enabled"] boolValue], @"Mail enabled setting saved");
     NSCAssert([[mailConfig objectForKey:@"Contacts"] isEqual:[saved objectForKey:@"Contacts"]], @"Mail settings preserve sync account");
     [checks addObject:@"Mail settings save independently and preserve sync configuration"];
+    UITableViewCell *syncControl=[root tableView:[root tableView] cellForRowAtIndexPath:[NSIndexPath indexPathForRow:2 inSection:0]];
+    UISwitch *syncSwitch=(UISwitch *)[syncControl accessoryView];
+    [syncSwitch setOn:NO]; [syncSwitch sendActionsForControlEvents:UIControlEventValueChanged];
+    NSDictionary *paused=[NSDictionary dictionaryWithContentsOfFile:RCIOSConfigPath()];
+    NSCAssert([[paused objectForKey:@"SyncPaused"] boolValue], @"Sync master switch persists");
+    NSCAssert([[paused objectForKey:@"Contacts"] isEqual:[mailConfig objectForKey:@"Contacts"]], @"Sync master preserves individual modes");
+    NSCAssert([[paused objectForKey:@"MailProxy"] isEqual:[mailConfig objectForKey:@"MailProxy"]], @"Sync master preserves Mail");
+    [syncSwitch setOn:YES]; [syncSwitch sendActionsForControlEvents:UIControlEventValueChanged];
+    mailConfig=[NSDictionary dictionaryWithContentsOfFile:RCIOSConfigPath()];
     UITextField *port=[[mail valueForKey:@"fields_"] objectAtIndex:0];
     [port setText:@"0"]; [mail save];
     NSCAssert([[NSDictionary dictionaryWithContentsOfFile:RCIOSConfigPath()] isEqual:mailConfig], @"Invalid Mail draft must not be written");
     [mail release];
     RCAccountTable *reset=[[RCAccountTable alloc] init]; [reset view]; [reset resetAccount];
     NSDictionary *resetConfig=[NSDictionary dictionaryWithContentsOfFile:RCIOSConfigPath()];
-    NSCAssert([[[resetConfig objectForKey:@"Contacts"] objectForKey:@"ContactsSyncMode"] isEqual:@"Disabled"], @"Reset disables sync");
+    NSCAssert([[resetConfig objectForKey:@"Contacts"] isEqual:[mailConfig objectForKey:@"Contacts"]], @"Removing a password preserves the account and sync options");
     NSCAssert([[resetConfig objectForKey:@"MailProxy"] isEqual:[mailConfig objectForKey:@"MailProxy"]], @"Reset preserves Mail");
     char *removed=NULL;
     NSCAssert(!RCICloudCredentialsCopyUsername([account UTF8String],&removed,&error), @"Reset removes the credential"); free(removed); [reset release];
-    RCLogViewController *logs=[[(UINavigationController *)[[tabs viewControllers] objectAtIndex:3] topViewController] retain];
+    RCLogViewController *logs=(RCLogViewController *)[[(UINavigationController *)[[tabs viewControllers] objectAtIndex:3] topViewController] retain];
     UITextView *logText=(UITextView *)[logs view];
     NSCAssert([logText isKindOfClass:[UITextView class]] && ![logText isEditable],@"Log is one read-only scrolling text view");
     NSCAssert([[logText text] length]>0 && ![[logs valueForKey:@"loader_"] isLoading],@"Initial log text is ready before appearance");
@@ -140,6 +158,6 @@ void RCIOSRunUITests(UIWindow *window) {
   } @catch(NSException *exception) { failure=[exception reason]; }
   RCICloudCredentialsRemove([account UTF8String],&error);
   [[NSFileManager defaultManager] removeItemAtPath:RCIOSConfigPath() error:NULL];
-  [@{@"Checks":checks,@"Result":failure ?: @"PASS"} writeToFile:[RCIOSSettingsDirectory stringByAppendingPathComponent:@"result.plist"] atomically:YES];
+  [@{@"Checks":checks,@"Result":failure ?: @"PASS",@"RunID":[[NSBundle mainBundle] objectForInfoDictionaryKey:@"RCTestRunID"] ?: @""} writeToFile:[RCIOSSettingsDirectory stringByAppendingPathComponent:@"result.plist"] atomically:YES];
 }
 #endif

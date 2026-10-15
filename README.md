@@ -16,15 +16,20 @@ only the affected service. System iCloud sign-in is unnecessary; DAV credentials
 remain in Keychain.
 The mail proxy continues independently.
 
-Both configuration apps use Status, Mail, Sync, and Log. In Mail, **Enable Mail
-proxy** is independent of Contacts and Calendars. **Save** validates the entire
-Mail form before writing and applies it to a running service. Existing Mac
-configurations with no Mail enable flag retain the historical enabled default;
-iOS defaults to disabled. In Sync, **Save** applies the account, modes, history,
-and interval together. Both platforms allow 1–300 minutes. A blank password
-keeps the saved password. **Reset** disables Contacts and Calendars and removes
-the committed account's password, preserving Mail, mirrors, and journals.
-The Mac Status pane retains Start/Stop for its per-user launch agent.
+Both configuration apps use Status, Mail, Sync, and Log. Status groups **Enable
+daemon**, **Enable Mail proxy**, and **Enable Sync** together: checkboxes on Mac,
+switches on iOS. The daemon control is the master switch; Mail and Sync retain
+their settings when it is off. The Sync switch preserves each service's mode.
+Mail **Save** validates and applies the server settings without changing the
+Status controls. Existing Mac configurations with no Mail enable flag retain
+the historical enabled default; iOS defaults to disabled.
+In Sync, Contacts/Calendars modes, history, and interval save immediately.
+Both platforms use a slider with one-minute steps from 1–300 minutes, saving
+when dragging finishes. **Save Account** stores the Apple ID and password;
+a blank password keeps the saved password. **Remove Password** deletes only
+the committed account's Keychain password, preserving its name, sync settings,
+Mail, mirrors, and journals. Sync needs a saved password to run.
+On Mac, enabling/disabling the daemon loads/unloads its per-user launch agent.
 
 
 The daemon selects a publication backend through `RCSyncBackend.h`.
@@ -107,15 +112,17 @@ service, never exposing an empty store to deletion logic.
 
 Open **rCloud → Sync** to enter your Apple ID and app-specific
 password. Choose the Contacts and Calendars modes, interval, and history, then
-tap **Save**. A blank password keeps the existing Keychain password for that
+tap **Save Account**. A blank password keeps the existing Keychain password for that
 account. The password field shows “Saved in Keychain” when that account has a
 saved credential. With no configured account, a single saved rCloud account is
 prefilled from Keychain metadata. New GUI setups start with both services disabled; two-way sync is an
 explicit choice. Set both services to Disabled to stop syncing; Mail is unaffected.
-**Pause** in Status stops Mail and sync after durable work has stopped safely.
-**Resume** restores the configured services. The iOS launchd process remains
+Turning off **Enable daemon** in Status stops Mail and sync after durable work
+has stopped safely. Turning it on restores the configured services. The iOS launchd process remains
 available while paused to observe configuration changes; pausing is persistent
-across app exits and device restarts. Use Save to apply settings changes. Saving safely stops the current daemon; launchd restarts it promptly with the
+across app exits and device restarts. Sync options save automatically; account
+and Mail server edits have their own Save actions. Saving safely stops the
+current daemon; launchd restarts it promptly with the
 new configuration. First setup triggers launchd through a configuration-file watch.
 A five-second throttle prevents rapid restart loops; active work must finish
 stopping safely before the replacement daemon starts. Passwords never enter
@@ -126,8 +133,8 @@ pane order and labels: Status, Mail, Sync, Log. Portrait launch
 images cover the original iPhone, iPhone 5, iPhone 6/6 Plus, and iPad, including
 `Default-568h@2x.png` to avoid the iPhone 4 compatibility viewport.
 
-Open **rCloud → Mail**, enable the proxy, and tap **Save** to use Mail
-through localhost. Existing installations leave the proxy disabled until enabled.
+Open **rCloud → Mail** and save the server settings, then turn on
+**Enable Mail proxy** in Status to use Mail through localhost. Existing installations leave the proxy disabled until enabled.
 A mail-only setup does not require a Contacts/Calendar account or credentials in
 rCloud. It preserves any existing sync configuration.
 

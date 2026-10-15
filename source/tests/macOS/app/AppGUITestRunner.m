@@ -196,7 +196,7 @@ static BOOL ConfigurationMatches(NSString *path,
       stringByAppendingPathComponent:@"RetroCloudSyncDaemon.log"];
 
   if (![self waitForStatus:@"Stopped" timeout:1.0] &&
-      ![self pressControlNamed:@"Stop" segment:1]) {
+      ![self pressControlNamed:@"Enable daemon" segment:0]) {
     PrintFail(@"Could not press Stop for the running daemon");
     goto cleanup;
   }
@@ -349,21 +349,21 @@ static BOOL ConfigurationMatches(NSString *path,
       CFRelease(accountTitle);
     }
     if (accountBox != NULL) {
-      accountButton = [self findElementNamed:@"Save"
+      accountButton = [self findElementNamed:@"Save Account"
           inElement:accountBox depth:0];
       if (accountButton == NULL) {
-        accountButton = [self findElementNamed:@"Reset"
+        accountButton = [self findElementNamed:@"Remove Password"
             inElement:accountBox depth:0];
       }
       CFRelease(accountBox);
     }
     if (accountButton == NULL) {
-      PrintFail(@"Save/Reset is missing from the iCloud Account box");
+      PrintFail(@"Account actions are missing from the iCloud Account box");
       goto cleanup;
     }
     {
       CFTypeRef title = CopyAXAttribute(accountButton, kAXTitleAttribute);
-      BOOL expectsEnabled = [(NSString *)title isEqualToString:@"Save"];
+      BOOL expectsEnabled = YES;
       NSMutableArray *fields = [NSMutableArray array];
       unsigned int index;
       BOOL passed;
@@ -381,12 +381,12 @@ static BOOL ConfigurationMatches(NSString *path,
       }
       CFRelease(accountButton);
       if (!passed) {
-        PrintFail(@"Account fields must both be enabled for Save and disabled for Reset");
+        PrintFail(@"Account fields must remain editable");
         goto cleanup;
       }
     }
   }
-  PrintPass(@"Account Save and Reset controls are present and fields remain editable");
+  PrintPass(@"Save Account and Remove Password controls are present and fields remain editable");
   {
     AXUIElementRef slider = [self findElementWithRole:kAXSliderRole
         inElement:windowElement_ depth:0];
@@ -409,7 +409,6 @@ static BOOL ConfigurationMatches(NSString *path,
         passed = NO;
         break;
       }
-      if(![self pressControlNamed:@"Save" segment:0]) { passed=NO; break; }
       deadline = [NSDate dateWithTimeIntervalSinceNow:5.0];
       while ([deadline timeIntervalSinceNow] > 0.0) {
         NSDictionary *current = [NSDictionary
@@ -433,7 +432,7 @@ static BOOL ConfigurationMatches(NSString *path,
       goto cleanup;
     }
     if (!passed || ![self pressControlNamed:@"Sync" segment:0]) {
-      PrintFail(@"Interval slider endpoints, readout, or Save failed");
+      PrintFail(@"Interval slider endpoints, readout, or automatic save failed");
       goto cleanup;
     }
   }
@@ -450,14 +449,15 @@ static BOOL ConfigurationMatches(NSString *path,
       if(![self pressControlNamed:@"1-way Sync: iCloud → Address Book" segment:0]) goto cleanup;
       if(![self pressControlNamed:@"Status" segment:0] || ![self pressControlNamed:@"Sync" segment:0]) goto cleanup;
       usleep(100000);
-      if(![[NSDictionary dictionaryWithContentsOfFile:configurationPath] isEqual:original]) {
-        PrintFail(@"Sync changes must remain drafts until Save"); goto cleanup;
+      NSDictionary *current=[NSDictionary dictionaryWithContentsOfFile:configurationPath];
+      if(![[[current objectForKey:@"Contacts"] objectForKey:@"ContactsSyncMode"] isEqual:@"OneWay"]) {
+        PrintFail(@"Sync mode must save immediately"); goto cleanup;
       }
-      if(![self pressControlNamed:@"Save" segment:0] || ![self waitForElementNamed:@"Enter an Apple ID and an app-specific password." timeout:5.0]) {
-        PrintFail(@"Enabling sync without an account must fail"); goto cleanup;
+      if(![[[current objectForKey:@"Contacts"] objectForKey:@"Username"] isEqual:@""]) {
+        PrintFail(@"Sync options must not modify the account"); goto cleanup;
       }
-      if(![self pressControlNamed:@"OK" segment:0] || ![self pressControlNamed:@"Disabled" segment:0] || ![self pressControlNamed:@"Save" segment:0]) goto cleanup;
-      PrintPass(@"Sync drafts and account validation preserve disabled configuration");
+      if(![self pressControlNamed:@"Disabled" segment:0]) goto cleanup;
+      PrintPass(@"Sync options save immediately and preserve the account");
     }
   }
   if (![self pressControlNamed:@"Status" segment:0] ||
@@ -467,7 +467,7 @@ static BOOL ConfigurationMatches(NSString *path,
   }
   PrintPass(@"Daemon preferences panel reopened");
 
-  if (![self pressControlNamed:@"Start" segment:0]) {
+  if (![self pressControlNamed:@"Enable daemon" segment:0]) {
     PrintFail(@"Start control could not be pressed");
     goto cleanup;
   }
@@ -555,12 +555,13 @@ static BOOL ConfigurationMatches(NSString *path,
       ![self waitForListenerOnPort:1143 available:NO timeout:15.0] || ![self waitForListenerOnPort:1587 available:NO timeout:15.0]) {
     PrintFail(@"Mail Save did not replace the running proxy listeners"); goto cleanup;
   }
-  if(![self pressControlNamed:@"Enable Mail proxy" segment:0] || ![self pressControlNamed:@"Save" segment:0] ||
+  if(![self pressControlNamed:@"Status" segment:0] || ![self pressControlNamed:@"Enable Mail proxy" segment:0] ||
       ![self waitForDaemonRunning:YES timeout:15.0] || ![self waitForListenerOnPort:2143 available:NO timeout:15.0] ||
       ![self waitForListenerOnPort:2587 available:NO timeout:15.0]) {
     PrintFail(@"Mail disable must close listeners while leaving the daemon running"); goto cleanup;
   }
   if(![self pressControlNamed:@"Enable Mail proxy" segment:0] ||
+      ![self pressControlNamed:@"Mail" segment:0] ||
       ![self setMailFieldsWithIMAPLocalPort:@"1143" imapServer:@"imap.mail.me.com" imapServerPort:@"993"
           smtpLocalPort:@"1587" smtpServer:@"smtp.mail.me.com" smtpServerPort:@"587"] ||
       ![self waitForListenerOnPort:1143 timeout:15.0] || ![self waitForListenerOnPort:1587 timeout:15.0] ||
@@ -569,7 +570,7 @@ static BOOL ConfigurationMatches(NSString *path,
   }
   PrintPass(@"Running Mail changes apply on Save; enable/disable preserves the daemon");
 
-  if (![self pressControlNamed:@"Stop" segment:1]) {
+  if (![self pressControlNamed:@"Enable daemon" segment:0]) {
     PrintFail(@"Stop control could not be pressed");
     goto cleanup;
   }
@@ -603,7 +604,7 @@ cleanup:
     [self captureScreenshotNamed:@"failure.png"];
     [self dumpElement:windowElement_ depth:0];
     [self pressControlNamed:@"Status" segment:0];
-    [self pressControlNamed:@"Stop" segment:1];
+    [self pressControlNamed:@"Enable daemon" segment:0];
   }
   [self cleanUp];
   if (originalConfigurationData != nil &&

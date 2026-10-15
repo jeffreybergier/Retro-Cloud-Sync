@@ -45,6 +45,8 @@
 - (void)intervalChanged:(id)sender;
 - (void)updateIntervalLabel;
 - (BOOL)saveSyncSettings;
+- (BOOL)saveAccountName:(NSString *)username;
+- (BOOL)reloadRunningService;
 - (void)setError:(NSString *)message;
 @end
 
@@ -248,10 +250,10 @@
 
     accountButton_ = [[NSButton alloc]
         initWithFrame:[[accountBox contentView]
-            convertRect:NSMakeRect(innerRight - 80, accountTop - 76,
-                                   80, actionButtonHeight)
+            convertRect:NSMakeRect(innerRight - 110, accountTop - 76,
+                                   110, actionButtonHeight)
                fromView:self]];
-    [accountButton_ setTitle:@"Save"];
+    [accountButton_ setTitle:@"Save Account"];
     [accountButton_ setBezelStyle:NSRoundedBezelStyle];
     [accountButton_ setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
     [accountButton_ setTarget:self];
@@ -259,14 +261,14 @@
     [[accountBox contentView] addSubview:accountButton_];
 
     NSButton *reset=[[[NSButton alloc] initWithFrame:[[accountBox contentView]
-        convertRect:NSMakeRect(innerRight-168,accountTop-76,80,actionButtonHeight) fromView:self]] autorelease];
-    [reset setTitle:@"Reset"]; [reset setBezelStyle:NSRoundedBezelStyle];
+        convertRect:NSMakeRect(innerRight-258,accountTop-76,140,actionButtonHeight) fromView:self]] autorelease];
+    [reset setTitle:@"Remove Password"]; [reset setBezelStyle:NSRoundedBezelStyle];
     [reset setTarget:self]; [reset setAction:@selector(resetAccount:)];
-    [reset setToolTip:@"Disable Contacts and Calendars and remove the saved password. Mail is unchanged."];
+    [reset setToolTip:@"Remove the saved password. Sync preferences are preserved."];
     [reset setAutoresizingMask:NSViewMinXMargin | NSViewMaxYMargin];
     [[accountBox contentView] addSubview:reset];
-    [self addLabel:@"Save applies all Sync settings." frame:NSMakeRect(8, 20, 280, 20)];
-    [accountButton_ setToolTip:@"Save account, sync modes, history, and interval. Leave the password blank to keep it."];
+    [self addLabel:@"Sync options save automatically." frame:NSMakeRect(8, 20, 280, 20)];
+    [accountButton_ setToolTip:@"Save the Apple ID and password. Leave the password blank to keep it."];
     [passwordField_ setToolTip:@"Use an app-specific password. Leave blank to keep the saved password."];
 
     /* Tiger does not reliably infer key order for programmatic views. */
@@ -364,7 +366,7 @@
 
 - (void)updateAccountButton;
 {
-  [accountButton_ setTitle:@"Save"];
+  [accountButton_ setTitle:@"Save Account"];
   [usernameField_ setEnabled:YES];
   [passwordField_ setEnabled:YES];
 }
@@ -372,11 +374,10 @@
 - (void)syncSettingsChanged:(id)sender;
 {
   (void)sender;
-  /* Changes are drafts until Save is pressed. */
-  hasDraft_=YES;
+  [self saveSyncSettings];
 }
 
-- (void)controlTextDidChange:(NSNotification *)notification { [self syncSettingsChanged:notification]; }
+- (void)controlTextDidChange:(NSNotification *)notification { (void)notification; hasDraft_=YES; }
 
 - (void)updateIntervalLabel;
 {
@@ -397,63 +398,51 @@
   if (![intervalSlider_ isTrackingInterval]) [self syncSettingsChanged:sender];
 }
 
+- (BOOL)reloadRunningService;
+{
+  RCServiceController *service=[[[RCServiceController alloc] init] autorelease];
+  NSString *error=nil;
+  if([service isServiceRunning] &&
+      (![service stopServiceWithError:&error] || ![service startServiceWithError:&error])) {
+    [self setError:error]; return NO;
+  }
+  return YES;
+}
+
+- (BOOL)saveAccountName:(NSString *)username;
+{
+  NSString *error=nil;
+  NSDictionary *loaded=[RCConfiguration loadConfigurationWithError:&error];
+  if(!loaded) { [self setError:error]; return NO; }
+  NSMutableDictionary *configuration=[[loaded mutableCopy] autorelease];
+  NSMutableDictionary *contacts=[[[RCConfiguration contactsConfigurationFromConfiguration:loaded] mutableCopy] autorelease];
+  [contacts setObject:username forKey:@"Username"];
+  [configuration setObject:contacts forKey:@"Contacts"];
+  if(![RCConfiguration saveConfiguration:configuration error:&error]) { [self setError:error]; return NO; }
+  return [self reloadRunningService];
+}
+
 - (BOOL)saveSyncSettings;
 {
-  NSString *errorMessage = nil;
-  NSDictionary *configuration;
-  NSDictionary *oldContacts;
-  NSString *username = [[usernameField_ stringValue]
-      stringByTrimmingCharactersInSet:
-          [NSCharacterSet whitespaceAndNewlineCharacterSet]];
-  NSString *contactsSyncMode = [contactsSyncMatrix_ selectedRow] == 2 ?
-      @"TwoWay" : ([contactsSyncMatrix_ selectedRow] == 1 ?
-          @"OneWay" : @"Disabled");
-  NSString *calendarsSyncMode = [calendarsSyncMatrix_ selectedRow] == 2 ?
-      @"TwoWay" : ([calendarsSyncMatrix_ selectedRow] == 1 ?
-          @"OneWay" : @"Disabled");
-  RCServiceController *serviceController =
-      [[[RCServiceController alloc] init] autorelease];
-  BOOL serviceWasRunning = [serviceController isServiceRunning];
-
-  configuration = [RCConfiguration
-      loadConfigurationWithError:&errorMessage];
-  if (configuration == nil) {
-    [self setError:errorMessage];
+  NSString *error=nil;
+  NSDictionary *configuration=[RCConfiguration loadConfigurationWithError:&error];
+  if(!configuration) { [self setError:error]; return NO; }
+  NSDictionary *contacts=[RCConfiguration contactsConfigurationFromConfiguration:configuration];
+  NSString *contactsMode=[contactsSyncMatrix_ selectedRow]==2 ? @"TwoWay" : [contactsSyncMatrix_ selectedRow]==1 ? @"OneWay" : @"Disabled";
+  NSString *calendarsMode=[calendarsSyncMatrix_ selectedRow]==2 ? @"TwoWay" : [calendarsSyncMatrix_ selectedRow]==1 ? @"OneWay" : @"Disabled";
+  if(![RCConfiguration saveContactsSyncMode:contactsMode calendarsSyncMode:calendarsMode
+      username:[contacts objectForKey:@"Username"] ?: @"" syncInterval:syncIntervalSeconds_
+      calendarHistoryYears:(int)[calendarHistoryPopup_ indexOfSelectedItem] error:&error]) {
+    [self setError:error];
+    /* Restore only options, preserving the account fields being edited. */
+    [contactsSyncMatrix_ selectCellAtRow:[[contacts objectForKey:@"ContactsSyncMode"] isEqual:@"TwoWay"] ? 2 : [[contacts objectForKey:@"ContactsSyncMode"] isEqual:@"OneWay"] ? 1 : 0 column:0];
+    [calendarsSyncMatrix_ selectCellAtRow:[[contacts objectForKey:@"CalendarsSyncMode"] isEqual:@"TwoWay"] ? 2 : [[contacts objectForKey:@"CalendarsSyncMode"] isEqual:@"OneWay"] ? 1 : 0 column:0];
+    [calendarHistoryPopup_ selectItemAtIndex:[[contacts objectForKey:@"CalendarHistoryYears"] intValue]];
+    syncIntervalSeconds_=[[contacts objectForKey:@"SyncIntervalSeconds"] longLongValue];
+    [intervalSlider_ setDoubleValue:syncIntervalSeconds_/60.0]; [self updateIntervalLabel];
     return NO;
   }
-  oldContacts = [RCConfiguration
-      contactsConfigurationFromConfiguration:configuration];
-
-  if (!credentialsChanged_ && [[oldContacts objectForKey:@"Username"] isEqualToString:username] &&
-      [[oldContacts objectForKey:@"ContactsSyncMode"]
-          isEqualToString:contactsSyncMode] &&
-      [[oldContacts objectForKey:@"CalendarsSyncMode"]
-          isEqualToString:calendarsSyncMode] &&
-      [[oldContacts objectForKey:@"SyncIntervalSeconds"] longLongValue] ==
-          syncIntervalSeconds_ &&
-      [[oldContacts objectForKey:@"CalendarHistoryYears"] intValue] ==
-          [calendarHistoryPopup_ indexOfSelectedItem] &&
-      [oldContacts objectForKey:@"CalendarHistoryYears"] != nil) {
-    hasDraft_=NO;
-    return YES;
-  }
-  if (![RCConfiguration saveContactsSyncMode:contactsSyncMode
-      calendarsSyncMode:calendarsSyncMode username:username
-      syncInterval:syncIntervalSeconds_
-      calendarHistoryYears:(int)[calendarHistoryPopup_ indexOfSelectedItem]
-      error:&errorMessage]) {
-    [self setError:errorMessage];
-    return NO;
-  }
-  if (serviceWasRunning &&
-      (![serviceController stopServiceWithError:&errorMessage] ||
-       ![serviceController startServiceWithError:&errorMessage])) {
-    [self setError:errorMessage];
-    return NO;
-  }
-  hasDraft_=NO;
-  credentialsChanged_=NO;
-  return YES;
+  return [self reloadRunningService];
 }
 
 - (void)accountButtonClicked:(id)sender;
@@ -463,8 +452,7 @@
   NSString *username=[[usernameField_ stringValue] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
   NSString *password=[passwordField_ stringValue];
   RCError error;
-  BOOL enabled=[contactsSyncMatrix_ selectedRow]!=0 || [calendarsSyncMatrix_ selectedRow]!=0;
-  if((enabled || [password length]) && ![username length]) {
+  if(![username length]) {
     [self setError:@"Enter an Apple ID and an app-specific password."]; return;
   }
   if([password length]) {
@@ -476,15 +464,9 @@
       [self setError:@"The password could not be saved in Keychain."]; return;
     }
     [passwordField_ setStringValue:@""];
-    credentialsChanged_=YES;
-  }
-  if(enabled) {
-    char *saved=NULL;
-    BOOL found=RCICloudCredentialsCopyUsername([username UTF8String],&saved,&error); free(saved);
-    if(!found) { [self setError:@"Enter an app-specific password for this account before enabling sync."]; return; }
   }
   [usernameField_ setStringValue:username];
-  if([self saveSyncSettings]) { [self updateAccountButton]; }
+  if([self saveAccountName:username]) { hasDraft_=NO; [self updateAccountButton]; }
 }
 
 - (void)resetAccount:(id)sender;
@@ -495,19 +477,14 @@
   NSDictionary *configuration=[RCConfiguration loadConfigurationWithError:&message];
   if(!configuration) { [self setError:message]; return; }
   NSString *username=[[[configuration objectForKey:@"Contacts"] objectForKey:@"Username"] copy];
-  [contactsSyncMatrix_ selectCellAtRow:0 column:0];
-  [calendarsSyncMatrix_ selectCellAtRow:0 column:0];
-  [usernameField_ setStringValue:username ? username : @""];
-  if(![self saveSyncSettings]) { [username release]; hasDraft_=NO; [self reloadSettings]; return; }
   RCError error;
   if([username length] && !RCICloudCredentialsRemove([username UTF8String],&error)) {
-    [self setError:@"Sync is disabled, but the saved password could not be removed from Keychain. Try Reset again."];
-    [username release]; hasDraft_=NO; [self reloadSettings]; return;
+    [self setError:@"The saved password could not be removed from Keychain."];
+    [username release]; return;
   }
-  [usernameField_ setStringValue:@""];
-  if(![self saveSyncSettings]) { [username release]; hasDraft_=NO; [self reloadSettings]; return; }
   [username release];
   [passwordField_ setStringValue:@""]; [self updateAccountButton];
+  [self reloadRunningService];
 }
 
 @end

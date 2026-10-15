@@ -42,7 +42,7 @@ autoresizingMask:(unsigned int)mask;
     const float boxHeight = 78;
 
     incomingBoxFrame = NSMakeRect(
-        edgePadding, NSHeight(frame) - edgePadding - boxHeight - 32,
+        edgePadding, NSHeight(frame) - edgePadding - boxHeight,
         NSWidth(frame) - (edgePadding * 2), boxHeight);
     outgoingBoxFrame = NSMakeRect(
         edgePadding, NSMinY(incomingBoxFrame) - boxSpacing - boxHeight,
@@ -63,12 +63,6 @@ autoresizingMask:(unsigned int)mask;
     [smtpServerField_ setNextKeyView:smtpServerPortField_];
     [smtpServerPortField_ setNextKeyView:imapLocalPortField_];
 
-    enabledButton_ = [[NSButton alloc] initWithFrame:NSMakeRect(8, NSHeight(frame)-32, 180, 24)];
-    [enabledButton_ setButtonType:NSSwitchButton];
-    [enabledButton_ setTitle:@"Enable Mail proxy"];
-    [enabledButton_ setTarget:self]; [enabledButton_ setAction:@selector(settingsChanged:)];
-    [enabledButton_ setAutoresizingMask:NSViewMinYMargin];
-    [self addSubview:enabledButton_];
     NSButton *save = [[[NSButton alloc] initWithFrame:NSMakeRect(NSWidth(frame)-96, NSMinY(outgoingBoxFrame)-38, 88, 28)] autorelease];
     [save setTitle:@"Save"]; [save setBezelStyle:NSRoundedBezelStyle];
     [save setTarget:self]; [save setAction:@selector(saveSettings:)];
@@ -92,7 +86,6 @@ autoresizingMask:(unsigned int)mask;
   [smtpLocalPortField_ release];
   [smtpServerField_ release];
   [smtpServerPortField_ release];
-  [enabledButton_ release];
   [pendingErrorMessage_ release];
   [super dealloc];
 }
@@ -123,7 +116,6 @@ autoresizingMask:(unsigned int)mask;
     return;
   }
   mailProxy = [configuration objectForKey:@"MailProxy"];
-  [enabledButton_ setState:![mailProxy objectForKey:@"Enabled"] || [[mailProxy objectForKey:@"Enabled"] boolValue] ? NSOnState : NSOffState];
   imap = [mailProxy objectForKey:@"IMAP"];
   smtp = [mailProxy objectForKey:@"SMTP"];
   [imapLocalPortField_ setIntValue:[[imap objectForKey:@"LocalPort"] intValue]];
@@ -306,9 +298,12 @@ autoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
       [smtpServerField_ stringValue], @"RemoteHost",
       [NSNumber numberWithInt:[smtpServerPortField_ intValue]], @"RemotePort",
       nil];
+  NSDictionary *latest=[RCConfiguration loadConfigurationWithError:&errorMessage];
+  if(!latest) { [self showError:errorMessage]; return; }
+  id enabled=[[latest objectForKey:@"MailProxy"] objectForKey:@"Enabled"];
   mailProxy = [NSDictionary dictionaryWithObjectsAndKeys:
       imap, @"IMAP", smtp, @"SMTP",
-      [NSNumber numberWithBool:[enabledButton_ state]==NSOnState], @"Enabled", nil];
+      [NSNumber numberWithBool:!enabled || [enabled boolValue]], @"Enabled", nil];
   if (![RCConfiguration saveMailProxy:mailProxy error:&errorMessage]) {
     [self showError:errorMessage];
     return;

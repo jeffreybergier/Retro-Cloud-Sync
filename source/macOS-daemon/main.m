@@ -543,7 +543,7 @@ static BOOL RCSyncWorkerStart(RCSyncWorker *worker, NSDictionary *configuration,
   NSString *syncClientDescriptionPath;
 
   memset(worker, 0, sizeof(*worker));
-  if (contacts == nil) {
+  if (contacts == nil || [[configuration objectForKey:@"SyncPaused"] boolValue]) {
     RCLogger(RCLogInfo, "Contacts", "Startup", @"Sync is disabled");
     RCLogger(RCLogInfo, "Calendars", "Startup", @"Sync is disabled");
     return YES;

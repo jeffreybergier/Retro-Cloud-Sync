@@ -10,6 +10,8 @@
 @interface DaemonStatusView : NSView {
  @private
   NSButton *serviceButton_;
+  NSButton *mailButton_;
+  NSButton *syncButton_;
   NSTextField *statusLabel_;
   NSImageView *serviceIcon_;
   NSTimer *statusTimer_;

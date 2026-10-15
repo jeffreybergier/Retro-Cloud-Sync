@@ -18,7 +18,6 @@
   NSTextField *smtpLocalPortField_;
   NSTextField *smtpServerField_;
   NSTextField *smtpServerPortField_;
-  NSButton *enabledButton_;
   BOOL showingError_;
   NSString *pendingErrorMessage_;
 }

@@ -14,6 +14,7 @@
 #include <errno.h>
 
 @interface DaemonStatusView (Private)
+- (void)componentChanged:(id)sender;
 - (void)serviceButtonClicked:(id)sender;
 - (void)updateServiceStatus:(NSTimer *)timer;
 - (void)updateSyncStatus;
@@ -94,8 +95,8 @@ static NSString *RCStatusDate(id value)
   if (self != nil) {
     NSBox *serviceBox;
     NSButton *serviceButton;
-    const float boxHeight = 76;
-    const float buttonWidth = 88;
+    const float boxHeight = 142;
+    const float buttonWidth = 160;
     NSRect boxFrame = NSMakeRect(8,NSHeight(frame)-8-boxHeight,
                                 NSWidth(frame)-16,boxHeight);
     serviceController_ = [[RCServiceController alloc] init];
@@ -107,25 +108,37 @@ static NSString *RCStatusDate(id value)
     NSView *content = [serviceBox contentView];
     float width = NSWidth([content bounds]);
     serviceIcon_ = [[[NSImageView alloc]
-        initWithFrame:NSMakeRect(6,20,24,24)] autorelease];
+        initWithFrame:NSMakeRect(6,86,24,24)] autorelease];
     [serviceIcon_ setAutoresizingMask:NSViewMinYMargin];
     [content addSubview:serviceIcon_];
     statusLabel_ = [RCStatusLabel(content,
-        NSMakeRect(36,10,width-42-buttonWidth-4,38)) retain];
+        NSMakeRect(36,76,width-42-buttonWidth-4,38)) retain];
     [self setServiceStatus:@"Stopped" severity:@"yellow" paused:YES];
 
     serviceButton = [[NSButton alloc]
-        initWithFrame:NSMakeRect(width-6-buttonWidth,16,buttonWidth,26)];
-    [serviceButton setTitle:@"Start"];
-    [serviceButton setBezelStyle:NSRoundedBezelStyle];
+        initWithFrame:NSMakeRect(width-6-buttonWidth,82,buttonWidth,26)];
+    [serviceButton setTitle:@"Enable daemon"];
+    [serviceButton setButtonType:NSSwitchButton];
     [serviceButton setTarget:self];
     [serviceButton setAction:@selector(serviceButtonClicked:)];
     [serviceButton setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
     [content addSubview:serviceButton];
     serviceButton_ = serviceButton;
+    mailButton_=[[NSButton alloc] initWithFrame:NSMakeRect(width-6-buttonWidth,50,buttonWidth,26)];
+    syncButton_=[[NSButton alloc] initWithFrame:NSMakeRect(width-6-buttonWidth,18,buttonWidth,26)];
+    [mailButton_ setTitle:@"Enable Mail proxy"]; [syncButton_ setTitle:@"Enable Sync"];
+    NSButton *buttons[]={mailButton_,syncButton_};
+    int controlIndex;
+    for(controlIndex=0;controlIndex<2;controlIndex++) {
+      NSButton *button=buttons[controlIndex];
+      [button setButtonType:NSSwitchButton]; [button setTarget:self];
+      [button setAction:@selector(componentChanged:)];
+      [button setAutoresizingMask:NSViewMinXMargin | NSViewMinYMargin];
+      [content addSubview:button];
+    }
 
     const float sectionGap = 8;
-    const float sectionHeight = 178;
+    const float sectionHeight = 145;
     int i;
     for(i=0;i<2;i++) {
       NSBox *box=[[[NSBox alloc] initWithFrame:NSMakeRect(8,
@@ -134,9 +147,9 @@ static NSString *RCStatusDate(id value)
       [box setTitle:i==0 ? @"Contacts" : @"Calendars"];
       [box setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin]; [self addSubview:box];
       NSView *content=[box contentView]; float width=NSWidth([content bounds]);
-      syncIcon_[i]=[[[NSImageView alloc] initWithFrame:NSMakeRect(6,122,24,24)] autorelease];
+      syncIcon_[i]=[[[NSImageView alloc] initWithFrame:NSMakeRect(6,89,24,24)] autorelease];
       [syncIcon_[i] setAutoresizingMask:NSViewMinYMargin]; [content addSubview:syncIcon_[i]];
-      syncDetails_[i]=RCStatusLabel(content,NSMakeRect(36,36,width-42,114));
+      syncDetails_[i]=RCStatusLabel(content,NSMakeRect(36,3,width-42,114));
 
     }
     [self startUpdating];
@@ -150,6 +163,8 @@ static NSString *RCStatusDate(id value)
   [statusTimer_ release];
   [serviceButton_ setTarget:nil];
   [serviceButton_ release];
+  [mailButton_ setTarget:nil]; [mailButton_ release];
+  [syncButton_ setTarget:nil]; [syncButton_ release];
   [statusLabel_ release];
   [serviceController_ release];
   [super dealloc];
@@ -208,9 +223,32 @@ static NSString *RCStatusDate(id value)
     serviceRunning_ = !serviceRunning_;
     [self setServiceStatus:serviceRunning_ ? @"Running" : @"Stopped"
         severity:serviceRunning_ ? @"green" : @"yellow" paused:!serviceRunning_];
-    [serviceButton_ setTitle:serviceRunning_ ? @"Stop" : @"Start"];
+    [serviceButton_ setState:serviceRunning_ ? NSOnState : NSOffState];
   }
   [serviceButton_ setEnabled:YES];
+  [self updateServiceStatus:nil];
+}
+
+- (void)componentChanged:(id)sender;
+{
+  NSString *error=nil;
+  NSDictionary *loaded=[RCConfiguration loadConfigurationWithError:&error];
+  if(loaded) {
+    NSMutableDictionary *configuration=[[loaded mutableCopy] autorelease];
+    if(sender==mailButton_) {
+      NSMutableDictionary *mail=[[[configuration objectForKey:@"MailProxy"] mutableCopy] autorelease];
+      if([mail isKindOfClass:[NSMutableDictionary class]]) {
+        [mail setObject:[NSNumber numberWithBool:[mailButton_ state]==NSOnState] forKey:@"Enabled"];
+        [configuration setObject:mail forKey:@"MailProxy"];
+      } else error=@"Mail settings could not be read.";
+    } else [configuration setObject:[NSNumber numberWithBool:[syncButton_ state]!=NSOnState] forKey:@"SyncPaused"];
+    if(!error && [RCConfiguration saveConfiguration:configuration error:&error] &&
+        [serviceController_ isServiceRunning]) {
+      if([serviceController_ stopServiceWithError:&error]) [serviceController_ startServiceWithError:&error];
+    }
+  }
+  if(error) NSRunAlertPanel(@"Retro Cloud Sync",@"%@",@"OK",nil,nil,error);
+  [self updateServiceStatus:nil];
 }
 
 - (void)stopServiceInBackground:(id)unused;
@@ -238,13 +276,19 @@ static NSString *RCStatusDate(id value)
   (void)timer;
   [self updateSyncStatus];
   serviceRunning_ = [serviceController_ isServiceRunning];
+  NSDictionary *configuration=[RCConfiguration loadConfigurationWithError:NULL];
+  NSDictionary *mail=[configuration objectForKey:@"MailProxy"];
+  [mailButton_ setState:![mail objectForKey:@"Enabled"] || [[mail objectForKey:@"Enabled"] boolValue] ? NSOnState : NSOffState];
+  [syncButton_ setState:[[configuration objectForKey:@"SyncPaused"] boolValue] ? NSOffState : NSOnState];
+  [mailButton_ setEnabled:configuration && serviceRunning_ && !stopInProgress_];
+  [syncButton_ setEnabled:configuration && serviceRunning_ && !stopInProgress_];
   if(stopInProgress_) { [self setServiceStatus:@"Stopping…" severity:@"yellow" paused:NO]; return; }
   if (serviceRunning_) {
     [self setServiceStatus:@"Running" severity:@"green" paused:NO];
-    [serviceButton_ setTitle:@"Stop"];
+    [serviceButton_ setState:NSOnState];
   } else {
     [self setServiceStatus:@"Stopped" severity:@"yellow" paused:YES];
-    [serviceButton_ setTitle:@"Start"];
+    [serviceButton_ setState:NSOffState];
   }
 }
 

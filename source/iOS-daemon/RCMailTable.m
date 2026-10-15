@@ -24,7 +24,6 @@
   }
   id mail=[config_ objectForKey:@"MailProxy"];
   if(![mail isKindOfClass:[NSDictionary class]]) { unreadable_=YES; mail=nil; }
-  enabled_=[[UISwitch alloc] init]; [enabled_ setOn:[[mail objectForKey:@"Enabled"] boolValue]];
   NSMutableArray *fields=[NSMutableArray array];
   for(NSString *service in @[@"IMAP",@"SMTP"]) {
     id values=[mail objectForKey:service];
@@ -43,22 +42,21 @@
   fields_=[fields copy];
   [[self navigationItem] setRightBarButtonItem:[[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemSave target:self action:@selector(save)] autorelease]];
 }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 3; }
-- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section { (void)table; return section ? 3 : 1; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)table { (void)table; return 2; }
+- (NSInteger)tableView:(UITableView *)table numberOfRowsInSection:(NSInteger)section { (void)table; (void)section; return 3; }
 - (NSString *)tableView:(UITableView *)table titleForHeaderInSection:(NSInteger)section {
-  (void)table; return [@[@"Mail",@"Incoming Mail (IMAP)",@"Outgoing Mail (SMTP)"] objectAtIndex:section];
+  (void)table; return [@[@"Incoming Mail (IMAP)",@"Outgoing Mail (SMTP)"] objectAtIndex:section];
 }
 - (NSString *)tableView:(UITableView *)table titleForFooterInSection:(NSInteger)section {
   (void)table;
-  if(section==0) return nil;
-  if(section==1) return @"Mail: 127.0.0.1, local port, SSL off.";
+  if(section==0) return @"Mail: 127.0.0.1, local port, SSL off.";
   return @"Mail: 127.0.0.1, local port, SSL off, Password authentication.";
 }
 - (UITableViewCell *)tableView:(UITableView *)table cellForRowAtIndexPath:(NSIndexPath *)path {
   (void)table;
   UITableViewCell *cell=[[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil] autorelease];
-  [[cell textLabel] setText:[path section] ? [@[@"Local port",@"Server",@"Server port"] objectAtIndex:[path row]] : @"Enable Mail proxy"];
-  [cell setAccessoryView:[path section] ? [fields_ objectAtIndex:([path section]-1)*3+[path row]] : enabled_];
+  [[cell textLabel] setText:[@[@"Local port",@"Server",@"Server port"] objectAtIndex:[path row]]];
+  [cell setAccessoryView:[fields_ objectAtIndex:[path section]*3+[path row]]];
   [cell setSelectionStyle:UITableViewCellSelectionStyleNone]; return cell;
 }
 - (BOOL)textFieldShouldReturn:(UITextField *)field { [field resignFirstResponder]; return YES; }
@@ -71,7 +69,7 @@
   }
   if(unreadable_ || !config_) { RCIOSMessage(@"Cannot save",@"The existing configuration could not be read. It has been left unchanged."); return; }
   NSMutableDictionary *mail=[NSMutableDictionary dictionary];
-  [mail setObject:[NSNumber numberWithBool:[enabled_ isOn]] forKey:@"Enabled"];
+  [mail setObject:[NSNumber numberWithBool:[[[config_ objectForKey:@"MailProxy"] objectForKey:@"Enabled"] boolValue]] forKey:@"Enabled"];
   NSInteger firstPort=0;
   for(NSUInteger service=0;service<2;service++) {
     NSMutableDictionary *values=[NSMutableDictionary dictionary];
@@ -98,5 +96,5 @@
   RCIOSMessage(@"Saved",@"Mail proxy settings have been saved.");
   [[self navigationController] popViewControllerAnimated:YES];
 }
-- (void)dealloc { [enabled_ release]; [fields_ release]; [config_ release]; [super dealloc]; }
+- (void)dealloc { [fields_ release]; [config_ release]; [super dealloc]; }
 @end

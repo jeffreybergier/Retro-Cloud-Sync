@@ -19,7 +19,6 @@
   NSTextField *intervalLabel_;
   long long syncIntervalSeconds_;
   NSButton *accountButton_;
-  BOOL credentialsChanged_;
 }
 
 - (void)reloadSettings;

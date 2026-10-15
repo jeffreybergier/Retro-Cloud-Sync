@@ -60,6 +60,7 @@ void RCStatusStart(NSString *configurationPath, NSDictionary *configuration)
     NSString *mode=[settings objectForKey:[name stringByAppendingString:@"SyncMode"]];
     BOOL enabled=[mode isEqual:@"OneWay"] || [mode isEqual:@"TwoWay"];
     if(!mode) enabled=[[settings objectForKey:[name isEqual:@"Contacts"] ? @"Enabled" : @"CalendarsEnabled"] boolValue];
+    enabled=enabled && ![[configuration objectForKey:@"SyncPaused"] boolValue];
     NSMutableDictionary *s=[NSMutableDictionary dictionaryWithObjectsAndKeys:
         enabled ? @"Waiting" : @"Disabled",@"Phase",@"yellow",@"Severity",nil];
     id prior=[old objectForKey:name];
