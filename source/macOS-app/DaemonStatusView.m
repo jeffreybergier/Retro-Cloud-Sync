@@ -322,8 +322,8 @@ static NSString *RCStatusDate(id value)
     if(live && !disabled && [next isKindOfClass:[NSDate class]])
       detail=RCStatusDate(next);
     if(pending>0) {
-      heading=@"Pending items";
-      detail=[NSString stringWithFormat:@"%ld%@",pending,live ? @" — see log" : @""];
+      heading=@"Changes";
+      detail=RCStatusChangesText(s);
     }
     NSString *progress=[s objectForKey:@"Progress"];
     if(live && [progress length]) { heading=@"Progress"; detail=progress; }

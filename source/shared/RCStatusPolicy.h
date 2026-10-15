@@ -2,7 +2,7 @@
 #define RC_STATUS_POLICY_H
 #include "RCWriteJournal.h"
 typedef struct {
-  long pending;
+  long pending, uploaded, attention;
   int known, advanceSuccess;
   const char *phase, *severity;
 } RCStatusResult;

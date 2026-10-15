@@ -21,6 +21,19 @@ static inline NSString *RCStatusErrorText(NSString *code)
   if([code isEqual:@"Upload"]) return @"Could not finish uploading — see Log";
   return [code length] ? @"Sync failed — see Log" : nil;
 }
+static inline NSString *RCStatusChangesText(NSDictionary *service)
+{
+  long uploaded=[[service objectForKey:@"UploadedCount"] longValue];
+  long attention=[[service objectForKey:@"AttentionCount"] longValue];
+  if(uploaded>0 && attention>0)
+    return [NSString stringWithFormat:@"%ld %@ uploaded to iCloud; %ld %@",uploaded,uploaded==1 ? @"change" : @"changes",attention,attention==1 ? @"item needs attention" : @"items need attention"];
+  if(uploaded>0) {
+    if([[service objectForKey:@"Phase"] isEqual:@"Uploaded"])
+      return @"Uploaded to iCloud; local confirmation on next sync. No action needed.";
+    return [NSString stringWithFormat:@"%ld %@ uploaded to iCloud; see current sync status",uploaded,uploaded==1 ? @"change" : @"changes"];
+  }
+  return [[service objectForKey:@"PendingCount"] description] ?: @"Unknown";
+}
 static inline NSString *RCStatusText(NSDictionary *service, BOOL live)
 {
   NSString *phase=[service objectForKey:@"Phase"];
@@ -35,7 +48,8 @@ static inline NSString *RCStatusText(NSDictionary *service, BOOL live)
   if([phase isEqual:@"Photos"]) return @"Checking contact photos…";
   if([phase isEqual:@"Applying"]) return @"Applying local changes…";
   if([phase isEqual:@"Uploading"]) return @"Uploading to iCloud…";
-  if([phase isEqual:@"Attention"]) return @"Changes need attention";
+  if([phase isEqual:@"Uploaded"]) return @"Uploaded to iCloud";
+  if([phase isEqual:@"Attention"]) return [[service objectForKey:@"UploadedCount"] longValue]>0 ? RCStatusChangesText(service) : @"Changes need attention";
   return @"Waiting for daemon status";
 }
 static inline NSString *RCIntervalText(NSInteger minutes)

@@ -29,6 +29,11 @@ when dragging finishes. **Save Account** stores the Apple ID and password;
 a blank password keeps the saved password. **Remove Password** deletes only
 the committed account's Keychain password, preserving its name, sync settings,
 Mail, mirrors, and journals. Sync needs a saved password to run.
+Verified uploads awaiting local acknowledgement show **Uploaded to iCloud**,
+with confirmation deferred to the next scheduled sync. Mixed results report
+both uploaded changes and items needing attention. This status does not advance
+the last successful full-sync timestamp or change the sync interval.
+
 On Mac, enabling/disabling the daemon loads/unloads its per-user launch agent.
 
 

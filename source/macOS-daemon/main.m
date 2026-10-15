@@ -407,7 +407,7 @@ static void *RCSyncWorkerMain(void *context)
         if(!exported && contactsFetched) RCStatusFailure(@"Contacts",@"Apply");
         RCStatusFinish(@"Contacts",&journal,contactsFetched && exported && syncRecordCount>=0);
         if (exported && syncRecordCount<0) {
-          RCLogger(RCLogWarning, "Contacts", "Apply", @"Applied eligible records to local apps; unresolved local edits remain pending");
+          RCLogger(RCLogInfo, "Contacts", "Apply", @"Applied eligible records to local apps; see status for uploaded changes and pending items");
         } else if (exported) {
           RCLogger(RCLogInfo, "Contacts", "Apply", @"Local application complete: %ld records in native snapshot", syncRecordCount);
         } else if (worker->contactsTwoWay && !contactsFetched) {
@@ -481,7 +481,7 @@ contacts_finished:
         if(!exported && calendarsFetched) RCStatusFailure(@"Calendars",@"Apply");
         RCStatusFinish(@"Calendars",&journal,calendarsFetched && exported && syncRecordCount>=0);
         if (exported && syncRecordCount<0) {
-          RCLogger(RCLogWarning, "Calendars", "Apply", @"Applied eligible records to local apps; unresolved local edits remain pending");
+          RCLogger(RCLogInfo, "Calendars", "Apply", @"Applied eligible records to local apps; see status for uploaded changes and pending items");
         } else if (exported) {
           RCLogger(RCLogInfo, "Calendars", "Apply", @"Local application complete: %ld records in native snapshot",
                 syncRecordCount);

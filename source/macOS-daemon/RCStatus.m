@@ -78,7 +78,7 @@ void RCStatusPhase(NSString *name, NSString *phase)
   if(RCStopRequested) { RCStatusStopping(); return; }
   NSMutableDictionary *s=Service(name);
   [s removeObjectForKey:@"Progress"];
-  if([phase isEqual:@"Waiting"]) { [s removeObjectForKey:@"ErrorCode"]; [s removeObjectForKey:@"PendingCount"]; }
+  if([phase isEqual:@"Waiting"]) { [s removeObjectForKey:@"ErrorCode"]; [s removeObjectForKey:@"PendingCount"]; [s removeObjectForKey:@"UploadedCount"]; [s removeObjectForKey:@"AttentionCount"]; }
   [s removeObjectForKey:@"NextAttempt"];
   [s setObject:phase forKey:@"Phase"]; [s setObject:[s objectForKey:@"ErrorCode"] ? @"red" : @"yellow" forKey:@"Severity"]; Save();
 
@@ -113,6 +113,12 @@ void RCStatusFinish(NSString *name, RCWriteJournal *j, BOOL complete)
       [s objectForKey:@"ErrorCode"]!=nil,RCStopRequested);
   if(RCStopRequested) { RCStatusStopping(); return; }
   [s setObject:[NSNumber numberWithLong:result.pending] forKey:@"PendingCount"];
+  if(result.known) {
+    [s setObject:[NSNumber numberWithLong:result.uploaded] forKey:@"UploadedCount"];
+    [s setObject:[NSNumber numberWithLong:result.attention] forKey:@"AttentionCount"];
+  } else {
+    [s removeObjectForKey:@"UploadedCount"]; [s removeObjectForKey:@"AttentionCount"];
+  }
   [s setObject:[NSString stringWithUTF8String:result.phase] forKey:@"Phase"];
   [s setObject:[NSString stringWithUTF8String:result.severity] forKey:@"Severity"];
   if(result.advanceSuccess) [s setObject:[NSDate date] forKey:@"LastSuccess"];

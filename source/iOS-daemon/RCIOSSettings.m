@@ -97,12 +97,12 @@ static NSString *StatusDate(id value, NSString *fallback) {
     id service=[status_ objectForKey:[path section]==2 ? @"Contacts" : @"Calendars"];
     if(![service isKindOfClass:[NSDictionary class]]) service=nil;
     BOOL live=RCStatusIsLive(status_);
-    label=[@[@"Status",@"Progress",@"Last successful sync",@"Pending items",[service objectForKey:@"ErrorCode"] ? @"Next retry" : @"Next sync",@"Error"] objectAtIndex:[path row]];
+    label=[@[@"Status",@"Progress",@"Last successful sync",@"Changes",[service objectForKey:@"ErrorCode"] ? @"Next retry" : @"Next sync",@"Error"] objectAtIndex:[path row]];
     switch([path row]) {
       case 0: value=RCStatusText(service,live); break;
       case 1: value=live ? ([service objectForKey:@"Progress"] ?: @"—") : @"—"; break;
       case 2: value=StatusDate([service objectForKey:@"LastSuccess"],@"Not yet synced"); break;
-      case 3: value=[[service objectForKey:@"PendingCount"] description] ?: @"Unknown"; break;
+      case 3: value=RCStatusChangesText(service); break;
       case 4: value=live ? StatusDate([service objectForKey:@"NextAttempt"],@"Not scheduled") : @"Not scheduled"; break;
       default: value=RCStatusErrorText([service objectForKey:@"ErrorCode"]) ?: @"None"; break;
     }

@@ -18,26 +18,33 @@ static long Count(RCWriteJournal *j, const char *table, const char *sql)
 }
 RCStatusResult RCStatusEvaluate(RCWriteJournal *j, int contacts, int complete, int failed, int stopping)
 {
-  const char *tables[]={"write_operations","two_way_pending_fields","two_way_attention","calendar_actions"};
+  const char *tables[]={"write_operations","two_way_pending_fields","two_way_attention","calendar_actions","write_attention"};
   const char *queries[]={
     "SELECT count(*) FROM write_operations WHERE account_id=? AND state NOT IN ('acknowledged','cancelled')",
     "SELECT count(*) FROM two_way_pending_fields WHERE account_id=?",
     "SELECT count(*) FROM two_way_attention WHERE account_id=?",
-    "SELECT count(*) FROM calendar_actions WHERE account_id=? AND state<>'done'"};
+    "SELECT count(*) FROM calendar_actions WHERE account_id=? AND state<>'done'",
+    "SELECT count(*) FROM write_attention a JOIN write_operations o ON o.id=a.operation_id WHERE o.account_id=? AND o.state='applied'"};
   long count=0; int known=1; int i;
-  for(i=0;i<4;i++) { long n=Count(j,tables[i],queries[i]); if(n<0) known=0; else count+=n; }
+  for(i=0;i<5;i++) { long n=Count(j,tables[i],queries[i]); if(n<0) known=0; else count+=n; }
   long invalid=Count(j,contacts ? "contacts" : "calendar_resources",
       contacts ?
       "SELECT count(*) FROM contacts c JOIN collections b ON b.id=c.collection_id WHERE b.account_id=? AND c.remote_missing=0 AND c.parse_error IS NOT NULL" :
       "SELECT count(*) FROM calendar_resources r JOIN calendars c ON c.id=r.calendar_id WHERE c.account_id=? AND r.remote_missing=0 AND r.scope_excluded=0 AND (r.parse_error IS NOT NULL OR r.export_status IN ('unsupported','retained previous'))");
   if(invalid<0) known=0; else count+=invalid;
+  long uploaded=Count(j,"write_operations",
+      "SELECT count(*) FROM write_operations WHERE account_id=? AND state='applied'");
+  if(uploaded<0) { known=0; uploaded=0; }
   RCStatusResult result;
   result.pending=count;
+  result.uploaded=uploaded;
+  result.attention=count-uploaded;
   result.known=known;
   result.phase=stopping ? "Stopping" : failed ? "Error" :
-      (!complete || !known || count) ? "Attention" : "UpToDate";
+      !known || result.attention || (!complete && !uploaded) ? "Attention" :
+      uploaded ? "Uploaded" : "UpToDate";
   result.severity=stopping ? "yellow" : failed ? "red" :
-      (!complete || !known || count) ? "yellow" : "green";
+      !known || result.attention || (!complete && !uploaded) ? "yellow" : "green";
   result.advanceSuccess=!stopping && !failed && complete && known && count==0;
   return result;
 }
