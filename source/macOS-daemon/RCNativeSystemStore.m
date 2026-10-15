@@ -666,6 +666,96 @@ failed:
   NSDictionary *raw=[self rawGraph:saved error:error];
   return raw ? RCChangedGraph([saved objectForKey:@"graph"],[saved objectForKey:@"_snapshot"],raw) : nil;
 }
+/* Read-only audit of the complete supported finite projection. Never use a
+   master-only comparison as permission to replace a series. Unbounded or large
+   series remain explicitly uncertain; no partial scan claims completeness. */
+- (NSString *)seriesAttention:(NSDictionary *)saved error:(RCError *)error
+{
+  if([[saved objectForKey:@"_pending"] boolValue]) return @"native-series-unverified";
+  NSDictionary *raw=[self rawGraph:saved error:error];
+  if(!raw) return @"native-series-unverified";
+  if(![raw count]) return @"native-series-local-delete";
+  NSDictionary *snapshot=[saved objectForKey:@"_snapshot"];
+  if(!RCTwoWayGraphsEqual(snapshot,raw)) return @"native-series-local-edit";
+  NSString *root=[saved objectForKey:@"root"], *identifier=[[saved objectForKey:@"_ids"] objectForKey:root];
+  EKEvent *master=[(EKEventStore *)events_ eventWithIdentifier:identifier];
+  if(!master || ![master respondsToSelector:@selector(calendarItemIdentifier)]) return @"native-series-unverified";
+  NSString *seriesID=[master calendarItemIdentifier];
+  if(![seriesID length]) return @"native-series-unverified";
+  NSData *body=[saved objectForKey:@"body"];
+  NSString *text=[[[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding] autorelease];
+  icalcomponent *wire=text ? icalparser_parse_string([text UTF8String]) : NULL;
+  if(!wire) return @"native-series-unverified";
+  icalrecur_iterator *iterator=NULL;
+  NSString *reason=@"native-series-unverified";
+  @try {
+    icalcomponent *event=icalcomponent_get_first_component(wire,ICAL_VEVENT_COMPONENT);
+    if(!event || icalcomponent_get_next_component(wire,ICAL_VEVENT_COMPONENT) ||
+        icalcomponent_count_properties(event,ICAL_RRULE_PROPERTY)!=1 ||
+        icalcomponent_count_properties(event,ICAL_RDATE_PROPERTY) ||
+        icalcomponent_count_properties(event,ICAL_EXRULE_PROPERTY)) return reason;
+    struct icalrecurrencetype rule=icalproperty_get_rrule(icalcomponent_get_first_property(event,ICAL_RRULE_PROPERTY));
+    if(!rule.count && icaltime_is_null_time(rule.until)) return reason;
+    struct icaltimetype start=icalcomponent_get_dtstart(event), occurrence;
+    struct icaldurationtype duration=icalcomponent_get_duration(event);
+    if(start.year<1900 || start.year>2100) return reason;
+    icalproperty *startProperty=icalcomponent_get_first_property(event,ICAL_DTSTART_PROPERTY);
+    const char *tzid=RCICalendarTZID(startProperty);
+    NSTimeZone *zone=start.is_date || icaltime_is_utc(start) ? [NSTimeZone timeZoneForSecondsFromGMT:0] :
+        (tzid ? [NSTimeZone timeZoneWithName:[NSString stringWithUTF8String:tzid]] : [NSTimeZone localTimeZone]);
+    if(!zone) return reason;
+    iterator=icalrecur_iterator_new(rule,start); if(!iterator) return reason;
+    NSMutableDictionary *expected=[NSMutableDictionary dictionary];
+    NSDate *first=nil,*last=nil;
+    while(!icaltime_is_null_time(occurrence=icalrecur_iterator_next(iterator))) {
+      struct icaltimetype finish=icaltime_add(occurrence,duration);
+      if([expected count]>=1000 || occurrence.year>2100 || finish.year>2100) return reason;
+      NSDate *begin=RCCalendarWallDate(occurrence,zone), *end=RCCalendarWallDate(finish,zone);
+      if(!begin || !end || [end compare:begin]==NSOrderedAscending) return reason;
+      [expected setObject:end forKey:begin];
+      if(!first) first=begin;
+      last=end;
+    }
+    if(!first || !last) return reason;
+    /* All-day snapshot dates use UTC wall time; EventKit query dates use local
+       midnight. Pad the bounds so DST and zone offsets cannot drop an edge. */
+    NSDate *queryStart=[NSDate dateWithTimeIntervalSinceReferenceDate:[first timeIntervalSinceReferenceDate]-172800];
+    NSDate *queryEnd=[NSDate dateWithTimeIntervalSinceReferenceDate:[last timeIntervalSinceReferenceDate]+172800];
+    NSMutableSet *seen=[NSMutableSet set];
+    EKCalendar *calendar=[master calendar]; NSString *calendarID=[calendar calendarIdentifier];
+    while([queryStart compare:queryEnd]==NSOrderedAscending) {
+      if(RCCheckCancellation(error)) return reason;
+      NSDate *end=[queryStart dateByAddingTimeInterval:365*86400.0];
+      if([end compare:queryEnd]==NSOrderedDescending) end=queryEnd;
+      NSAutoreleasePool *windowPool=[[NSAutoreleasePool alloc] init];
+      @try {
+      NSPredicate *predicate=[(EKEventStore *)events_ predicateForEventsWithStartDate:queryStart endDate:end calendars:[NSArray arrayWithObject:calendar]];
+      NSArray *matches=[(EKEventStore *)events_ eventsMatchingPredicate:predicate];
+      if(![[[(EKEventStore *)events_ calendarWithIdentifier:calendarID] calendarIdentifier] isEqual:calendarID]) {
+        RCErrorSet(error,1,"Calendar unavailable during recurring-series audit"); return reason;
+      }
+      for(EKEvent *item in matches) {
+        if(![[item calendarItemIdentifier] isEqual:seriesID]) continue;
+        if([item isDetached]) return @"native-series-occurrence-edit";
+        NSDictionary *observed=EKRead(item,saved,NO,error); if(!observed) return reason;
+        NSDictionary *record=[observed objectForKey:root]; NSDate *date=[record objectForKey:@"start date"];
+        NSDate *expectedEnd=[expected objectForKey:date];
+        if(!expectedEnd) return @"native-series-occurrence-edit";
+        NSMutableDictionary *wanted=[NSMutableDictionary dictionaryWithDictionary:snapshot];
+        NSMutableDictionary *fields=[NSMutableDictionary dictionaryWithDictionary:[snapshot objectForKey:root]];
+        [fields setObject:date forKey:@"start date"]; [fields setObject:expectedEnd forKey:@"end date"];
+        [wanted setObject:fields forKey:root];
+        if(!RCTwoWayGraphsEqual(wanted,observed)) return @"native-series-occurrence-edit";
+        [seen addObject:date];
+      }
+      } @catch(id exception) { RCDrainPoolPreservingException(&windowPool,exception); @throw; }
+      @finally { [windowPool release]; }
+      queryStart=end;
+    }
+    if([seen count]!=[expected count]) return @"native-series-occurrence-missing";
+    return nil;
+  } @finally { if(iterator) icalrecur_iterator_free(iterator); icalcomponent_free(wire); }
+}
 /* Before audio support, the ordinal reader could label Mavericks' implicit
    Basso default as display and shift a real reminder to a synthetic key. Only
    migrate the exact unchanged legacy receipt, even without source reminders:
@@ -930,7 +1020,7 @@ failed:
           NSDictionary *graph=EKRead(event,stub,NO,error), *ids=[NSDictionary dictionaryWithObject:native forKey:root];
           if(!graph) return nil;
           if(!graph) return nil;
-      [result addObject:[NSDictionary dictionaryWithObjectsAndKeys:root,@"root",graph,@"graph",ids,@"_ids",graph,@"_snapshot",nil]];
+      [result addObject:[NSDictionary dictionaryWithObjectsAndKeys:root,@"root",graph,@"graph",ids,@"_ids",graph,@"_snapshot",[NSNumber numberWithBool:[event isDetached]],@"detached",nil]];
         }
         } @catch(id exception) { RCDrainPoolPreservingException(&windowPool,exception); @throw; }
         @finally { [windowPool release]; }

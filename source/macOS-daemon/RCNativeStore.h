@@ -8,6 +8,7 @@
 - (BOOL)syncContainers:(RCError *)error;
 - (NSDictionary *)savedResources:(RCError *)error;
 - (NSDictionary *)readResource:(NSDictionary *)saved error:(RCError *)error;
+- (NSString *)seriesAttention:(NSDictionary *)saved error:(RCError *)error;
 - (BOOL)rememberResource:(NSDictionary *)resource native:(NSDictionary *)saved error:(RCError *)error;
 - (NSArray *)untrackedResources:(RCError *)error;
 - (BOOL)canPublishResource:(NSDictionary *)resource error:(RCError *)error;

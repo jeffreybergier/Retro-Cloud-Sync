@@ -94,15 +94,32 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
         if(RCCheckCancellation(error)) goto done;
         NSDictionary *r=RCTwoWayMapResource(resource,aliases); NSString *root=[r objectForKey:@"root"];
         [present addObject:root]; NSDictionary *old=[saved objectForKey:root];
-        // EventKit does not expose a complete exception set for a series.
-        // Never infer two-way series edits/deletions from its master alone.
-        if(twoWay && ([[[[old objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count] ||
-            [[[[r objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count])) {
-          if(!RCTwoWayAttention(j,root,"native-series-needs-review",error)) goto done;
-          all=NO; continue;
-        }
         BOOL busy=NO; if(!RCNativeBusy(j,[r objectForKey:@"href"],&busy,error)) goto done;
         if(busy) { all=NO; continue; }
+        if(twoWay && ([[[[old objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count] ||
+            [[[[r objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count])) {
+          NSString *reason=old ? [native seriesAttention:old error:error] : @"native-series-unverified";
+          if(error->code) goto done;
+          if(!reason) {
+            /* Only omitted EXDATE changes can advance this base. No EventKit
+               writes: even an unchanged master must not erase exceptions. */
+            NSMutableDictionary *before=[NSMutableDictionary dictionaryWithDictionary:[old objectForKey:@"graph"]];
+            NSMutableDictionary *after=[NSMutableDictionary dictionaryWithDictionary:[r objectForKey:@"graph"]];
+            NSMutableDictionary *graphs[]={before,after};
+            for(int index=0;index<2;index++) {
+              NSMutableDictionary *graph=graphs[index];
+              NSMutableDictionary *record=[NSMutableDictionary dictionaryWithDictionary:[graph objectForKey:root]];
+              [record removeObjectForKey:@"exception dates"]; [graph setObject:record forKey:root];
+            }
+            if(!RCTwoWayGraphsEqual(before,after)) reason=@"native-series-remote-edit";
+          }
+          if(!RCTwoWaySQL(j,error,"DELETE FROM two_way_attention WHERE account_id=%lld AND record_id=%Q AND reason LIKE 'native-series-%%'",j->account,[root UTF8String])) goto done;
+          if(reason) {
+            if(!RCTwoWayAttention(j,root,[reason UTF8String],error)) goto done;
+            all=NO;
+          } else if(![native rememberResource:r native:old error:error]) goto done;
+          continue;
+        }
         NSDictionary *truth=old ? [native readResource:old error:error] : nil; if(old && !truth) goto done;
         if(twoWay && old && !RCTwoWayGraphsEqual([old objectForKey:@"graph"],truth)) {
           /* Pin outgoing work to the last native publication, never the newly
@@ -124,7 +141,7 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
           RCTwoWayAttention(j,root,"native-publication-pending",error);
           goto done; /* Never commit a later resource after a failed native edit. */
         }
-        if(!RCTwoWaySQL(j,error,"DELETE FROM two_way_attention WHERE account_id=%lld AND record_id=%Q AND reason IN ('native-publication-pending','unsupported-native-edit','native-series-needs-review')",j->account,[root UTF8String])) goto done;
+        if(!RCTwoWaySQL(j,error,"DELETE FROM two_way_attention WHERE account_id=%lld AND record_id=%Q AND (reason IN ('native-publication-pending','unsupported-native-edit') OR reason LIKE 'native-series-%%')",j->account,[root UTF8String])) goto done;
       } @catch(id exception) { RCDrainPoolPreservingException(&pool,exception); @throw; }
       @finally { [pool release]; }
     }
@@ -144,7 +161,7 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
       BOOL busy=NO; if(!RCNativeBusy(j,[resource objectForKey:@"href"],&busy,error)) goto done;
       if(busy) { all=NO; continue; }
       if(twoWay && [[[[resource objectForKey:@"graph"] objectForKey:[resource objectForKey:@"root"]] objectForKey:@"recurrences"] count]) {
-        if(!RCTwoWayAttention(j,[resource objectForKey:@"root"],"native-series-needs-review",error)) goto done;
+        if(!RCTwoWayAttention(j,[resource objectForKey:@"root"],"native-series-remote-delete",error)) goto done;
         all=NO; continue;
       }
       NSDictionary *truth=[native readResource:resource error:error]; if(!truth) goto done;
@@ -161,8 +178,8 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
       it=[newRecords objectEnumerator];
       while((resource=[it nextObject])) {
         NSString *root=[resource objectForKey:@"root"];
-        if([[[[resource objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count]) {
-          if(!RCTwoWayAttention(j,root,"native-series-needs-review",error)) goto done;
+        if([[resource objectForKey:@"detached"] boolValue] || [[[[resource objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count]) {
+          if(!RCTwoWayAttention(j,root,"native-series-unverified",error)) goto done;
           all=NO; continue;
         }
         if(!RCNativeQueue(c,nil,[resource objectForKey:@"graph"],root,native,resource,error)) {

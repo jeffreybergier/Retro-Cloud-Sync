@@ -62,9 +62,15 @@ or custom attachments are retained unchanged for uploads; fallback selection
 does not change the cloud alarm. Explicit local sound changes can upload.
 One-way mode also imports basic recurrence rules. Recurring masters with `EXDATE`
 import without exclusions locally, so excluded occurrences appear in the native calendar on both Mac and iOS.
-The full original exclusions remain in the retained cloud data. Two-way recurring series stay
-pending because EventKit cannot supply their complete exception set; the backend
-must not upload or delete a series based only on its master event. Invitations
+The full original exclusions remain in the retained cloud data. In two-way mode,
+unchanged finite series clear attention only after every expected native occurrence
+is verified against the saved projection. This read-only audit covers at most
+1,000 occurrences from 1900 through 2100. Unbounded, oversized, or unverifiable
+series remain explicitly unverified. Local series edits/deletions, occurrence
+changes, and cloud changes that would require replacing native events remain
+pending with distinct reasons. EXDATE-only cloud changes may update the retained
+base after verification without rewriting native events. No recurring-series
+upload or deletion is inferred from a master-only comparison. Invitations
 import as ordinary local events without attendees or organizers. Their complete
 participant data stays in the durable publication base and is preserved in
 uploads of supported local edits. EventKit cannot edit participants or RSVP;

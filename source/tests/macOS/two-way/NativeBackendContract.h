@@ -10,6 +10,7 @@ static int backendMode, backendReleased;
 - (id)initWithContext:(RCTwoWayContext *)context;
 @end
 @implementation RCContractStore
+- (NSString *)seriesAttention:(NSDictionary *)saved error:(RCError *)failure { (void)saved; (void)failure; return @"native-series-unverified"; }
 - (id)initWithContext:(RCTwoWayContext *)context
 { self=[super init]; if(self) context_=context; return self; }
 - (void)dealloc { backendReleased++; [super dealloc]; }

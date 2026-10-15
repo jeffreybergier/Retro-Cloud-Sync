@@ -134,13 +134,26 @@ static void ExcludedOccurrenceTests(NSString *directory,BOOL allDay)
     CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
     printf("PASS: %s EXDATE series imports all native occurrences, preserves exact exclusions and replays after reopen without duplicate events\n",allDay ? "All-day" : "Time-zone");
 
+    // Unchanged finite series clear stale generic warnings without native writes.
+    CHECK(RCTwoWaySQL(&j,&error,"INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,'native-series-needs-review')",j.account,[root UTF8String]));
+    SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+    NSString *exclusionsOnly=[body stringByReplacingOccurrencesOfString:allDay ? @"20301014\r\n" : @"20301014T090000\r\n"
+        withString:allDay ? @"20301015\r\n" : @"20301015T090000\r\n"];
+    CalendarSeed(store,Data(exclusionsOnly),"\"exclusions-only\""); SyncCalendar(store,YES,YES);
+    CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(exclusionsOnly)]);
+    CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:eventID]);
+    [events reset]; CHECK([[events eventsMatchingPredicate:predicate] count]==4);
+    CalendarSeed(store,Data(body),"\"exclusions-restored\""); SyncCalendar(store,YES,YES);
+    puts("PASS: Unchanged finite series clear stale warnings; EXDATE-only updates preserve the native projection without writes");
+
     // Recurring-series writes remain blocked, including supported title edits.
     // A master-only native copy cannot prove edits to excluded occurrences.
     [events reset]; event=[events eventWithIdentifier:eventID]; [event setTitle:@"Local excluded-series edit"];
     CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
     SyncCalendar(store,YES,NO); SyncCalendar(store,YES,NO);
     CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
-    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-needs-review'")==1);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-local-edit'")==1);
     CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
     [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event title] isEqual:@"Local excluded-series edit"]);
     CHECK([events removeEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
@@ -156,11 +169,61 @@ static void ExcludedOccurrenceTests(NSString *directory,BOOL allDay)
     CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(updated)]);
     CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
     CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
-    SyncCalendar(store,YES,NO); CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    SyncCalendar(store,YES,YES); CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
     puts("PASS: Remote exclusion updates retain exact folded EXDATE data without generating any cloud writes");
   } @finally {
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
+}
+static void SeriesOccurrenceTests(NSString *directory,int scenario)
+{
+  NSString *name=[NSString stringWithFormat:@"series-occurrence-%d",scenario];
+  RCCalendarStore *store=RCCalendarStoreOpen([[directory stringByAppendingPathComponent:[name stringByAppendingString:@".sqlite"]] fileSystemRepresentation],[name UTF8String],&error); CHECK(store);
+  @try {
+    NSString *body=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:offline-occurrence\r\nDTSTART:20301012T090000Z\r\nDTEND:20301012T100000Z\r\nSUMMARY:Offline occurrence audit\r\nRRULE:FREQ=DAILY;COUNT=4\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    if(scenario==2) body=[body stringByReplacingOccurrencesOfString:@";COUNT=4" withString:@""];
+    CalendarSeed(store,Data(body),"\"series-1\""); SyncCalendar(store,NO,YES);
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+    if(scenario==2) {
+      SyncCalendar(store,YES,NO);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-unverified'")==1);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      puts("PASS: Unbounded series remains explicitly unverified without native or cloud writes");
+    } else {
+      SyncCalendar(store,YES,YES);
+      // A supported cloud edit is deferred, not written over native instances.
+      NSString *changed=[body stringByReplacingOccurrencesOfString:@"SUMMARY:Offline occurrence audit" withString:@"SUMMARY:Cloud-only edit"];
+      CalendarSeed(store,Data(changed),"\"cloud-only\""); SyncCalendar(store,YES,NO);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-remote-edit'")==1);
+      CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
+      CalendarSeed(store,Data(body),"\"cloud-reverted\""); SyncCalendar(store,YES,YES);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+      NSString *identifier=[FirstRow(j) objectForKey:@"id"];
+      EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
+      EKEvent *master=[events eventWithIdentifier:identifier]; CHECK(master);
+      NSPredicate *query=[events predicateForEventsWithStartDate:[[master startDate] dateByAddingTimeInterval:-86400]
+          endDate:[[master startDate] dateByAddingTimeInterval:5*86400] calendars:[NSArray arrayWithObject:[master calendar]]];
+      NSArray *items=[[events eventsMatchingPredicate:query] sortedArrayUsingDescriptors:[NSArray arrayWithObject:[NSSortDescriptor sortDescriptorWithKey:@"startDate" ascending:YES]]];
+      CHECK([items count]==4); EKEvent *item=[items objectAtIndex:1];
+      if(scenario==0) { [item setTitle:@"Locally changed occurrence"]; CHECK([events saveEvent:item span:EKSpanThisEvent commit:YES error:NULL]); }
+      else CHECK([events removeEvent:item span:EKSpanThisEvent commit:YES error:NULL]);
+      SyncCalendar(store,YES,NO);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason IN ('native-series-occurrence-edit','native-series-occurrence-missing')")>=1);
+      NSString *remote=[body stringByReplacingOccurrencesOfString:@"SUMMARY:Offline occurrence audit" withString:@"SUMMARY:Concurrent cloud series edit"];
+      CalendarSeed(store,Data(remote),"\"series-2\""); SyncCalendar(store,YES,NO);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
+      [events reset]; items=[events eventsMatchingPredicate:query]; CHECK([items count]==(scenario==0 ? 4 : 3));
+      BOOL found=NO;
+      for(EKEvent *current in items) {
+        CHECK(![[current title] isEqual:@"Concurrent cloud series edit"]);
+        if([[current title] isEqual:@"Locally changed occurrence"]) found=YES;
+      }
+      CHECK(scenario!=0 || found);
+      puts("PASS: Local occurrence change/deletion survives concurrent cloud change with no uploads or native replacement");
+    }
+  } @finally { if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); } }
 }
 static void InvitationTests(NSString *directory)
 {
@@ -406,7 +469,7 @@ int RCIOSNativeTests(const char *path) {
     CHECK(Count(cj,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
     CHECK(Count(ej,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
     puts("PASS: remote deletion removes only owned native records");
-    CalendarDiscoveryTests(directory); ContactRecoveryTests(directory); ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES); InvitationTests(directory);
+    CalendarDiscoveryTests(directory); ContactRecoveryTests(directory); ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES); SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2); InvitationTests(directory);
     result=0;
   } @catch(NSException *exception) {
     fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]);

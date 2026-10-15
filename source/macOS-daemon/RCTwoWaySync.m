@@ -232,7 +232,21 @@ static NSDictionary *LiveReceipt(NSDictionary *receipt)
 BOOL RCTwoWayAttention(RCWriteJournal *j, NSString *root, const char *reason, RCError *error)
 {
   const char *description = "Local change cannot be applied safely; edit preserved";
-  if (!strcmp(reason,"verified-write-awaits-matching-mirror"))
+  if (!strcmp(reason,"native-series-local-edit"))
+    description = "Recurring series was edited locally; upload deferred and local edit preserved";
+  else if (!strcmp(reason,"native-series-local-delete"))
+    description = "Recurring series was deleted locally; cloud deletion deferred";
+  else if (!strcmp(reason,"native-series-occurrence-edit"))
+    description = "Recurring occurrence differs from the published projection; changes preserved";
+  else if (!strcmp(reason,"native-series-occurrence-missing"))
+    description = "Expected recurring occurrences are missing; cloud series preserved";
+  else if (!strcmp(reason,"native-series-remote-edit"))
+    description = "Cloud series changed; native replacement deferred to preserve local occurrences";
+  else if (!strcmp(reason,"native-series-remote-delete"))
+    description = "Cloud series was removed; native deletion deferred to preserve local occurrences";
+  else if (!strcmp(reason,"native-series-unverified"))
+    description = "Complete recurring series could not be verified; no series writes permitted";
+  else if (!strcmp(reason,"verified-write-awaits-matching-mirror"))
     description = "Server change verified; waiting for a matching download";
   else if (!strcmp(reason,"verified-write-awaits-local-acceptance"))
     description = "Server change verified; waiting for local acknowledgement";
