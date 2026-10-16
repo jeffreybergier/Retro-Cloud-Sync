@@ -37,6 +37,20 @@ jobs:
           test "$(git rev-parse HEAD)" = "$release_sha"
           echo "RELEASE_SHA=$release_sha" >> "$GITHUB_ENV"
 
+      - name: Prepare persistent Mac signing identity
+        env:
+          RCLOUD_SIGNING_SECRET: ${{ secrets.RCLOUD_SIGNING_PEM }}
+        run: |
+          set -euo pipefail
+          test -n "$RCLOUD_SIGNING_SECRET" || {
+            echo "RCLOUD_SIGNING_PEM repository secret is required." >&2
+            exit 1
+          }
+          umask 077
+          mkdir -p "$RUNNER_TEMP/rcloud-signing"
+          printf '%s\n' "$RCLOUD_SIGNING_SECRET" > "$RUNNER_TEMP/rcloud-signing/development.pem"
+          test -s "$RUNNER_TEMP/rcloud-signing/development.pem"
+
       - name: Pull latest build image
         run: docker pull "$BUILD_IMAGE"
 
@@ -94,6 +108,8 @@ jobs:
             -e IS_SANDBOX=1 \
             -e ALTIVEC_SDK_ARCHIVE_DIR=/altivec-sdk \
             -e RELEASE_VERSION \
+            -e ALTIVEC_SIGNING_PEM=/rcloud-signing/development.pem \
+            -v "$RUNNER_TEMP/rcloud-signing:/rcloud-signing:ro" \
             -v "$RUNNER_TEMP/.altivec-sdk:/altivec-sdk:ro" \
             --mount type=volume,target=/osxcross/legacy/target/SDK \
             --mount type=volume,target=/osxcross/modern/SDK \
@@ -121,3 +137,7 @@ jobs:
           gh release upload "$RELEASE_TAG" \
             "build/release/artifacts/Retro-Cloud-Sync-${RELEASE_VERSION}-macOS.zip" \
             "build/release/artifacts/Retro-Cloud-Sync-${RELEASE_VERSION}-iOS-rootful.deb" --clobber
+
+      - name: Remove temporary Mac signing identity
+        if: always()
+        run: rm -f "$RUNNER_TEMP/rcloud-signing/development.pem"

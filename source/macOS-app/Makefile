@@ -44,4 +44,16 @@ rcloudd_MAC_SIGN = 1
 rcloudd_SIGN_PLIST = ../macOS-daemon/Info.plist
 rcloudd_IDENTIFIER = com.altivecintelligence.rcloudd
 include $(ALTIVEC_ROOT)/altivec_common_mac.mk
+
+# Check even when cached signed outputs would otherwise be reused.
+.PHONY: check-mac-signing
+check-mac-signing:
+	@bash "$(ALTIVEC_ROOT)/make/check-mac-signing.sh" \
+	  $(call q,$(rCloud_SIGN_PEM)) \
+	  $(if $(and $(filter release,$(CONFIG)),$(filter x86_64 arm64,$(ARCHS))),required,optional)
+	@bash "$(ALTIVEC_ROOT)/make/check-mac-signing.sh" \
+	  $(call q,$(rcloudd_SIGN_PEM)) \
+	  $(if $(and $(filter release,$(CONFIG)),$(filter x86_64 arm64,$(ARCHS))),required,optional)
+validate: check-mac-signing
+$(call signed,rCloud) $(call signed,rcloudd): | check-mac-signing
 endif

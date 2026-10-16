@@ -213,15 +213,44 @@ Build inside Altivec Intelligence with both SDK volumes installed:
 podman compose run --rm altivec "make release"
 ```
 
-Modern slices are signed with `rcodesign` before universal assembly. Compose
-mounts `~/.local/share/retro-cloud-sync/signing` read-only; place a persistent
-certificate/private key PEM in `development.pem`, or override
-`RCLOUD_SIGNING_DIR` / the Make variable `RCLOUD_SIGNING_PEM`. Keep private keys
-outside the repository. Without a PEM, builds use ad-hoc signatures and privacy
-grants may need renewal after rebuilds. A local self-signed identity gives stable
-designated requirements; it is not Developer ID distribution or notarization.
-The native test app uses the same persistent identity and requests Calendar
-permission once while a request is pending.
+Modern Mac slices are signed with `rcodesign`; PPC/i386 remain unsigned.
+The Mac app and daemon inherit the shared Altivec `ALTIVEC_SIGNING_PEM` setting.
+Place the existing signing identity at `~/.altivec/signing/development.pem` on
+the Mac host (mode 0600). The standard `~/.altivec:/root` mount makes it available
+as `/root/signing/development.pem`; the shared build engine discovers it
+without an app-specific mount or setting. Export it with
+`swift bin/altivec-export-signing.swift --local` from the AltivecIntelligence
+checkout on the host. The helper refuses to overwrite an existing file.
+
+Mac releases containing x86_64 or arm64 require a persistent certificate/private
+key PEM. Missing, malformed, encrypted, or mismatched identity material fails the
+build. Debug builds may use ad-hoc signing if no PEM is configured. Use the
+same identity for local and GitHub builds. iOS signing is unchanged.
+
+```sh
+docker compose run --rm altivec "make macOS-release"
+```
+
+The repository Actions secret `RCLOUD_SIGNING_PEM` contains the complete PEM,
+including the certificate and private key. Upload the shared local identity with:
+
+```sh
+gh secret set RCLOUD_SIGNING_PEM --repo jeffreybergier/Retro-Cloud-Sync \
+  < "$HOME/.altivec/signing/development.pem"
+```
+
+The workflow writes a restricted temporary file and passes its container path
+as `ALTIVEC_SIGNING_PEM`, then removes the file during cleanup. Back up the shared
+identity securely and never commit it. Self-signed identities provide stable
+signing requirements, not Developer ID distribution or notarization.
+
+After moving from ad-hoc signing, approve Contacts/Calendars again if prompted
+and re-save the account password if its old Keychain access rules need updating.
+Validate continuity on Mavericks with two successive signed builds: use
+`codesign -d -r-` and `codesign --verify --verbose` on both the installed app and
+`~/Library/Application Support/rCloud/rcloudd`, then confirm permissions and
+password access survive the second installation. Native verification is required;
+cross-signing alone does not establish Mavericks compatibility.
 
 Run tests from the Linux build container:
 
