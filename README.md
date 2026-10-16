@@ -70,8 +70,11 @@ import without exclusions locally, so excluded occurrences appear in the native 
 The full original exclusions remain in the retained cloud data. In two-way mode,
 unchanged finite series clear attention only after every expected native occurrence
 is verified against the saved projection. This read-only audit covers at most
-1,000 occurrences from 1900 through 2100. Unbounded, oversized, or unverifiable
-series remain explicitly unverified. Local series edits/deletions, occurrence
+1,000 occurrences from 1900 through 2100. Already imported open-ended series
+with unchanged native masters and identical retained cloud bodies do not generate
+warnings or pending-change counts solely because they have no end date. This
+does not claim that every occurrence was audited or enable series uploads.
+Oversized or otherwise unverifiable finite series still require attention. Local series edits/deletions, occurrence
 changes, and cloud changes that would require replacing native events remain
 pending with distinct reasons. EXDATE-only cloud changes may update the retained
 base after verification without rewriting native events. No recurring-series

@@ -8,6 +8,9 @@
 - (BOOL)syncContainers:(RCError *)error;
 - (NSDictionary *)savedResources:(RCError *)error;
 - (NSDictionary *)readResource:(NSDictionary *)saved error:(RCError *)error;
+/* Returns nil for a verified series, or a borrowed reason string.
+   native-series-open-ended means only the saved master matches: the caller
+   may quietly retain an identical cloud body, never replace or upload it. */
 - (NSString *)seriesAttention:(NSDictionary *)saved error:(RCError *)error;
 - (BOOL)rememberResource:(NSDictionary *)resource native:(NSDictionary *)saved error:(RCError *)error;
 - (NSArray *)untrackedResources:(RCError *)error;

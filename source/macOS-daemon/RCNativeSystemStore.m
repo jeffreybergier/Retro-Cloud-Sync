@@ -667,8 +667,9 @@ failed:
   return raw ? RCChangedGraph([saved objectForKey:@"graph"],[saved objectForKey:@"_snapshot"],raw) : nil;
 }
 /* Read-only audit of the complete supported finite projection. Never use a
-   master-only comparison as permission to replace a series. Unbounded or large
-   series remain explicitly uncertain; no partial scan claims completeness. */
+   master-only comparison as permission to replace a series. An unchanged
+   unbounded master is a quiet capability limit, not a complete series audit.
+   Large finite series remain uncertain; no partial scan claims completeness. */
 - (NSString *)seriesAttention:(NSDictionary *)saved error:(RCError *)error
 {
   if([[saved objectForKey:@"_pending"] boolValue]) return @"native-series-unverified";
@@ -695,7 +696,8 @@ failed:
         icalcomponent_count_properties(event,ICAL_RDATE_PROPERTY) ||
         icalcomponent_count_properties(event,ICAL_EXRULE_PROPERTY)) return reason;
     struct icalrecurrencetype rule=icalproperty_get_rrule(icalcomponent_get_first_property(event,ICAL_RRULE_PROPERTY));
-    if(!rule.count && icaltime_is_null_time(rule.until)) return reason;
+    if(!rule.count && icaltime_is_null_time(rule.until))
+      return @"native-series-open-ended";
     struct icaltimetype start=icalcomponent_get_dtstart(event), occurrence;
     struct icaldurationtype duration=icalcomponent_get_duration(event);
     if(start.year<1900 || start.year>2100) return reason;

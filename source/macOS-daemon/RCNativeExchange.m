@@ -100,6 +100,13 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
             [[[[r objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count])) {
           NSString *reason=old ? [native seriesAttention:old error:error] : @"native-series-unverified";
           if(error->code) goto done;
+          BOOL openEnded=[reason isEqual:@"native-series-open-ended"];
+          if(openEnded) {
+            /* This is a capability limit, not an observed change. Keep the
+               exact baseline; a master comparison cannot accept a new body. */
+            reason=[[old objectForKey:@"body"] isEqual:[r objectForKey:@"body"]]
+                ? nil : @"native-series-remote-edit";
+          }
           if(!reason) {
             /* Only omitted EXDATE changes can advance this base. No EventKit
                writes: even an unchanged master must not erase exceptions. */
@@ -117,7 +124,8 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
           if(reason) {
             if(!RCTwoWayAttention(j,root,[reason UTF8String],error)) goto done;
             all=NO;
-          } else if(![native rememberResource:r native:old error:error]) goto done;
+          } else if(!openEnded &&
+              ![native rememberResource:r native:old error:error]) goto done;
           continue;
         }
         NSDictionary *truth=old ? [native readResource:old error:error] : nil; if(old && !truth) goto done;

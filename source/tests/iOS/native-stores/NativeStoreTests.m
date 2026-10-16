@@ -185,10 +185,30 @@ static void SeriesOccurrenceTests(NSString *directory,int scenario)
     CalendarSeed(store,Data(body),"\"series-1\""); SyncCalendar(store,NO,YES);
     RCWriteJournal j=RCCalendarStoreWriteJournal(store);
     if(scenario==2) {
-      SyncCalendar(store,YES,NO);
-      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-unverified'")==1);
+      NSString *root=[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"root"];
+      CHECK(RCTwoWaySQL(&j,&error,
+          "INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,'native-series-unverified')",
+          j.account,[root UTF8String]));
+      SyncCalendar(store,YES,YES);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
       CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
-      puts("PASS: Unbounded series remains explicitly unverified without native or cloud writes");
+      NSString *changed=[body stringByReplacingOccurrencesOfString:
+          @"SUMMARY:Offline occurrence audit" withString:@"SUMMARY:Cloud-only edit"];
+      CalendarSeed(store,Data(changed),"\"cloud-only\"");
+      SyncCalendar(store,YES,NO);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-remote-edit'")==1);
+      CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
+      CalendarSeed(store,Data(body),"\"cloud-reverted\"");
+      SyncCalendar(store,YES,YES);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+      EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
+      EKEvent *master=[events eventWithIdentifier:[FirstRow(j) objectForKey:@"id"]];
+      CHECK(master); [master setTitle:@"Local series edit"];
+      CHECK([events saveEvent:master span:EKSpanFutureEvents commit:YES error:NULL]);
+      SyncCalendar(store,YES,NO);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-local-edit'")==1);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      puts("PASS: Unchanged open-ended series clears attention; cloud and local edits remain protected");
     } else {
       SyncCalendar(store,YES,YES);
       // A supported cloud edit is deferred, not written over native instances.

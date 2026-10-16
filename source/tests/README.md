@@ -143,8 +143,9 @@ attention, retain EXDATE-only cloud changes without touching native occurrences,
 and distinguish whole-series edits/deletions from missing or edited occurrences.
 Synthetic occurrence edits and deletions must survive concurrent cloud edits
 without any upload or native replacement. Cloud-only represented-field changes
-stay deferred; reverting them clears the warning after a new audit. Unbounded
-series remain explicitly unverified. The audit is capped at 1,000 occurrences
+stay deferred; reverting them clears the warning after a new audit. Unchanged imported open-ended
+series clear stale attention without authorizing writes or claiming a complete
+occurrence audit; local master edits and changed cloud bodies still warn. The audit is capped at 1,000 occurrences
 and years 1900–2100; no master-only comparison authorizes a series write.
 
 Audio regressions cover mixed display/audio alarms, relative/absolute triggers,
