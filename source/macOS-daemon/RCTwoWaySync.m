@@ -234,6 +234,8 @@ BOOL RCTwoWayAttention(RCWriteJournal *j, NSString *root, const char *reason, RC
   const char *description = "Local change cannot be applied safely; edit preserved";
   if (!strcmp(reason,"native-series-local-edit"))
     description = "Recurring series was edited locally; upload deferred and local edit preserved";
+  else if (!strcmp(reason,"native-series-date-overflow"))
+    description = "EventKit recurrence end overflowed its 32-bit date range; cloud series preserved, explicit local restoration required";
   else if (!strcmp(reason,"native-series-local-delete"))
     description = "Recurring series was deleted locally; cloud deletion deferred";
   else if (!strcmp(reason,"native-series-occurrence-edit"))

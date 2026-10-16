@@ -141,6 +141,7 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
             [[old objectForKey:@"etag"] isEqual:[r objectForKey:@"etag"]] &&
             RCTwoWayGraphsEqual([old objectForKey:@"graph"],truth)) continue;
         if(![native canPublishResource:r error:error]) {
+          RCLogger(RCLogWarning,NULL,"Apply",@"Native publication deferred: %s",error->message);
           if(!RCTwoWayAttention(j,root,"native-publication-pending",error)) goto done;
           all=NO; RCErrorClear(error); continue;
         }

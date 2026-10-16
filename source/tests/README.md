@@ -260,3 +260,9 @@ without a replacement racing the upgrade.
   Pause/Resume and Mail enable transitions on ports 24143/24587. Logs and
   screenshots are retained under `build/tests/iOS/UI`; device artifacts use
   mobile's Library/Caches. The phone must be unlocked for UIKit tests.
+
+The modern native-store suite also checks Mavericks recurrence-end range bounds,
+retention of rejected cloud data, and explicit per-resource restoration from the
+committed download without uploads or clearing unrelated warnings. See
+[`calendar-date-recovery.md`](../../docs/calendar-date-recovery.md) for the
+opt-in maintenance tool and its local-overwrite contract.

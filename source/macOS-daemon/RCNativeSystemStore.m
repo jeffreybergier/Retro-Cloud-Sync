@@ -7,6 +7,7 @@
 #import "RCCalendarTime.h"
 #if defined(__LP64__) || TARGET_OS_IPHONE
 #import <EventKit/EventKit.h>
+#import "RCNativeCalendarDates.h"
 #include <openssl/sha.h>
 static BOOL EKSave(EKEventStore *store,SEL selector,id item,BOOL event,RCError *error)
 {
@@ -456,6 +457,10 @@ static BOOL EKCanWrite(NSDictionary *resource,RCError *error)
   NSEnumerator *it=[[r objectForKey:@"recurrences"] objectEnumerator]; NSString *key;
   while((key=[it nextObject])) {
     NSDictionary *rule=[graph objectForKey:key]; NSString *week=[rule objectForKey:@"weekstartday"];
+    if(RCNativeCalendarUses32BitRecurrenceEnds() &&
+        !RCNativeRecurrenceEndFits32Bits([rule objectForKey:@"until"])) {
+      RCErrorSet(error,1,"Recurrence end exceeds this system's 32-bit EventKit date range; cloud data retained"); return NO;
+    }
     if((week && ![week isEqual:@"monday"]) || !EKRule(rule)) { RCErrorSet(error,1,"EventKit cannot represent this recurrence rule"); return NO; }
   }
   NSMutableArray *alarms=[NSMutableArray array];
@@ -677,7 +682,9 @@ failed:
   if(!raw) return @"native-series-unverified";
   if(![raw count]) return @"native-series-local-delete";
   NSDictionary *snapshot=[saved objectForKey:@"_snapshot"];
-  if(!RCTwoWayGraphsEqual(snapshot,raw)) return @"native-series-local-edit";
+  if(!RCTwoWayGraphsEqual(snapshot,raw))
+    return RCNativeCalendarRecurrenceOverflow(snapshot,raw,[saved objectForKey:@"root"])
+        ? @"native-series-date-overflow" : @"native-series-local-edit";
   NSString *root=[saved objectForKey:@"root"], *identifier=[[saved objectForKey:@"_ids"] objectForKey:root];
   EKEvent *master=[(EKEventStore *)events_ eventWithIdentifier:identifier];
   if(!master || ![master respondsToSelector:@selector(calendarItemIdentifier)]) return @"native-series-unverified";
@@ -930,6 +937,8 @@ unsafe:
     if(!item) item=[EKEvent eventWithEventStore:events_];
     if(!item || !EKWrite(item,container,resource,error)) return NO;
   }
+  NSDictionary *expectedDates=contacts_ ? nil : EKRead(item,resource,NO,error);
+  if(!contacts_ && !expectedDates) return NO;
   /* Reservation precedes native commit. An ambiguous crash blocks replay rather
      than manufacturing a duplicate record. Completed saves are idempotent. */
   if(!RCSaveNative(context_->journal,resource,ids,[saved objectForKey:@"_snapshot"],YES,error)) return NO;
@@ -944,6 +953,15 @@ unsafe:
     NSString *native=[item valueForKey:@"eventIdentifier"]; if(!native) goto failed; [ids setObject:native forKey:root];
     if(!RCSaveNative(context_->journal,resource,ids,nil,YES,error)) return NO;
     if(!EKRepairDefaultAlarm(events_,item,resource,error)) return NO;
+    /* A saved EKEvent may still expose its unsaved-width date values. Reload
+       from EventKit's persistent store before accepting the publication. */
+    [(EKEventStore *)events_ reset];
+    item=[(EKEventStore *)events_ eventWithIdentifier:native];
+    NSDictionary *persisted=item ? EKRead(item,resource,NO,error) : nil;
+    if(!persisted || !RCNativeCalendarDatesEqual(expectedDates,persisted,root)) {
+      if(!error->code) RCErrorSet(error,1,"EventKit changed persisted calendar dates; publication retained for recovery");
+      return NO;
+    }
   }
   NSDictionary *snapshot=contacts_ ? [self readContact:item root:root identifiers:ids error:error] : EKRead(item,resource,NO,error);
   if(!snapshot) return NO;

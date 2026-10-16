@@ -42,3 +42,15 @@ Legacy Mac OS X 10.4+ app: a local TLS mail proxy plus iCloud CardDAV/CalDAV mir
 ## Logging
 
 Use the shared C/Objective-C logger (`RCLogger.m`) and its `INFO`/`WARN`/`ERROR`/`DEBUG` service/phase context. Keep messages bounded, single-line UTF-8 and free of credentials, private bodies and raw framework exception text. Distinguish download, local apply, verified remote write and final acknowledgement. Recovery CLI stdout is command output, not daemon logging. `RETROCLOUDSYNC_LOG_LEVEL=DEBUG` enables detail; the GUI's 1 MiB tail is only a display limit, not disk rotation.
+
+## Native calendar date recovery
+
+- Mavericks stores recurrence ends as signed 32-bit seconds from the 2001 epoch.
+  Reject out-of-range ends before native publication, preserve wire data, and
+  verify persisted dates through a fresh EventKit read before acknowledging saves.
+  Recognizing an old overflow is diagnostic only, never automatic repair.
+- `build-calendar-recovery` builds an opt-in local restoration tool; see
+  `docs/calendar-date-recovery.md`. Run only after the user explicitly authorizes
+  overwriting the selected local series from the committed cloud download.
+  Stop the daemon and export a new recovery backup first. Never treat this as
+  authorization to restore unrelated roots or perform network writes.

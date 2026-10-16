@@ -18,3 +18,17 @@ build-mac-native-tests: $(NATIVE_TEST_ROOT)/bundle.stamp
 test-mac-native-stores: build-mac-native-tests
 	@TEST_HOST="$(TEST_HOST)" BUILD_ROOT="$(BUILD_ROOT)" PROJECT_ROOT="$(PROJECT_ROOT)" python3 "$(SOURCE_ROOT)/tests/macOS/native-stores/run-remote.py"
 .PHONY: test-mac-native-stores
+
+CALENDAR_RECOVERY_ROOT := $(BUILD_ROOT)/tools/macOS/calendar-recovery
+CALENDAR_RECOVERY_INFO := $(SOURCE_ROOT)/tools/macOS/calendar-recovery/Info.plist
+CALENDAR_RECOVERY_MAIN := $(SOURCE_ROOT)/tools/macOS/calendar-recovery/main.m
+$(CALENDAR_RECOVERY_ROOT)/CalendarRecovery: $(MODERN_SIGN_DEPS) $(CALENDAR_RECOVERY_INFO) $(CALENDAR_RECOVERY_MAIN) $(NATIVE_TEST_SOURCES) $(wildcard $(DAEMON_SOURCE_ROOT)/*.h) $(SHARED_BUILD_ROOT)/x86_64/libRetroCloudShared.a $(ALTIVECCORE_ROOT)/lib/libAltivecCore.a $(ICAL_x86_64_LIBRARY) $(LIBVC_x86_64_LIBRARY)
+	@mkdir -p "$(dir $@)"
+	@MACOSX_DEPLOYMENT_TARGET=10.9 $(MODERN_x86_64_CC) $(filter-out -O%,$(MODERN_x86_64_FLAGS)) -O0 $(DAEMON_COMPILE_FLAGS) -I$(ICAL_ROOT)/libical-x86_64/src $(CALENDAR_RECOVERY_MAIN) $(filter-out $(SOURCE_ROOT)/tests/macOS/native-stores/NativeStoreTests.m,$(NATIVE_TEST_SOURCES)) $(filter %.a,$^) --ld-path=/usr/bin/ld64.lld $(MODERN_DAEMON_LINK) -framework AppKit -o "$@"
+	@bash "$(MODERN_SIGN_SCRIPT)" "$@" com.altivecintelligence.rcloud.calendar-recovery "$(CALENDAR_RECOVERY_INFO)" "$(RCLOUD_SIGNING_PEM)" x86_64
+build-calendar-recovery: $(CALENDAR_RECOVERY_ROOT)/CalendarRecovery
+	@mkdir -p "$(CALENDAR_RECOVERY_ROOT)/rCloud Calendar Recovery.app/Contents/MacOS"
+	@cp "$<" "$(CALENDAR_RECOVERY_ROOT)/rCloud Calendar Recovery.app/Contents/MacOS/CalendarRecovery"
+	@cp "$(CALENDAR_RECOVERY_INFO)" "$(CALENDAR_RECOVERY_ROOT)/rCloud Calendar Recovery.app/Contents/Info.plist"
+	@bash "$(ALTIVEC_ROOT)/make/sign-mac-bundle.sh" "$(CALENDAR_RECOVERY_ROOT)/rCloud Calendar Recovery.app" "$(RCLOUD_SIGNING_PEM)" "$(LIPO)"
+.PHONY: build-calendar-recovery

@@ -3,6 +3,8 @@
 #import <EventKit/EventKit.h>
 #import "../../../macOS-daemon/RCMacNativeBackend.h"
 #import "../../../macOS-daemon/RCTwoWayNative.h"
+#import "../../../macOS-daemon/RCNativeCalendarDates.h"
+#import "../../../macOS-daemon/RCNativeCalendarRecovery.h"
 #include <unistd.h>
 #include <dispatch/dispatch.h>
 static RCError error;
@@ -764,18 +766,79 @@ static void AudioAlarmTests(NSString *directory)
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
 }
+/* Bounds are inclusive, and overflow diagnostics never hide other edits. */
+static void CalendarDateRangeTests(NSString *directory)
+{
+  CHECK(RCNativeRecurrenceEndFits32Bits(nil));
+  CHECK(RCNativeRecurrenceEndFits32Bits([NSDate dateWithTimeIntervalSinceReferenceDate:2147483647.0]));
+  CHECK(RCNativeRecurrenceEndFits32Bits([NSDate dateWithTimeIntervalSinceReferenceDate:-2147483648.0]));
+  CHECK(!RCNativeRecurrenceEndFits32Bits([NSDate dateWithTimeIntervalSinceReferenceDate:2147483648.0]));
+  CHECK(!RCNativeRecurrenceEndFits32Bits([NSDate dateWithTimeIntervalSinceReferenceDate:-2147483649.0]));
+  NSString *root=@"fixture", *key=@"recurrence";
+  NSDictionary *event=[NSDictionary dictionaryWithObjectsAndKeys:[NSArray arrayWithObject:key],@"recurrences",@"Fixture",@"summary",nil];
+  NSDictionary *rule=[NSDictionary dictionaryWithObject:[NSDate dateWithTimeIntervalSinceReferenceDate:3124137600.0] forKey:@"until"];
+  NSDictionary *before=[NSDictionary dictionaryWithObjectsAndKeys:event,root,rule,key,nil];
+  NSMutableDictionary *after=[NSMutableDictionary dictionaryWithDictionary:before];
+  [after setObject:[NSDictionary dictionaryWithObject:[NSDate dateWithTimeIntervalSinceReferenceDate:-2147483648.0] forKey:@"until"] forKey:key];
+  CHECK(RCNativeCalendarRecurrenceOverflow(before,after,root));
+  [after setObject:[NSDictionary dictionaryWithObjectsAndKeys:[NSArray arrayWithObject:key],@"recurrences",@"Local edit",@"summary",nil] forKey:root];
+  CHECK(!RCNativeCalendarRecurrenceOverflow(before,after,root));
+  CHECK(!RCNativeCalendarRecurrenceOverflow(before,before,root));
+  RCCalendarStore *store=RCCalendarStoreOpen([[directory stringByAppendingPathComponent:@"date-range.sqlite"] fileSystemRepresentation],"offline-date-range",&error); CHECK(store);
+  @try {
+    NSString *body=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:date-range\r\nDTSTART;VALUE=DATE:20301012\r\nDTEND;VALUE=DATE:20301013\r\nSUMMARY:Offline range fixture\r\nRRULE:FREQ=YEARLY;UNTIL=20991012\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+    if(RCNativeCalendarUses32BitRecurrenceEnds()) {
+      CalendarSeed(store,Data(body),"\"range-1\""); SyncCalendar(store,NO,NO);
+      CHECK(Count(j,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-publication-pending'")==1);
+      CHECK(Count(j,"SELECT count(*) FROM calendar_resources WHERE instr(raw_ical,'UNTIL=20991012')>0")==1);
+    }
+    NSString *finite=[body stringByReplacingOccurrencesOfString:@"20991012" withString:@"20351012"];
+    CalendarSeed(store,Data(finite),"\"range-2\""); SyncCalendar(store,NO,YES);
+    NSDictionary *row=FirstRow(j); NSString *identifier=[[row objectForKey:@"id"] copy]; root=[[row objectForKey:@"resource"] objectForKey:@"root"];
+    NSString *unbounded=[finite stringByReplacingOccurrencesOfString:@";UNTIL=20351012" withString:@""];
+    CalendarSeed(store,Data(unbounded),"\"range-3\""); SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-remote-edit'")==1);
+    CHECK(RCTwoWaySQL(&j,&error,"INSERT INTO two_way_attention VALUES(%lld,'unrelated-fixture','native-series-local-edit')",j.account));
+    CHECK(!RCNativeRestoreCalendar(store,@"missing-fixture",&error));
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==2);
+    CHECK(RCTwoWaySQL(&j,&error,"UPDATE native_store_resources SET pending=1 WHERE account_id=%lld AND root=%Q",j.account,[root UTF8String]));
+    CHECK(!RCNativeRestoreCalendar(store,root,&error));
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==2);
+    CHECK(RCTwoWaySQL(&j,&error,"UPDATE native_store_resources SET pending=0 WHERE account_id=%lld AND root=%Q",j.account,[root UTF8String]));
+    CHECK(RCNativeRestoreCalendar(store,root,&error));
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==1);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(unbounded)]);
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
+    EKEvent *restored=[events eventWithIdentifier:identifier]; CHECK(restored);
+    CHECK([[[restored recurrenceRules] objectAtIndex:0] recurrenceEnd]==nil);
+    SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==1);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    [identifier release];
+    puts("PASS: Date bounds retain cloud data; explicit single-resource restoration clears only its attention and survives the next sync without uploads");
+  } @finally { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
+}
 static int RunTests(int argc,char **argv)
 {
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init]; setbuf(stdout,NULL); int result=1;
-  if(argc==2) {
+  if(argc==2 || argc==3) {
     NSString *log=[[NSString stringWithUTF8String:argv[1]] stringByAppendingPathComponent:@"test.log"];
     freopen([log fileSystemRepresentation],"a",stdout); freopen([log fileSystemRepresentation],"a",stderr); setbuf(stdout,NULL);
   }
   extraContacts=[NSMutableArray array];
   RCContactStore *contacts=NULL; RCCalendarStore *calendars=NULL;
   @try {
-    CHECK(argc==2); CHECK(!RCUsesNativeStoresForVersion(10,8)); CHECK(RCUsesNativeStoresForVersion(10,9)); CHECK(RCUsesNativeStoresForVersion(11,0)); CHECK(RCUsesNativeStores());
+    CHECK(argc==2 || (argc==3 && !strcmp(argv[2],"--dates-only"))); CHECK(!RCUsesNativeStoresForVersion(10,8)); CHECK(RCUsesNativeStoresForVersion(10,9)); CHECK(RCUsesNativeStoresForVersion(11,0)); CHECK(RCUsesNativeStores());
     NSString *directory=[NSString stringWithUTF8String:argv[1]];
+    if(argc==3) {
+      CHECK(RCMacNativeWaitForAccess(NO,&error));
+      CalendarDateRangeTests(directory);
+      puts("PASS: Calendar date recovery suite; disposable fixtures removed");
+      [pool release]; return 0;
+    }
     contacts=RCContactStoreOpen([[directory stringByAppendingPathComponent:@"contacts.sqlite"] fileSystemRepresentation],"offline-native-test",&error); CHECK(contacts);
     calendars=RCCalendarStoreOpen([[directory stringByAppendingPathComponent:@"calendars.sqlite"] fileSystemRepresentation],"offline-native-test",&error); CHECK(calendars);
     RCWriteJournal cj=RCContactStoreWriteJournal(contacts),ej=RCCalendarStoreWriteJournal(calendars);
@@ -828,7 +891,7 @@ static int RunTests(int argc,char **argv)
     [events reset]; event=[events eventWithIdentifier:eventID]; CHECK([[event notes] isEqual:@"remote update"]);
     CHECK(Count(ej,"SELECT count(*) FROM write_operations")==0);
     puts("PASS: EventKit create, recurring event, alarm, stable identity, remote update and one-way isolation");
-    SyncCalendar(calendars,YES,NO); // Series cannot be fully read back via EventKit.
+    SyncCalendar(calendars,YES,YES); // This unchanged finite series has a complete occurrence audit.
     CHECK(Count(ej,"SELECT count(*) FROM write_operations")==0);
     ical=[ical stringByReplacingOccurrencesOfString:@"RRULE:FREQ=DAILY;COUNT=3\r\n" withString:@""];
     CalendarSeed(calendars,Data(ical),"\"e3\""); SyncCalendar(calendars,NO,YES);
@@ -880,6 +943,7 @@ static int RunTests(int argc,char **argv)
     CHECK(Count(ej,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
     [calendarID release];
     puts("PASS: Locally created contacts/events queue once across repeated exchanges");
+    CalendarDateRangeTests(directory);
     SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2); InvitationTests(directory); AudioAlarmTests(directory); result=0;
   } @catch(NSException *exception) { fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]); }
   @try { if(contacts) Cleanup(RCContactStoreWriteJournal(contacts),YES); if(calendars) Cleanup(RCCalendarStoreWriteJournal(calendars),NO); }
