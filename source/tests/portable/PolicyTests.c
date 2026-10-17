@@ -1,3 +1,4 @@
+#include "RCSyncFollowup.h"
 #include "RCPhotoCodec.h"
 #include "RCStatusPolicy.h"
 #include <stdio.h>
@@ -85,6 +86,12 @@ static void Status(void)
 }
 int main(void)
 {
+  int followup=0;
+  CHECK(RCSyncFollowupDelay(0,&followup,3600)==3600 && !followup);
+  CHECK(RCSyncFollowupDelay(1,&followup,3600)==0 && followup);
+  CHECK(RCSyncFollowupDelay(1,&followup,3600)==3600 && !followup);
+  CHECK(RCSyncFollowupDelay(1,&followup,3600)==0 && followup);
+  CHECK(RCSyncFollowupDelay(0,&followup,3600)==3600 && !followup);
   Photos(); Status();
   puts("Portable photo codec and account-scoped status policies passed.");
   return 0;

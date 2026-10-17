@@ -60,6 +60,16 @@ new records in those managed containers, then uses the existing conditional DAV
 write journal. Add new contacts to the account's rCloud group to upload them.
 Unrelated local contacts and calendars are excluded.
 
+After a batch of verified uploads, the daemon immediately runs one additional
+sync pass to download and reconcile the server state. That follow-up never
+schedules another immediate pass; later work uses the normal polling interval.
+Native backends retain the exact local readback alongside each queued upload.
+Once the server result is verified, acknowledgement advances only the uploaded
+fields to that saved readback. Newer local edits remain pending against the
+verified ETag, and newer cloud edits are reconciled independently. Unrelated
+native records are not read to acknowledge an upload. Older queued operations
+without a saved readback retain conservative, resource-scoped recovery checks.
+
 On the Mac AddressBook backend, birthdays and other contact dates are compared
 by Gregorian year/month/day. Native local dates are converted to noon UTC in
 the sync graph, so changing the system timezone does not create a birthday

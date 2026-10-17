@@ -17,7 +17,13 @@
 - (BOOL)canPublishResource:(NSDictionary *)resource error:(RCError *)error;
 - (BOOL)publishResource:(NSDictionary *)resource error:(RCError *)error;
 - (BOOL)removeResource:(NSDictionary *)saved error:(RCError *)error;
-- (BOOL)acceptReceipt:(NSDictionary *)receipt scopes:(NSDictionary *)scopes
+/* Capture the exact native readback in the enqueue transaction, before HTTP.
+   Acknowledgement checkpoints only these represented fields; newer local
+   edits remain differences against that snapshot. Owner-thread only. */
+- (BOOL)captureReceipt:(NSDictionary *)receipt operation:(long long)operation
+    scopes:(NSDictionary *)scopes resource:(NSDictionary *)resource
+    error:(RCError *)error;
+- (BOOL)acceptReceipt:(NSDictionary *)receipt operation:(long long)operation scopes:(NSDictionary *)scopes
           newerTruth:(NSDictionary **)newer error:(RCError *)error;
 @end
 /* Factory returns a retained per-exchange store. The coordinator creates it

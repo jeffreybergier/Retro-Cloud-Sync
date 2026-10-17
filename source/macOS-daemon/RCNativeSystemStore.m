@@ -495,7 +495,9 @@ static BOOL EKWrite(id event,id calendar,NSDictionary *resource,RCError *error)
   self=[super init]; if(!self) return nil; context_=context;
   contacts_=[context->rootEntity isEqual:@"com.apple.contacts.Contact"];
   if(!RCTwoWaySQL(&context->journal,error,"CREATE TABLE IF NOT EXISTS native_store_resources("
-      "account_id INTEGER NOT NULL,root TEXT NOT NULL,resource BLOB NOT NULL,native BLOB NOT NULL,snapshot BLOB NOT NULL,pending INTEGER NOT NULL,PRIMARY KEY(account_id,root))")) goto failed;
+      "account_id INTEGER NOT NULL,root TEXT NOT NULL,resource BLOB NOT NULL,native BLOB NOT NULL,snapshot BLOB NOT NULL,pending INTEGER NOT NULL,PRIMARY KEY(account_id,root));"
+      "CREATE TABLE IF NOT EXISTS native_upload_receipts(operation_id INTEGER PRIMARY KEY,"
+      "account_id INTEGER NOT NULL,root TEXT NOT NULL,native BLOB NOT NULL,snapshot BLOB NOT NULL)")) goto failed;
   if(contacts_) {
     if(![self openContacts:error]) goto failed;
 
@@ -617,7 +619,7 @@ failed:
   if(!container) { if(!error->code) RCErrorSet(error,1,"Managed Calendar is missing"); return nil; }
   id event=[(EKEventStore *)events_ eventWithIdentifier:[ids objectForKey:root]];
   if(event && ![[[event valueForKey:@"calendar"] valueForKey:@"calendarIdentifier"] isEqual:[container valueForKey:@"calendarIdentifier"]]) {
-    RCErrorSet(error,1,"Local calendar move requires attention; preserving the event"); return nil;
+    RCErrorSet(error,1,"Calendar association differs from saved receipt; preserving the event (record=%.120s)",[root UTF8String]); return nil;
   }
   NSDictionary *raw=EKRead(event,saved,NO,error); if(!raw) return nil;
   NSDictionary *base=[saved objectForKey:@"graph"], *snapshot=[saved objectForKey:@"_snapshot"];
@@ -1015,22 +1017,100 @@ failed:
   }
   return result;
 }
-- (BOOL)acceptReceipt:(NSDictionary *)receipt scopes:(NSDictionary *)scopes newerTruth:(NSDictionary **)newer error:(RCError *)error
+- (BOOL)captureReceipt:(NSDictionary *)receipt operation:(long long)operation
+    scopes:(NSDictionary *)scopes resource:(NSDictionary *)resource
+    error:(RCError *)error;
 {
-  NSDictionary *saved=[self savedResources:error]; if(!saved) return NO;
-  NSMutableDictionary *truth=[NSMutableDictionary dictionary]; NSEnumerator *it=[saved objectEnumerator]; NSDictionary *r;
-  while((r=[it nextObject])) {
-    NSDictionary *graph=[self readResource:r error:error]; if(!graph) return NO; [truth addEntriesFromDictionary:graph];
+  NSDictionary *raw=[self rawGraph:resource error:error];
+  if(!raw) return NO;
+  NSDictionary *truth=RCChangedGraph([resource objectForKey:@"graph"],
+      [resource objectForKey:@"_snapshot"],raw);
+  if(!RCNativeScopeMatches(truth,receipt,scopes)) {
+    RCErrorSet(error,1,"Native edit changed while preparing its upload");
+    return NO;
   }
-  if(newer) *newer=truth;
-  if(!RCNativeScopeMatches(truth,receipt,scopes)) { RCErrorSet(error,1,"Newer native edits remain pending"); return NO; }
+  sqlite3_stmt *q=NULL; RCWriteJournal j=context_->journal;
+  BOOL ok=sqlite3_prepare_v2(j.db,
+      "INSERT INTO native_upload_receipts VALUES(?,?,?,?,?)",-1,&q,NULL)==SQLITE_OK;
+  if(ok) {
+    NSData *ids=[NSKeyedArchiver archivedDataWithRootObject:[resource objectForKey:@"_ids"]];
+    NSData *snapshot=[NSKeyedArchiver archivedDataWithRootObject:raw];
+    sqlite3_bind_int64(q,1,operation); sqlite3_bind_int64(q,2,j.account);
+    sqlite3_bind_text(q,3,[[resource objectForKey:@"root"] UTF8String],-1,SQLITE_TRANSIENT);
+    sqlite3_bind_blob(q,4,[ids bytes],(int)[ids length],SQLITE_TRANSIENT);
+    sqlite3_bind_blob(q,5,[snapshot bytes],(int)[snapshot length],SQLITE_TRANSIENT);
+    ok=sqlite3_step(q)==SQLITE_DONE;
+  }
+  sqlite3_finalize(q);
+  if(!ok) RCErrorSet(error,1,"Could not save native upload receipt");
+  return ok;
+}
+- (BOOL)acceptReceipt:(NSDictionary *)receipt operation:(long long)operation
+    scopes:(NSDictionary *)scopes newerTruth:(NSDictionary **)newer
+    error:(RCError *)error;
+{
+  /* Never read unrelated native objects while acknowledging this operation.
+     The captured readback is immutable, just like the GET-verified wire result.
+     Advancing to it leaves subsequent edits visible on the next exchange. */
+  RCWriteJournal j=context_->journal; sqlite3_stmt *q=NULL;
+  NSDictionary *captured=nil,*capturedIDs=nil; NSString *capturedRoot=nil;
+  if(sqlite3_prepare_v2(j.db,"SELECT root,native,snapshot FROM native_upload_receipts WHERE operation_id=? AND account_id=?",-1,&q,NULL)!=SQLITE_OK) {
+    RCErrorSet(error,1,"Could not read native upload receipt"); return NO;
+  }
+  sqlite3_bind_int64(q,1,operation); sqlite3_bind_int64(q,2,j.account);
+  int step=sqlite3_step(q);
+  if(step==SQLITE_ROW) {
+    capturedRoot=[NSString stringWithUTF8String:(const char *)sqlite3_column_text(q,0)];
+    capturedIDs=RCDecode(q,1); captured=RCDecode(q,2);
+  }
+  sqlite3_finalize(q);
+  if(step!=SQLITE_ROW && step!=SQLITE_DONE) {
+    RCErrorSet(error,1,"Could not read native upload receipt"); return NO;
+  }
+  if(step==SQLITE_ROW && (!capturedRoot ||
+      ![capturedIDs isKindOfClass:[NSDictionary class]] ||
+      ![captured isKindOfClass:[NSDictionary class]])) {
+    RCErrorSet(error,1,"Invalid native upload receipt"); return NO;
+  }
+  NSMutableDictionary *saved=[NSMutableDictionary dictionary];
+  for(NSString *key in (capturedRoot ? [NSArray arrayWithObject:capturedRoot] : [receipt allKeys])) {
+    NSDictionary *r=RCLoadNative(j,key,error); if(error->code) return NO;
+    if([[r objectForKey:@"_pending"] boolValue]) {
+      RCErrorSet(error,1,"An interrupted native save requires reconciliation");
+      return NO;
+    }
+    if(r) [saved setObject:r forKey:key];
+  }
+  if(captured && ![capturedIDs isEqual:[[saved objectForKey:capturedRoot] objectForKey:@"_ids"]]) {
+    RCErrorSet(error,1,"Native upload ownership changed; reconciliation required"); return NO;
+  }
+  NSMutableDictionary *truth=[NSMutableDictionary dictionary];
+  NSEnumerator *it=[saved objectEnumerator]; NSDictionary *r;
+  if(!captured) {
+    /* Upgrade path: a queued creation already checkpointed its exact observed
+       graph. A later edit cannot invalidate that historical receipt. Older
+       updates still need a scoped read because no raw receipt was persisted. */
+    while((r=[it nextObject])) [truth addEntriesFromDictionary:[r objectForKey:@"graph"]];
+    if(RCNativeScopeMatches(truth,receipt,scopes) && [saved count]==1) {
+      captured=[[[saved allValues] objectAtIndex:0] objectForKey:@"_snapshot"];
+    }
+    if(!captured) {
+      [truth removeAllObjects]; it=[saved objectEnumerator];
+      while((r=[it nextObject])) {
+        NSDictionary *graph=[self readResource:r error:error]; if(!graph) return NO;
+        [truth addEntriesFromDictionary:graph];
+      }
+    }
+  }
+  if(newer) *newer=captured ? nil : truth;
+  if(!captured && !RCNativeScopeMatches(truth,receipt,scopes)) { RCErrorSet(error,1,"Newer native edits remain pending"); return NO; }
   /* Advance only the acknowledged fields in the native baseline. Otherwise a
      successful upload would be detected again as a fresh local edit next poll. */
   it=[saved objectEnumerator];
   while((r=[it nextObject])) {
     NSMutableDictionary *base=[NSMutableDictionary dictionaryWithDictionary:[r objectForKey:@"graph"]];
     NSMutableDictionary *snapshot=[NSMutableDictionary dictionaryWithDictionary:[r objectForKey:@"_snapshot"]];
-    NSDictionary *raw=[self rawGraph:r error:error]; if(!raw) return NO;
+    NSDictionary *raw=captured ?: [self rawGraph:r error:error]; if(!raw) return NO;
     BOOL touched=NO; NSEnumerator *ids=[receipt keyEnumerator]; NSString *key;
     while((key=[ids nextObject])) {
       id value=[receipt objectForKey:key];
@@ -1039,7 +1119,7 @@ failed:
       BOOL newAlarm=!contacts_ && [raw objectForKey:key] && [value isKindOfClass:[NSDictionary class]] &&
           [[value objectForKey:RCRecordEntityNameKey] hasSuffix:@"Alarm"] &&
           [[value objectForKey:@"owner"] containsObject:[r objectForKey:@"root"]];
-      if(![base objectForKey:key] && ![[r objectForKey:@"root"] isEqual:key] && !newAlarm) continue;
+      if(![base objectForKey:key] && ![[r objectForKey:@"root"] isEqual:key] && !newAlarm && !(captured && [raw objectForKey:key])) continue;
       touched=YES;
       if(value==[NSNull null]) { [base removeObjectForKey:key]; [snapshot removeObjectForKey:key]; }
       else {
@@ -1061,6 +1141,25 @@ failed:
       NSMutableDictionary *updated=[NSMutableDictionary dictionaryWithDictionary:r];
       [updated removeObjectForKey:@"_ids"]; [updated removeObjectForKey:@"_snapshot"]; [updated removeObjectForKey:@"_pending"];
       [updated setObject:base forKey:@"graph"];
+      /* Subsequent edits must use the verified version, never the pre-upload
+         ETag/body. A concurrent cloud edit still gets an If-Match conflict. */
+      RCWriteOperation verified;
+      if(!RCWriteJournalGet(&j,operation,&verified,error)) return NO;
+      if(verified.resultBody && verified.resultETag) {
+        [updated setObject:[NSData dataWithBytes:verified.resultBody
+            length:verified.resultLength] forKey:@"body"];
+        [updated setObject:[NSString stringWithUTF8String:verified.resultETag] forKey:@"etag"];
+      }
+      RCWriteOperationClear(&verified);
+      sqlite3_stmt *paths=NULL;
+      if(sqlite3_prepare_v2(j.db,"SELECT paths FROM two_way_intents WHERE operation_id=?",-1,&paths,NULL)!=SQLITE_OK) {
+        RCErrorSet(error,1,"Could not read uploaded native paths"); return NO;
+      }
+      sqlite3_bind_int64(paths,1,operation);
+      int pathStep=sqlite3_step(paths);
+      if(pathStep==SQLITE_ROW) [updated setObject:RCDecode(paths,0) forKey:@"paths"];
+      sqlite3_finalize(paths);
+      if(pathStep!=SQLITE_ROW) { RCErrorSet(error,1,"Missing uploaded native paths"); return NO; }
       if(!RCSaveNative(context_->journal,updated,[r objectForKey:@"_ids"],snapshot,NO,error)) return NO;
     }
   }

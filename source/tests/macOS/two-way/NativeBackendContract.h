@@ -46,9 +46,13 @@ static NSDictionary *backendTruth;
 { (void)resource; RCErrorSet(failure,1,"Unexpected publication"); return NO; }
 - (BOOL)removeResource:(NSDictionary *)saved error:(RCError *)failure
 { (void)saved; RCErrorSet(failure,1,"Unexpected removal"); return NO; }
-- (BOOL)acceptReceipt:(NSDictionary *)receipt scopes:(NSDictionary *)scopes
+- (BOOL)captureReceipt:(NSDictionary *)receipt operation:(long long)operation
+    scopes:(NSDictionary *)scopes resource:(NSDictionary *)resource error:(RCError *)failure
+{ (void)receipt; (void)operation; (void)scopes; (void)resource;
+  RCErrorSet(failure,1,"Unexpected capture"); return NO; }
+- (BOOL)acceptReceipt:(NSDictionary *)receipt operation:(long long)operation scopes:(NSDictionary *)scopes
     newerTruth:(NSDictionary **)newer error:(RCError *)failure
-{ (void)receipt; (void)scopes; (void)newer; RCErrorSet(failure,1,"Unexpected receipt"); return NO; }
+{ (void)operation; (void)receipt; (void)scopes; (void)newer; RCErrorSet(failure,1,"Unexpected receipt"); return NO; }
 @end
 static id<RCNativeStore> ContractFactory(RCTwoWayContext *context,RCError *failure)
 {

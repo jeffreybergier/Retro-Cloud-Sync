@@ -273,3 +273,16 @@ protection checks. `DIRECTORY --cleanup-only` removes persisted synthetic
 fixtures after an interrupted run; it rejects account names outside the
 `offline-` and `series-occurrence-` test namespaces. Stop a stalled harness
 before using cleanup and retain its logs for diagnosis.
+
+Upload reconciliation regressions simulate verified HTTP outcomes offline, then
+change the local event, change its cloud version, or move it to another cloud
+calendar before acknowledgement. They check preserved newer edits, verified
+ETag preconditions, replay without duplicate writes, and pre-upgrade creations
+without captured readbacks. The native harness supports `--uploads-only` with
+an explicit fresh fixture directory for focused runs. Portable policy tests
+check that the immediate post-upload poll cannot recursively schedule itself.
+The same binary accepts `--receipts-only` (no fixture-directory argument) to
+exercise the production native checkpoint with an injected readback and an
+in-memory journal. That mode needs no Contacts/Calendar permission and checks
+partial-field acknowledgement, newer edits, unrelated interrupted saves,
+verified body/ETag retention, legacy receipts and crash replay.

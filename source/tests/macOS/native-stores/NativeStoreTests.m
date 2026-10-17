@@ -851,6 +851,101 @@ static void CalendarDateRangeTests(NSString *directory)
     puts("PASS: Date bounds retain cloud data; explicit single-resource restoration clears only its attention and survives the next sync without uploads");
   } @finally { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
 }
+static void UploadReconciliationTests(NSString *directory)
+{
+  NSString *path=[directory stringByAppendingPathComponent:@"upload-reconciliation.sqlite"];
+  RCCalendarStore *store=RCCalendarStoreOpen([path fileSystemRepresentation],
+      "offline-upload-reconciliation",&error); CHECK(store);
+  RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+  @try {
+    NSString *ical=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:offline-upload-race\r\nDTSTART:20261018T020000Z\r\nDTEND:20261018T030000Z\r\nSUMMARY:Before upload\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    CalendarSeed(store,Data(ical),"\"initial\""); SyncCalendar(store,NO,YES);
+    NSString *identifier=[[FirstRow(j) objectForKey:@"id"] copy];
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
+    EKEvent *event=[events eventWithIdentifier:identifier]; CHECK(event);
+    [event setTitle:@"Uploaded edit"];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM native_upload_receipts")==1);
+    NSData *confirmed=ConfirmWrite(j);
+    [event setTitle:@"Newer local edit"];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    CalendarSeed(store,confirmed,"\"confirmed\"");
+    SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==1);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE state='queued' AND base_etag='\"confirmed\"'")==1);
+    [events reset]; CHECK([[[events eventWithIdentifier:identifier] title] isEqual:@"Newer local edit"]);
+    puts("PASS: Verified upload acknowledges despite newer local edit; successor retains verified ETag and native edit");
+    confirmed=ConfirmWrite(j);
+    NSString *remote=[[[NSString alloc] initWithData:confirmed encoding:NSUTF8StringEncoding] autorelease];
+    remote=[remote stringByReplacingOccurrencesOfString:@"Newer local edit" withString:@"Newer remote edit"];
+    CalendarSeed(store,Data(remote),"\"remote-newer\"");
+    SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==2);
+    [events reset]; CHECK([[[events eventWithIdentifier:identifier] title] isEqual:@"Newer remote edit"]);
+    puts("PASS: Newer remote version does not invalidate verified upload or cause re-upload");
+    event=[events eventWithIdentifier:identifier]; [event setTitle:@"Before remote move"];
+    CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO); confirmed=ConfirmWrite(j);
+    // Simulate a complete cloud inventory after another device moved the UID.
+    CHECK(RCCalendarStoreBeginRun(store,&error));
+    RCDAVCollection collection; memset(&collection,0,sizeof(collection));
+    collection.url="https://fixture.invalid/calendar/"; collection.displayName="rCloud Offline Test";
+    long long calendar=0; CHECK(RCCalendarStoreCollection(store,&collection,&calendar,&error));
+    collection.url="https://fixture.invalid/moved/"; collection.displayName="rCloud Offline Moved";
+    CHECK(RCCalendarStoreCollection(store,&collection,&calendar,&error));
+    CHECK(RCCalendarStoreSave(store,calendar,"https://fixture.invalid/moved/event.ics","\"moved\"",[confirmed bytes],[confirmed length],&error));
+    CHECK(RCCalendarStoreFinishRun(store,1,NULL,&error));
+    SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE state='acknowledged'")==3);
+    CHECK(Count(j,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==1);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+    SyncCalendar(store,YES,YES);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==3);
+    puts("PASS: Remote calendar move before acknowledgement converges without duplicate upload or retained source event");
+    // A locally created event can move before its original href is ever
+    // downloaded. Exercise both durable receipts and pre-upgrade creations.
+    for(int legacy=0;legacy<2;legacy++) {
+      [events reset];
+      NSString *ownedID=[FirstRow(j) objectForKey:@"id"];
+      EKCalendar *destination=[[events eventWithIdentifier:ownedID] calendar];
+      CHECK(destination);
+      EKEvent *created=[EKEvent eventWithEventStore:events];
+      [created setCalendar:destination]; [created setTitle:@"Created then moved"];
+      [created setStartDate:[NSDate dateWithTimeIntervalSince1970:1792288800]];
+      [created setEndDate:[NSDate dateWithTimeIntervalSince1970:1792292400]];
+      CHECK([events saveEvent:created span:EKSpanFutureEvents commit:YES error:NULL]);
+      SyncCalendar(store,YES,NO);
+      NSData *creation=ConfirmWrite(j);
+      if(legacy) CHECK(RCTwoWaySQL(&j,&error,"DELETE FROM native_upload_receipts WHERE operation_id=(SELECT max(id) FROM write_operations)"));
+      CHECK(RCCalendarStoreBeginRun(store,&error));
+      collection.url="https://fixture.invalid/calendar/"; collection.displayName="rCloud Offline Test";
+      CHECK(RCCalendarStoreCollection(store,&collection,&calendar,&error));
+      CHECK(RCCalendarStoreSave(store,calendar,"https://fixture.invalid/calendar/creation.ics","\"creation-moved\"",[creation bytes],[creation length],&error));
+      collection.url="https://fixture.invalid/moved/"; collection.displayName="rCloud Offline Moved";
+      CHECK(RCCalendarStoreCollection(store,&collection,&calendar,&error));
+      CHECK(RCCalendarStoreSave(store,calendar,"https://fixture.invalid/moved/event.ics","\"moved\"",[confirmed bytes],[confirmed length],&error));
+      CHECK(RCCalendarStoreFinishRun(store,1,NULL,&error));
+      SyncCalendar(store,YES,YES);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE state<>'acknowledged'")==0);
+      CHECK(Count(j,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==2);
+      SyncCalendar(store,YES,YES);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==4+legacy);
+      // Retire only the synthetic moved creation before the next case.
+      CHECK(RCCalendarStoreBeginRun(store,&error));
+      collection.url="https://fixture.invalid/calendar/"; collection.displayName="rCloud Offline Test";
+      CHECK(RCCalendarStoreCollection(store,&collection,&calendar,&error));
+      collection.url="https://fixture.invalid/moved/"; collection.displayName="rCloud Offline Moved";
+      CHECK(RCCalendarStoreCollection(store,&collection,&calendar,&error));
+      CHECK(RCCalendarStoreSave(store,calendar,"https://fixture.invalid/moved/event.ics","\"moved\"",[confirmed bytes],[confirmed length],&error));
+      CHECK(RCCalendarStoreFinishRun(store,1,NULL,&error));
+      SyncCalendar(store,YES,YES);
+    }
+    puts("PASS: New and pre-upgrade local creations moved remotely before first download acknowledge without duplicates");
+    [identifier release];
+  } @finally { Cleanup(j,NO); RCCalendarStoreClose(store); }
+}
+#import "ReceiptTests.h"
 static int RunTests(int argc,char **argv)
 {
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init]; setbuf(stdout,NULL); int result=1;
@@ -861,7 +956,8 @@ static int RunTests(int argc,char **argv)
   extraContacts=[NSMutableArray array];
   RCContactStore *contacts=NULL; RCCalendarStore *calendars=NULL;
   @try {
-    CHECK(argc==2 || (argc==3 && (!strcmp(argv[2],"--dates-only") || !strcmp(argv[2],"--series-only") || !strcmp(argv[2],"--cleanup-only")))); CHECK(!RCUsesNativeStoresForVersion(10,8)); CHECK(RCUsesNativeStoresForVersion(10,9)); CHECK(RCUsesNativeStoresForVersion(11,0)); CHECK(RCUsesNativeStores());
+    CHECK(argc==2 || (argc==3 && (!strcmp(argv[2],"--uploads-only") || !strcmp(argv[2],"--dates-only") || !strcmp(argv[2],"--series-only") || !strcmp(argv[2],"--cleanup-only")))); CHECK(!RCUsesNativeStoresForVersion(10,8)); CHECK(RCUsesNativeStoresForVersion(10,9)); CHECK(RCUsesNativeStoresForVersion(11,0)); CHECK(RCUsesNativeStores());
+    ReceiptCheckpointTests();
     NSString *directory=[NSString stringWithUTF8String:argv[1]];
     if(argc==3) {
       CHECK(RCMacNativeWaitForAccess(NO,&error));
@@ -870,7 +966,8 @@ static int RunTests(int argc,char **argv)
         CleanupInterruptedFixtures(directory);
       } else if(!strcmp(argv[2],"--series-only")) {
         SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2);
-      } else CalendarDateRangeTests(directory);
+      } else if(!strcmp(argv[2],"--uploads-only")) UploadReconciliationTests(directory);
+      else CalendarDateRangeTests(directory);
       puts("PASS: Calendar focused suite; disposable fixtures removed");
       [pool release]; return 0;
     }
@@ -988,6 +1085,7 @@ static int RunTests(int argc,char **argv)
     CHECK(Count(ej,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
     [calendarID release];
     puts("PASS: Locally created contacts/events queue once across repeated exchanges");
+    UploadReconciliationTests(directory);
     CalendarDateRangeTests(directory);
     SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2); InvitationTests(directory); AudioAlarmTests(directory); result=0;
   } @catch(NSException *exception) { fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]); }
@@ -1001,6 +1099,12 @@ static int RunTests(int argc,char **argv)
 int main(int argc,char **argv)
 {
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
+  if(argc==2 && !strcmp(argv[1],"--receipts-only")) {
+    int result=0;
+    @try { ReceiptCheckpointTests(); }
+    @catch(NSException *exception) { fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]); result=1; }
+    [pool release]; return result;
+  }
   [NSApplication sharedApplication];
   /* Keep AppKit's actual event loop alive for privacy dialogs. Framework
      operations run on a worker, as they do in the production daemon. */

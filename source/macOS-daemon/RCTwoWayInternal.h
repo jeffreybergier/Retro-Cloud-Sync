@@ -3,7 +3,7 @@
 #import "RCTwoWaySync.h"
 /* Shared journal primitives. Backends must preserve transaction boundaries,
    exact receipts and publication generations when using these helpers. */
-typedef BOOL (*RCSyncAcceptReceipt)(void *, NSDictionary *, NSDictionary *, BOOL,
+typedef BOOL (*RCSyncAcceptReceipt)(void *, long long, NSDictionary *, NSDictionary *, BOOL,
     NSDictionary **, RCError *);
 BOOL RCTwoWayComplete(RCTwoWayContext *, NSDictionary *, NSMutableDictionary *,
     RCSyncAcceptReceipt, void *, RCError *);

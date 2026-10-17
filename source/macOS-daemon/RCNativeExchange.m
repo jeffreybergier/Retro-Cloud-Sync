@@ -2,11 +2,11 @@
 #import "RCTwoWayInternal.h"
 #import "RCAutorelease.h"
 #import "RCLogger.h"
-static BOOL Accept(void *receiver,NSDictionary *receipt,NSDictionary *scopes,
+static BOOL Accept(void *receiver,long long operation,NSDictionary *receipt,NSDictionary *scopes,
     BOOL deletion,NSDictionary **newer,RCError *error)
 {
   (void)deletion;
-  return [(id<RCNativeStore>)receiver acceptReceipt:receipt scopes:scopes newerTruth:newer error:error];
+  return [(id<RCNativeStore>)receiver acceptReceipt:receipt operation:operation scopes:scopes newerTruth:newer error:error];
 }
 /* The native stores supply a durable local baseline instead of Sync Services'
    truth database. Reuse the same lossless encoder, ETag journal and receipts. */
@@ -57,6 +57,7 @@ static BOOL RCNativeQueue(RCTwoWayContext *c,NSDictionary *base,NSDictionary *tr
       revision,[body bytes],[body length],&operation,error) ||
       !RCTwoWaySaveIntent(j,operation,receipt,[desired objectForKey:@"paths"],[desired objectForKey:@"fieldScopes"],error) ||
       !RCTwoWaySaveResource(j,operation,base ?: desired,error) ||
+      ![native captureReceipt:receipt operation:operation scopes:[desired objectForKey:@"fieldScopes"] resource:observed ?: base error:error] ||
       (creating && ![native rememberResource:desired native:observed error:error]) ||
       !RCTwoWaySQL(j,error,"COMMIT")) goto failed;
   return YES;
@@ -149,7 +150,7 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
         if(twoWay && old && !RCTwoWayGraphsEqual([old objectForKey:@"graph"],truth)) {
           /* Pin outgoing work to the last native publication, never the newly
              fetched ETag. A simultaneous remote edit becomes a real conflict. */
-          if(!RCNativeQueue(c,old,truth,root,nil,nil,error)) {
+          if(!RCNativeQueue(c,old,truth,root,native,nil,error)) {
             if(!RCTwoWayAttention(j,root,"unsupported-native-edit",error)) goto done;
           }
           all=NO; RCErrorClear(error); continue;
@@ -219,7 +220,7 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
       }
       NSDictionary *truth=[native readResource:resource error:error]; if(!truth) goto done;
       if(twoWay && [truth count] && !RCTwoWayGraphsEqual([resource objectForKey:@"graph"],truth)) {
-        if(!RCNativeQueue(c,resource,truth,[resource objectForKey:@"root"],nil,nil,error)) {
+        if(!RCNativeQueue(c,resource,truth,[resource objectForKey:@"root"],native,nil,error)) {
           if(!RCTwoWayAttention(j,[resource objectForKey:@"root"],"remote-delete-local-edit",error)) goto done;
         }
         all=NO; RCErrorClear(error); continue;

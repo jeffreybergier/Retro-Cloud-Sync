@@ -379,7 +379,7 @@ BOOL RCTwoWayComplete(RCTwoWayContext *c, NSDictionary *byHref,
         if (!resource && o.httpStatus==404 && ![LiveReceipt(receipt) count] &&
             ![RCTwoWaySubgraph(RCTwoWayRemap(c->graph,aliases),[receipt allKeys]) count] &&
             RCTwoWaySQL(j,error,"UPDATE write_resolutions SET mirror_committed=1 WHERE successor_id=%lld",o.id) &&
-            accept(receiver,receipt,nil,YES,NULL,error)) {
+            accept(receiver,o.id,receipt,nil,YES,NULL,error)) {
           if (!RCWriteJournalAcknowledge(j,o.id,error)) { RCWriteOperationClear(&o); return NO; }
         RCLogger(RCLogInfo, NULL, "Upload", @"Verified server change acknowledged locally (operation=%lld)", o.id);
           NSEnumerator *ids=[receipt keyEnumerator]; NSString *key;
@@ -452,7 +452,7 @@ BOOL RCTwoWayComplete(RCTwoWayContext *c, NSDictionary *byHref,
       [aliases addEntriesFromDictionary:newAliases];
       if (acknowledged) { RCWriteOperationClear(&o); continue; }
       NSDictionary *newerTruth=nil;
-      if (accept(receiver,receipt,scopes,NO,&newerTruth,error)) {
+      if (accept(receiver,o.id,receipt,scopes,NO,&newerTruth,error)) {
         if (!RCWriteJournalAcknowledge(j,o.id,error)) { RCWriteOperationClear(&o); return NO; }
         RCLogger(RCLogInfo, NULL, "Upload", @"Verified server fields completed (operation=%lld)", o.id);
         NSEnumerator *completedIDs=[receipt keyEnumerator]; NSString *completedID;

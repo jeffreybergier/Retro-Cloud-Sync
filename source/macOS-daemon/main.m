@@ -2,6 +2,7 @@
 #import "RCPlatformDate.h"
 #import "RCSyncBackend.h"
 #import "RCStatus.h"
+#include "RCSyncFollowup.h"
 #import "RCCalendarOperations.h"
 #import "RCContactPhoto.h"
 #import "RCLogger.h"
@@ -144,13 +145,30 @@ static NSString *RCSyncModeFromConfiguration(NSDictionary *configuration,
   return [enabled boolValue] ? @"OneWay" : @"Disabled";
 }
 
-static void RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
+static long RCVerifiedWriteCount(RCWriteJournal *journal)
+{
+  sqlite3_stmt *q=NULL; long count=0;
+  if(sqlite3_prepare_v2(journal->db,"SELECT count(*) FROM write_operations WHERE account_id=? AND state IN ('applied','acknowledged')",-1,&q,NULL)==SQLITE_OK) {
+    sqlite3_bind_int64(q,1,journal->account);
+    if(sqlite3_step(q)==SQLITE_ROW) count=sqlite3_column_int64(q,0);
+  }
+  sqlite3_finalize(q); q=NULL;
+  /* Legacy calendar MOVE/MKCALENDAR writes use their own journal. The table
+     may not exist until calendar operations have first been initialized. */
+  if(sqlite3_prepare_v2(journal->db,"SELECT count(*) FROM calendar_actions WHERE account_id=? AND state='done'",-1,&q,NULL)==SQLITE_OK) {
+    sqlite3_bind_int64(q,1,journal->account);
+    if(sqlite3_step(q)==SQLITE_ROW) count+=sqlite3_column_int64(q,0);
+  }
+  sqlite3_finalize(q); return count;
+}
+static BOOL RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
                                const char *password, BOOL calendars, RCContactStore *contacts)
 {
   RCHTTPClientConfig config;
   RCError error;
   RCHTTPClient *http;
-  if (!password || RCStopRequested) return;
+  if (!password || RCStopRequested) return NO;
+  long verifiedBefore=RCVerifiedWriteCount(journal);
   NSString *service=calendars ? @"Calendars" : @"Contacts";
   RCStatusPhase(service,@"Uploading");
   memset(&config,0,sizeof(config)); RCErrorClear(&error);
@@ -172,6 +190,7 @@ static void RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
     RCLogger(RCLogWarning,"Contacts","Upload",@"Uploaded photo verification pending: %s",error.message);
   }
   RCHTTPClientDestroy(http);
+  return RCVerifiedWriteCount(journal)>verifiedBefore;
 }
 
 /* Changing back to one-way must not publish over a still-journaled local edit.
@@ -289,6 +308,7 @@ static void *RCSyncWorkerMain(void *context)
 {
   RCSyncWorker *worker = (RCSyncWorker *)context;
   unsigned long poll = 0;
+  int followup=0;
 
   NSAutoreleasePool *accessPool=[[NSAutoreleasePool alloc] init];
   const RCSyncBackend *backend=RCCurrentSyncBackend();
@@ -310,7 +330,7 @@ static void *RCSyncWorkerMain(void *context)
     RCError error;
     struct timespec wakeTime;
     int shouldStop;
-    BOOL contactsFetched=NO, calendarsFetched=NO;
+    BOOL contactsFetched=NO, calendarsFetched=NO, uploaded=NO;
     NSTimeInterval started = [NSDate timeIntervalSinceReferenceDate];
 
     pthread_mutex_lock(&worker->mutex);
@@ -396,7 +416,7 @@ static void *RCSyncWorkerMain(void *context)
         if (worker->contactsTwoWay) {
           exported=contactsFetched && backend->syncContacts(store,worker->syncClientDescriptionPath,YES,&syncRecordCount,&error);
           if (!contactsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
-          if (exported) RCRunAccountWrites(&journal,worker,password,NO,store);
+          if (exported) uploaded |= RCRunAccountWrites(&journal,worker,password,NO,store);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else {
@@ -470,7 +490,7 @@ contacts_finished:
         if (worker->calendarsTwoWay) {
           exported=calendarsFetched && backend->syncCalendars(calendarStore,worker->calendarDescriptionPath,YES,&syncRecordCount,&error);
           if (!calendarsFetched) RCErrorSet(&error,1,"Skipped: two-way local application requires a successful download");
-          if (exported) RCRunAccountWrites(&journal,worker,password,YES,NULL);
+          if (exported) uploaded |= RCRunAccountWrites(&journal,worker,password,YES,NULL);
         } else if (RCHasPendingWrites(&journal)) {
           exported=NO; RCErrorSet(&error,1,"Pending outgoing changes must be resolved before one-way publication");
         } else {
@@ -507,17 +527,19 @@ calendar_skipped:
       [pool release];
       break;
     }
+    unsigned int delay=RCSyncFollowupDelay(uploaded,&followup,worker->interval);
     RCLoggerSetContext("Account", poll);
+    if(!delay) RCLogger(RCLogInfo,NULL,"Poll",@"Verified uploads; running one immediate reconciliation poll");
     RCLogger(RCLogInfo, NULL, "Poll", @"Finished in %.1fs; next poll in %us",
-        [NSDate timeIntervalSinceReferenceDate] - started, worker->interval);
-    RCStatusSchedule(worker->interval);
+        [NSDate timeIntervalSinceReferenceDate] - started, delay);
+    RCStatusSchedule(delay);
     RCICloudCredentialsClearPassword(password, passwordLength);
     [pool release];
 
-    wakeTime.tv_sec = time(NULL) + worker->interval;
+    wakeTime.tv_sec = time(NULL) + delay;
     wakeTime.tv_nsec = 0;
     pthread_mutex_lock(&worker->mutex);
-    if (!worker->shouldStop) {
+    if (!worker->shouldStop && delay) {
       pthread_cond_timedwait(&worker->condition, &worker->mutex, &wakeTime);
     }
     shouldStop = worker->shouldStop;

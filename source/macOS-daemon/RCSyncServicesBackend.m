@@ -11,9 +11,10 @@
 #include <sys/stat.h>
 #include <string.h>
 
-static BOOL Accept(void *receiver, NSDictionary *receipt, NSDictionary *scopes,
+static BOOL Accept(void *receiver,long long operation, NSDictionary *receipt, NSDictionary *scopes,
     BOOL deletion, NSDictionary **newer, RCError *error)
 {
+  (void)operation;
   return deletion ? RCSyncAcceptUpload((ISyncClient *)receiver,receipt,newer,error) :
       RCSyncAcceptMappedUpload((ISyncClient *)receiver,receipt,scopes,newer,error);
 }
