@@ -2,7 +2,7 @@
 # Use this file to "activate" the Altivec toolchain in your new repository.
 # No submodule needed — the GHCR image ships the full /altivec/ toolchain
 # (cross-compilers, AltivecCore libs, AI CLIs, and example apps). Supply the
-# three verified SDK archives in .altivec-sdk/ or ~/.altivec-sdk/.
+# three verified SDK archives in ~/.altivec/.altivec-sdk/ or .altivec-sdk/.
 #
 # Project rules and conventions for AI agents are documented at
 # /altivec/AGENTS.md inside the image (symlinked as CLAUDE.md / GEMINI.md
@@ -17,10 +17,10 @@
 #    docker compose pull
 #
 # 3. Put the checksum-pinned SDK archives outside the image:
-#    mkdir -p .altivec-sdk ~/.altivec-sdk
+#    mkdir -p ~/.altivec/.altivec-sdk .altivec-sdk
 #    printf '%s\n' '.altivec-sdk/' >> .gitignore
-#    Place these exact files in ./.altivec-sdk or ~/.altivec-sdk:
-#    Project copies take priority; only missing archives use the shared folder.
+#    Place these exact files in ~/.altivec/.altivec-sdk or ./.altivec-sdk:
+#    Home copies take priority; only missing archives use the project folder.
 #      MacOSX10.5.sdk.tar.xz
 #      MacOSX11.3.sdk.tar.xz
 #      iPhoneOS8.4.sdk.tar.gz
@@ -56,9 +56,6 @@ services:
       - .:/repo/user
       # Persist AI CLI settings, credentials, and shell state
       - ~/.altivec:/root
-      # Search project archives first, then shared host archives (read-only)
-      - ${ALTIVEC_SDK_HOST_DIR:-./.altivec-sdk}:/altivec-sdk:ro
-      - ${ALTIVEC_SDK_HOST_DIR:-${HOME}/.altivec-sdk}:/altivec-sdk-shared:ro
       # Persist package-manager and tool caches
       - cache:/cache
       # Extracted SDKs outside the container image
@@ -69,10 +66,10 @@ services:
     profiles:
       - tools
     image: ${ALTIVEC_IMAGE:-ghcr.io/jeffreybergier/altivec-intelligence:latest}
+    working_dir: /repo/user
     volumes:
-      # Search project archives first, then shared host archives (read-only)
-      - ${ALTIVEC_SDK_HOST_DIR:-./.altivec-sdk}:/altivec-sdk:ro
-      - ${ALTIVEC_SDK_HOST_DIR:-${HOME}/.altivec-sdk}:/altivec-sdk-shared:ro
+      - ~/.altivec:/root
+      - .:/repo/user
       # Share extracted SDK installations with the app containers
       - altivec-sdk-legacy:/osxcross/legacy/target/SDK
       - altivec-sdk-modern:/osxcross/modern/SDK
@@ -92,9 +89,6 @@ services:
       - .:/repo/user
       # Persist AI CLI settings, credentials, and shell state
       - ~/.altivec:/root
-      # Search project archives first, then shared host archives (read-only)
-      - ${ALTIVEC_SDK_HOST_DIR:-./.altivec-sdk}:/altivec-sdk:ro
-      - ${ALTIVEC_SDK_HOST_DIR:-${HOME}/.altivec-sdk}:/altivec-sdk-shared:ro
       # Persist package-manager and tool caches
       - cache:/cache
       # Extracted SDKs outside the container image
