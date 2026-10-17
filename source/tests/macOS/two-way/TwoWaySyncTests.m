@@ -719,6 +719,8 @@ static void ExpandedContactTests(RCContactStore *store)
   puts("PASS: Labels, preferred email, phonetic names, anniversaries, related names and IM accounts import, edit, create, remove and replay");
 }
 
+#import "ContactDateTests.h"
+
 static void MapperTests(void)
 {
   NativeBackendContractTests();
@@ -729,6 +731,7 @@ static void MapperTests(void)
   CHECK(!RCTwoWayRecordsEqual([NSDictionary dictionaryWithObject:[NSArray arrayWithObjects:@"monday",@"friday",nil] forKey:@"bydaydays"],
       [NSDictionary dictionaryWithObject:[NSArray arrayWithObjects:@"friday",@"monday",nil] forKey:@"bydaydays"]));
   RCContactStore *contacts=RCContactStoreOpen("MapperContacts.sqlite","synthetic",&error); CHECK(contacts);
+  ContactDateTests(contacts);
   long long run,collection;
   CHECK(RCContactStoreBeginRun(contacts,&run,&error));
   CHECK(RCContactStoreGetCollection(contacts,"https://fixture.invalid/book/","Fixture",&collection,&error));

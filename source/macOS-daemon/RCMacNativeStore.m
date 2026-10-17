@@ -5,6 +5,7 @@
 #import "RCLogger.h"
 #import "RCSyncFieldScope.h"
 #import "RCCalendarTime.h"
+#import "RCContactDates.h"
 #if defined(__LP64__)
 #import <EventKit/EventKit.h>
 #import <AddressBook/AddressBook.h>
@@ -141,7 +142,13 @@ static NSDictionary *ABRead(ABPerson *person,NSString *root,NSDictionary *ids)
   if(!person) return [NSDictionary dictionary];
   NSMutableDictionary *graph=[NSMutableDictionary dictionary], *record=[NSMutableDictionary dictionaryWithObject:@"com.apple.contacts.Contact" forKey:RCRecordEntityNameKey];
   NSArray *keys=ABFields(),*properties=ABProperties(); NSUInteger i,k;
-  for(i=0;i<[keys count];i++) Put(record,[keys objectAtIndex:i],[person valueForProperty:[properties objectAtIndex:i]]);
+  NSTimeZone *zone=[NSTimeZone defaultTimeZone];
+  for(i=0;i<[keys count];i++) {
+    NSString *key=[keys objectAtIndex:i];
+    id value=[person valueForProperty:[properties objectAtIndex:i]];
+    Put(record,key,[key isEqual:@"birthday"] ?
+        RCContactDateFromNative(value,zone) : value);
+  }
   [record setObject:([[person valueForProperty:kABPersonFlags] intValue]&kABShowAsMask)==kABShowAsCompany ? @"company" : @"person" forKey:@"display as company"];
   Put(record,@"image",[person imageData]);
   for(k=0;k<[ABMultiProperties() count];k++) {
@@ -160,7 +167,8 @@ static NSDictionary *ABRead(ABPerson *person,NSString *root,NSDictionary *ids)
       id value=[values valueAtIndex:i];
       if(k==2) { NSUInteger n; for(n=0;n<[ABAddressKeys() count];n++) Put(child,[ABAddressKeys() objectAtIndex:n],[value objectForKey:[ABAddressProperties() objectAtIndex:n]]); }
       else if(k>=6) { Put(child,@"user",value); Put(child,@"service",[ABServices() objectAtIndex:k-6]); }
-      else Put(child,@"value",k==3 ? [NSURL URLWithString:value] : value);
+      else Put(child,@"value",k==3 ? [NSURL URLWithString:value] :
+          k==4 ? RCContactDateFromNative(value,zone) : value);
       [children addObject:childID]; [graph setObject:child forKey:childID];
       if(k<4 && [[values primaryIdentifier] isEqual:[values identifierAtIndex:i]])
         [record setObject:[NSArray arrayWithObject:childID] forKey:[[@"primary phone number|primary email address|primary street address|primary URL" componentsSeparatedByString:@"|"] objectAtIndex:k]];
@@ -173,8 +181,23 @@ static BOOL ABWrite(ABPerson *person,NSDictionary *resource,NSMutableDictionary 
 {
   NSString *root=[resource objectForKey:@"root"]; NSDictionary *graph=[resource objectForKey:@"graph"], *record=[graph objectForKey:root];
   NSArray *keys=ABFields(),*properties=ABProperties(); NSUInteger i,k; BOOL ok=YES;
+  NSTimeZone *zone=[NSTimeZone defaultTimeZone];
+  id birthday=[record objectForKey:@"birthday"];
+  if(birthday && !RCContactDateToNative(birthday,zone)) {
+    RCErrorSet(error,1,"Birthday cannot be represented in the current timezone");
+    return NO;
+  }
+  for(NSString *key in [record objectForKey:@"dates"]) {
+    id value=[[graph objectForKey:key] objectForKey:@"value"];
+    if(value && !RCContactDateToNative(value,zone)) {
+      RCErrorSet(error,1,"Contact date cannot be represented in the current timezone");
+      return NO;
+    }
+  }
   for(i=0;i<[keys count];i++) {
     id value=[record objectForKey:[keys objectAtIndex:i]];
+    if([[keys objectAtIndex:i] isEqual:@"birthday"])
+      value=RCContactDateToNative(value,zone);
     if(value) ok=[person setValue:value forProperty:[properties objectAtIndex:i]] && ok;
     else if([person valueForProperty:[properties objectAtIndex:i]]) ok=[person removeValueForProperty:[properties objectAtIndex:i]] && ok;
   }
@@ -193,6 +216,7 @@ static BOOL ABWrite(ABPerson *person,NSDictionary *resource,NSMutableDictionary 
       if(k==2) { NSMutableDictionary *address=[NSMutableDictionary dictionary]; NSUInteger n;
         for(n=0;n<[ABAddressKeys() count];n++) Put(address,[ABAddressProperties() objectAtIndex:n],[child objectForKey:[ABAddressKeys() objectAtIndex:n]]); value=address; }
       if(k==3) value=RCTwoWayString(value);
+      if(k==4) value=RCContactDateToNative(value,zone);
       if(k>=6) { if(![[child objectForKey:@"service"] isEqual:[ABServices() objectAtIndex:k-6]]) continue; value=[child objectForKey:@"user"]; }
       if(!value) { ok=NO; continue; }
       NSString *native=[values addValue:value withLabel:ABLabel(child)];
@@ -223,6 +247,9 @@ static BOOL ABWrite(ABPerson *person,NSDictionary *resource,NSMutableDictionary 
 }
 @implementation RCMacNativeStore
 - (BOOL)openContacts:(RCError *)error {
+  /* A long-running daemon must observe preference changes on its next poll,
+     before both AddressBook and our civil-date conversion read the timezone. */
+  [NSTimeZone resetSystemTimeZone];
   book_=[[ABAddressBook addressBook] retain];
   if(!book_) RCErrorSet(error,1,"Contacts access is unavailable; allow rCloud in Privacy > Contacts");
   return book_!=nil;

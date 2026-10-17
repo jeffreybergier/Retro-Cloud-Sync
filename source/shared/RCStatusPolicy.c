@@ -3,13 +3,18 @@
 
 /* Missing optional tables precede first two-way sync. Any query failure is unknown,
    never evidence that all changes have completed. Counts describe pending items. */
-static long Count(RCWriteJournal *j, const char *table, const char *sql)
+static int HasTable(RCWriteJournal *j, const char *table)
 {
-  sqlite3_stmt *q=NULL; long result=-1;
+  sqlite3_stmt *q=NULL;
   if(sqlite3_prepare_v2(j->db,"SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",-1,&q,NULL)!=SQLITE_OK) return -1;
   sqlite3_bind_text(q,1,table,-1,SQLITE_STATIC); int step=sqlite3_step(q); sqlite3_finalize(q);
-  if(step==SQLITE_DONE) return 0;
-  if(step!=SQLITE_ROW) return -1;
+  return step==SQLITE_ROW ? 1 : step==SQLITE_DONE ? 0 : -1;
+}
+static long Count(RCWriteJournal *j, const char *table, const char *sql)
+{
+  int present=HasTable(j,table);
+  if(present<=0) return present;
+  sqlite3_stmt *q=NULL; long result=-1;
   if(sqlite3_prepare_v2(j->db,sql,-1,&q,NULL)==SQLITE_OK) {
     sqlite3_bind_int64(q,1,j->account);
     if(sqlite3_step(q)==SQLITE_ROW) result=sqlite3_column_int64(q,0);
@@ -27,6 +32,18 @@ RCStatusResult RCStatusEvaluate(RCWriteJournal *j, int contacts, int complete, i
     "SELECT count(*) FROM write_attention a JOIN write_operations o ON o.id=a.operation_id WHERE o.account_id=? AND o.state='applied'"};
   long count=0; int known=1; int i;
   for(i=0;i<5;i++) { long n=Count(j,tables[i],queries[i]); if(n<0) known=0; else count+=n; }
+  /* Pending fields also have a root-level attention row. Count that root once;
+     unrelated attention and another account's rows remain independent. */
+  int fields=HasTable(j,"two_way_pending_fields");
+  int attention=HasTable(j,"two_way_attention");
+  if(fields<0 || attention<0) known=0;
+  else if(fields && attention) {
+    long overlap=Count(j,"two_way_pending_fields",
+        "SELECT count(*) FROM two_way_pending_fields p JOIN two_way_attention a "
+        "ON a.account_id=p.account_id AND a.record_id=p.root_id "
+        "WHERE p.account_id=?");
+    if(overlap<0) known=0; else count-=overlap;
+  }
   long invalid=Count(j,contacts ? "contacts" : "calendar_resources",
       contacts ?
       "SELECT count(*) FROM contacts c JOIN collections b ON b.id=c.collection_id WHERE b.account_id=? AND c.remote_missing=0 AND c.parse_error IS NOT NULL" :

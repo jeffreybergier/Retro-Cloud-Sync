@@ -69,6 +69,16 @@ static void Status(void)
   CHECK(RCStatusEvaluate(&j,0,1,0,0).advanceSuccess);
   SQL(j.db,"INSERT INTO calendar_resources VALUES(1,0,0,NULL,'retained previous');");
   result=RCStatusEvaluate(&j,0,1,0,0); CHECK(result.pending==1 && !result.advanceSuccess);
+  SQL(j.db,"CREATE TABLE two_way_pending_fields(account_id INTEGER,root_id TEXT,fields BLOB); INSERT INTO two_way_pending_fields VALUES(1,'birthday',NULL),(2,'other-account',NULL);");
+  result=RCStatusEvaluate(&j,1,1,0,0); CHECK(result.known && result.pending==1);
+  SQL(j.db,"CREATE TABLE two_way_attention(account_id INTEGER,record_id TEXT,reason TEXT); INSERT INTO two_way_attention VALUES(1,'birthday','unsupported-fields'),(2,'other-account','unsupported-fields');");
+  result=RCStatusEvaluate(&j,1,1,0,0);
+  CHECK(result.known && result.pending==1 && result.attention==1 && !result.advanceSuccess);
+  SQL(j.db,"INSERT INTO two_way_attention VALUES(1,'unrelated','unsupported-native-edit');");
+  result=RCStatusEvaluate(&j,1,1,0,0); CHECK(result.pending==2);
+  SQL(j.db,"DROP TABLE two_way_pending_fields;");
+  result=RCStatusEvaluate(&j,1,1,0,0); CHECK(result.known && result.pending==2);
+  SQL(j.db,"DROP TABLE two_way_attention;");
   SQL(j.db,"CREATE TABLE two_way_attention(broken INTEGER);");
   result=RCStatusEvaluate(&j,1,1,0,0); CHECK(!result.known && !result.advanceSuccess);
   sqlite3_close(j.db);

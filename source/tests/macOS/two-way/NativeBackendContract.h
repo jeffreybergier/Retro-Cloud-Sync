@@ -4,6 +4,7 @@
 /* Exercise the framework-free native exchange on Tiger as well as modern Macs.
    No system store or network is touched; the factory is an injected backend. */
 static int backendMode, backendReleased;
+static NSDictionary *backendTruth;
 @interface RCContractStore : NSObject <RCNativeStore> {
   RCTwoWayContext *context_;
 }
@@ -25,13 +26,18 @@ static int backendMode, backendReleased;
 }
 - (NSDictionary *)savedResources:(RCError *)failure
 {
+  if(backendMode==5) {
+    NSDictionary *r=[context_->resources objectAtIndex:0];
+    return [NSDictionary dictionaryWithObject:r forKey:[r objectForKey:@"root"]];
+  }
   if(backendMode==4) { RCErrorSet(failure,1,"Store temporarily unavailable"); return nil; }
   return [NSDictionary dictionary];
 }
 - (NSArray *)untrackedResources:(RCError *)failure
 { (void)failure; return [NSArray array]; }
 - (NSDictionary *)readResource:(NSDictionary *)saved error:(RCError *)failure
-{ (void)saved; RCErrorSet(failure,1,"Unexpected read"); return nil; }
+{ (void)saved; if(backendMode==5) return backendTruth;
+  RCErrorSet(failure,1,"Unexpected read"); return nil; }
 - (BOOL)rememberResource:(NSDictionary *)resource native:(NSDictionary *)saved error:(RCError *)failure
 { (void)resource; (void)saved; RCErrorSet(failure,1,"Unexpected remember"); return NO; }
 - (BOOL)canPublishResource:(NSDictionary *)resource error:(RCError *)failure

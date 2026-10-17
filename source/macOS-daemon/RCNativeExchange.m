@@ -73,6 +73,21 @@ static BOOL RCNativeBusy(RCWriteJournal *j,NSString *href,BOOL *busy,RCError *er
   if(step!=SQLITE_ROW && step!=SQLITE_DONE) { RCErrorSet(error,1,"Could not check native pending writes"); return NO; }
   return YES;
 }
+static BOOL RCNativePendingFields(RCWriteJournal *j,NSString *root,
+    BOOL *pending,RCError *error)
+{
+  sqlite3_stmt *q=NULL; int step=SQLITE_ERROR;
+  if(sqlite3_prepare_v2(j->db,"SELECT 1 FROM two_way_pending_fields WHERE account_id=? AND root_id=?",-1,&q,NULL)==SQLITE_OK) {
+    sqlite3_bind_int64(q,1,j->account);
+    sqlite3_bind_text(q,2,[root UTF8String],-1,SQLITE_TRANSIENT);
+    step=sqlite3_step(q);
+  }
+  sqlite3_finalize(q); *pending=step==SQLITE_ROW;
+  if(step!=SQLITE_ROW && step!=SQLITE_DONE) {
+    RCErrorSet(error,1,"Could not read pending native fields"); return NO;
+  }
+  return YES;
+}
 BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,RCError *error)
 {
   RCWriteJournal *j=&c->journal; id<RCNativeStore> native=nil; BOOL ok=NO,all=YES;
@@ -138,6 +153,25 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
             if(!RCTwoWayAttention(j,root,"unsupported-native-edit",error)) goto done;
           }
           all=NO; RCErrorClear(error); continue;
+        }
+        /* A corrected native projection may now match its cloud base while
+           still carrying warnings from an older mapper. Re-evaluate those
+           fields through the lossless encoder, never blindly clear attention.
+           In particular, normalized birthday readback can match a legacy
+           timestamp snapshot's original wire date without a native write. */
+        if(twoWay && old && [c->rootEntity isEqual:@"com.apple.contacts.Contact"]) {
+          BOOL pending=NO;
+          if(!RCNativePendingFields(j,root,&pending,error)) goto done;
+          if(pending) {
+            NSDictionary *desired=RCTwoWayEncodeFields(c->encode,c->context,
+                old,truth,root,error);
+            if(!desired || ![[desired objectForKey:@"body"] isEqual:[old objectForKey:@"body"]]) {
+              all=NO; RCErrorClear(error); continue;
+            }
+            if(!RCTwoWaySavePendingFields(j,root,desired,error) ||
+                !RCNativePendingFields(j,root,&pending,error)) goto done;
+            if(pending) { all=NO; continue; }
+          }
         }
         if(old && [[old objectForKey:@"body"] isEqual:[r objectForKey:@"body"]] &&
             [[old objectForKey:@"etag"] isEqual:[r objectForKey:@"etag"]] &&

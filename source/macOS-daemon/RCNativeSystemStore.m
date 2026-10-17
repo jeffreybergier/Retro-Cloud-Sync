@@ -8,6 +8,7 @@
 #if defined(__LP64__) || TARGET_OS_IPHONE
 #import <EventKit/EventKit.h>
 #import "RCNativeCalendarDates.h"
+#import "RCNativeGraphChanges.h"
 #include <openssl/sha.h>
 static BOOL EKSave(EKEventStore *store,SEL selector,id item,BOOL event,RCError *error)
 {
@@ -63,41 +64,6 @@ static NSDictionary *RCLoadNative(RCWriteJournal j,NSString *root,RCError *error
 static void Put(NSMutableDictionary *record,NSString *key,id value)
 {
   if(value) [record setObject:value forKey:key]; else [record removeObjectForKey:key];
-}
-static NSDictionary *RCChangedGraph(NSDictionary *base,NSDictionary *snapshot,NSDictionary *current)
-{
-  /* Native stores normalize images, default labels, timezones and empty values.
-     Compare against their readback, then apply only real edits to the wire graph. */
-  NSMutableDictionary *result=[NSMutableDictionary dictionaryWithDictionary:base];
-  NSMutableSet *ids=[NSMutableSet setWithArray:[snapshot allKeys]]; [ids addObjectsFromArray:[current allKeys]];
-  NSEnumerator *it=[ids objectEnumerator]; NSString *key;
-  while((key=[it nextObject])) {
-    NSDictionary *old=[snapshot objectForKey:key], *now=[current objectForKey:key];
-    if(!now) { [result removeObjectForKey:key]; continue; }
-    if(!old) { [result setObject:now forKey:key]; continue; }
-    /* A native-only default is part of the readback baseline, not the wire
-       graph. Its unchanged presence must not manufacture a cloud alarm. */
-    if(![base objectForKey:key] && RCNativeRecordsEqual(old,now)) continue;
-    NSMutableDictionary *record=[NSMutableDictionary dictionaryWithDictionary:[base objectForKey:key] ?: old];
-    NSMutableSet *fields=[NSMutableSet setWithArray:[old allKeys]]; [fields addObjectsFromArray:[now allKeys]];
-    NSEnumerator *f=[fields objectEnumerator]; NSString *field;
-    while((field=[f nextObject])) {
-      id a=[old objectForKey:field],b=[now objectForKey:field];
-      if(a==b || [a isEqual:b]) continue;
-      if(([field isEqual:@"display alarms"] || [field isEqual:@"audio alarms"]) && [b isKindOfClass:[NSArray class]]) {
-        NSMutableArray *wire=[NSMutableArray array];
-        for(NSString *child in b) {
-          NSDictionary *prior=[snapshot objectForKey:child], *value=[current objectForKey:child];
-          if(![base objectForKey:child] && prior && RCNativeRecordsEqual(prior,value)) continue;
-          [wire addObject:child];
-        }
-        b=wire;
-      }
-      Put(record,field,b);
-    }
-    [result setObject:record forKey:key];
-  }
-  return result;
 }
 static NSArray *EKWeekdays(void) { return [@"sunday|monday|tuesday|wednesday|thursday|friday|saturday" componentsSeparatedByString:@"|"]; }
 static NSArray *EKFrequencies(void) { return [@"daily|weekly|monthly|yearly" componentsSeparatedByString:@"|"]; }

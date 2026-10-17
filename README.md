@@ -60,6 +60,15 @@ new records in those managed containers, then uses the existing conditional DAV
 write journal. Add new contacts to the account's rCloud group to upload them.
 Unrelated local contacts and calendars are excluded.
 
+On the Mac AddressBook backend, birthdays and other contact dates are compared
+by Gregorian year/month/day. Native local dates are converted to noon UTC in
+the sync graph, so changing the system timezone does not create a birthday
+edit. Genuine date edits and deletions still use the normal verified upload
+path. Older timestamp snapshots can reconcile against the retained cloud
+date without rewriting a contact. A normal two-way sync rechecks pending
+fields and clears only resolved warnings; unrelated unsupported fields remain
+pending. A pending-field entry and its attention entry count as one item.
+
 Native calendar publication supports ordinary events, display alarms and sound
 alarms with relative or absolute triggers. On Mac, sounds use the matching installed
 system sound, or Basso (another installed sound if Basso is unavailable). Missing

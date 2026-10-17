@@ -4,6 +4,7 @@
 #import "../../../macOS-daemon/RCMacNativeBackend.h"
 #import "../../../macOS-daemon/RCTwoWayNative.h"
 #import "../../../macOS-daemon/RCNativeCalendarDates.h"
+#import "../../../macOS-daemon/RCContactDates.h"
 #import "../../../macOS-daemon/RCNativeCalendarRecovery.h"
 #include <unistd.h>
 #include <dispatch/dispatch.h>
@@ -878,7 +879,7 @@ static int RunTests(int argc,char **argv)
     RCWriteJournal cj=RCContactStoreWriteJournal(contacts),ej=RCCalendarStoreWriteJournal(calendars);
     long count=0; CHECK(!RCNativeSyncContacts(contacts,NO,&count,&error)); CHECK(!RCNativeSyncCalendars(calendars,NO,&count,&error));
     puts("PASS: 10.9 cutoff and incomplete-inventory guards");
-    NSString *vcard=@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:offline-native-contact\r\nN:Native;RetroCloud;;;\r\nFN:RetroCloud Native\r\nEMAIL;TYPE=HOME:fixture@example.invalid\r\nTEL;TYPE=CELL:555-0100\r\nNOTE:offline initial\r\nX-PRIVATE-FIXTURE:preserve\r\nEND:VCARD\r\n";
+    NSString *vcard=@"BEGIN:VCARD\r\nVERSION:3.0\r\nUID:offline-native-contact\r\nN:Native;RetroCloud;;;\r\nFN:RetroCloud Native\r\nEMAIL;TYPE=HOME:fixture@example.invalid\r\nTEL;TYPE=CELL:555-0100\r\nNOTE:offline initial\r\nBDAY:1900-02-28\r\nitem1.X-ABDATE:2000-02-29\r\nitem1.X-ABLabel:Anniversary\r\nX-PRIVATE-FIXTURE:preserve\r\nEND:VCARD\r\n";
     ContactsSeed(contacts,Data(vcard),"\"c1\"");
     for(int attempt=0;attempt<600;attempt++) {
       RCErrorClear(&error); if(RCNativeSyncContacts(contacts,NO,&count,&error) && count>=0) break;
@@ -889,6 +890,16 @@ static int RunTests(int argc,char **argv)
     ABAddressBook *book=[ABAddressBook addressBook]; ABPerson *person=(ABPerson *)[book recordForUniqueId:contactID];
     CHECK([[person valueForProperty:kABFirstNameProperty] isEqual:@"RetroCloud"]);
     CHECK([[(ABMultiValue *)[person valueForProperty:kABEmailProperty] valueAtIndex:0] isEqual:@"fixture@example.invalid"]);
+    CHECK([[RCContactDateFromNative([person valueForProperty:kABBirthdayProperty],
+        [NSTimeZone defaultTimeZone]) rc_descriptionWithCalendarFormat:@"%Y-%m-%d"
+        timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil]
+        isEqual:@"1900-02-28"]);
+    ABMultiValue *dates=[person valueForProperty:kABOtherDatesProperty];
+    CHECK([dates count]==1);
+    CHECK([[RCContactDateFromNative([dates valueAtIndex:0],
+        [NSTimeZone defaultTimeZone]) rc_descriptionWithCalendarFormat:@"%Y-%m-%d"
+        timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil]
+        isEqual:@"2000-02-29"]);
     SyncContacts(contacts,NO,YES); CHECK([[[FirstRow(cj) objectForKey:@"id"] description] isEqual:contactID]);
     vcard=[vcard stringByReplacingOccurrencesOfString:@"offline initial" withString:@"remote update"];
     ContactsSeed(contacts,Data(vcard),"\"c2\""); SyncContacts(contacts,NO,YES);
