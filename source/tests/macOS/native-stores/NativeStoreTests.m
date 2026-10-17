@@ -89,6 +89,25 @@ static void Cleanup(RCWriteJournal j,BOOL contacts)
   }
   for(NSString *identifier in containers) { EKCalendar *calendar=[events calendarWithIdentifier:identifier]; if(calendar) [events removeCalendar:calendar commit:YES error:NULL]; }
 }
+/* Recover only persisted synthetic fixtures after a stalled native test. */
+static void CleanupInterruptedFixtures(NSString *directory)
+{
+  for(NSString *name in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:directory error:NULL]) {
+    if(![[name pathExtension] isEqual:@"sqlite"]) continue;
+    sqlite3 *db=NULL;
+    CHECK(sqlite3_open_v2([[directory stringByAppendingPathComponent:name] fileSystemRepresentation],&db,SQLITE_OPEN_READWRITE,NULL)==SQLITE_OK);
+    sqlite3_stmt *q=NULL;
+    CHECK(sqlite3_prepare_v2(db,"SELECT id,username FROM accounts",-1,&q,NULL)==SQLITE_OK);
+    while(sqlite3_step(q)==SQLITE_ROW) {
+      NSString *account=[NSString stringWithUTF8String:(const char *)sqlite3_column_text(q,1)];
+      CHECK([account hasPrefix:@"offline-"] || [account hasPrefix:@"series-occurrence-"]);
+      RCWriteJournal j={db,sqlite3_column_int64(q,0)};
+      BOOL contacts=Count(j,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='contacts'")!=0;
+      Cleanup(j,contacts);
+    }
+    sqlite3_finalize(q); sqlite3_close(db);
+  }
+}
 /* Exercise the real native projection, durable baseline, reverse mapper and
    queued wire body. No participant data is fabricated in the EventKit copy. */
 static void SeriesOccurrenceTests(NSString *directory,int scenario)
@@ -97,10 +116,20 @@ static void SeriesOccurrenceTests(NSString *directory,int scenario)
   RCCalendarStore *store=RCCalendarStoreOpen([[directory stringByAppendingPathComponent:[name stringByAppendingString:@".sqlite"]] fileSystemRepresentation],[name UTF8String],&error); CHECK(store);
   @try {
     NSString *body=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:offline-occurrence\r\nDTSTART:20301012T090000Z\r\nDTEND:20301012T100000Z\r\nSUMMARY:Offline occurrence audit\r\nRRULE:FREQ=DAILY;COUNT=4\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
-    if(scenario==2) body=[body stringByReplacingOccurrencesOfString:@";COUNT=4" withString:@""];
-    CalendarSeed(store,Data(body),"\"series-1\""); SyncCalendar(store,NO,YES);
+    if(scenario==2) body=[body stringByReplacingOccurrencesOfString:@"FREQ=DAILY;COUNT=4" withString:@"FREQ=YEARLY"];
+    CalendarSeed(store,Data(body),"\"series-1\""); SyncCalendar(store,YES,YES);
+    NSString *initialID=[[FirstRow(RCCalendarStoreWriteJournal(store)) objectForKey:@"id"] copy];
+    SyncCalendar(store,YES,YES);
+    CHECK([[FirstRow(RCCalendarStoreWriteJournal(store)) objectForKey:@"id"] isEqual:initialID]);
+    [initialID release];
     RCWriteJournal j=RCCalendarStoreWriteJournal(store);
     if(scenario==2) {
+      CHECK(RCTwoWaySQL(&j,&error,"UPDATE calendar_resources SET scope_excluded=1"));
+      SyncCalendar(store,YES,YES);
+      CHECK(Count(j,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==1);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      CHECK(RCTwoWaySQL(&j,&error,"UPDATE calendar_resources SET scope_excluded=0"));
+      SyncCalendar(store,YES,YES);
       NSString *root=[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"root"];
       CHECK(RCTwoWaySQL(&j,&error,
           "INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,'native-series-unverified')",
@@ -831,12 +860,17 @@ static int RunTests(int argc,char **argv)
   extraContacts=[NSMutableArray array];
   RCContactStore *contacts=NULL; RCCalendarStore *calendars=NULL;
   @try {
-    CHECK(argc==2 || (argc==3 && !strcmp(argv[2],"--dates-only"))); CHECK(!RCUsesNativeStoresForVersion(10,8)); CHECK(RCUsesNativeStoresForVersion(10,9)); CHECK(RCUsesNativeStoresForVersion(11,0)); CHECK(RCUsesNativeStores());
+    CHECK(argc==2 || (argc==3 && (!strcmp(argv[2],"--dates-only") || !strcmp(argv[2],"--series-only") || !strcmp(argv[2],"--cleanup-only")))); CHECK(!RCUsesNativeStoresForVersion(10,8)); CHECK(RCUsesNativeStoresForVersion(10,9)); CHECK(RCUsesNativeStoresForVersion(11,0)); CHECK(RCUsesNativeStores());
     NSString *directory=[NSString stringWithUTF8String:argv[1]];
     if(argc==3) {
       CHECK(RCMacNativeWaitForAccess(NO,&error));
-      CalendarDateRangeTests(directory);
-      puts("PASS: Calendar date recovery suite; disposable fixtures removed");
+      if(!strcmp(argv[2],"--cleanup-only")) {
+        CHECK(RCMacNativeWaitForAccess(YES,&error));
+        CleanupInterruptedFixtures(directory);
+      } else if(!strcmp(argv[2],"--series-only")) {
+        SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2);
+      } else CalendarDateRangeTests(directory);
+      puts("PASS: Calendar focused suite; disposable fixtures removed");
       [pool release]; return 0;
     }
     contacts=RCContactStoreOpen([[directory stringByAppendingPathComponent:@"contacts.sqlite"] fileSystemRepresentation],"offline-native-test",&error); CHECK(contacts);

@@ -10,6 +10,7 @@
 int RCIOSNativeTests(const char *directory);
 #endif
 int RCCloudDaemonMain(int argc,char **argv);
+int RCIOSRestoreCalendars(int argc,char **argv);
 @interface RCIOSSetup : UIResponder <UIApplicationDelegate> { UIWindow *window_; }
 @end
 @implementation RCIOSSetup
@@ -40,6 +41,7 @@ int main(int argc,char **argv) {
     volatile char *clear=password; for(size_t n=0;n<sizeof(password);n++) clear[n]=0;
     fputs(ok ? "Password saved in Keychain.\n" : "Could not save password.\n",ok ? stdout : stderr); return ok ? 0 : 1;
   }
+  if(argc>=5 && (!strcmp(argv[1],"--restore-calendars") || !strcmp(argv[1],"--remove-excluded-calendars"))) return RCIOSRestoreCalendars(argc,argv);
   if(argc==2 && !strcmp(argv[1],"--daemon")) {
     const char *path="/var/mobile/Library/Application Support/rCloud/Config.plist";
     if(access(path,R_OK)!=0) { puts("rCloud is not configured."); return 0; }

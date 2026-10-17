@@ -266,3 +266,10 @@ retention of rejected cloud data, and explicit per-resource restoration from the
 committed download without uploads or clearing unrelated warnings. See
 [`calendar-date-recovery.md`](../../docs/calendar-date-recovery.md) for the
 opt-in maintenance tool and its local-overwrite contract.
+
+The macOS native-store harness also accepts `DIRECTORY --series-only` for
+focused recurring-series import, scope exclusion, repeat-publication and edit
+protection checks. `DIRECTORY --cleanup-only` removes persisted synthetic
+fixtures after an interrupted run; it rejects account names outside the
+`offline-` and `series-occurrence-` test namespaces. Stop a stalled harness
+before using cleanup and retain its logs for diagnosis.

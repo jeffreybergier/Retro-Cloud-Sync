@@ -5,4 +5,6 @@
    Caller must stop the daemon and export a backup first. No network writes.
    Only an existing, owned, non-pending resource may be restored. */
 BOOL RCNativeRestoreCalendar(RCCalendarStore *store,NSString *root,RCError *error);
+/* Explicitly selected local removal only; retains cloud data and creates no write. */
+BOOL RCNativeRemoveExcludedCalendar(RCCalendarStore *store,NSString *root,RCError *error);
 #endif

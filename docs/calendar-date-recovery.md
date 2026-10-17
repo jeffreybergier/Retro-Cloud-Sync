@@ -51,3 +51,28 @@ The backup preserves rCloud's previous publication data and journal. It is not
 an export of every local EventKit occurrence or exception. Explicit restoration
 may discard local-only changes to the selected series and must never run as
 an automatic response to a sync warning.
+
+On iOS, run the installed executable as `mobile` after unloading its launchd
+job. `--restore-calendars DATABASE NEW_BACKUP ROOT [ROOT ...]` uses the same
+ownership, pending-write and native-publication checks as the Mac tool. It
+refuses a live daemon PID recorded in the adjacent Status.plist and creates a
+new private SQLite backup before changing selected local events. Restart the
+launchd job after checking the result. This is an explicit maintenance action,
+not an automatic sync policy.
+
+`--remove-excluded-calendars DATABASE NEW_BACKUP ROOT [ROOT ...]` is a separate,
+explicitly authorized local cleanup for selected owned events outside the
+current download scope. It rejects in-scope events and pending writes, removes
+the local copy through EventKit, and clears that root's series attention only
+after checking removal. It retains the cloud resource and never queues a cloud
+DELETE. Back up the native Calendar database as well before discarding local
+occurrences or exceptions. Widening the history scope may import the event again.
+
+New cloud recurring series in two-way mode use ordinary first publication and
+persisted readback. Existing native series still take the protected audit path;
+this exception does not authorize replacing local occurrences or exceptions.
+
+Retained native events outside the requested history scope do not prevent the
+current in-scope inventory from completing publication. Their ownership,
+attention records and pending writes remain intact; scope exclusion never
+means remote deletion.

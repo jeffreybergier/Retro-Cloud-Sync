@@ -1,3 +1,4 @@
+#import "../../../macOS-daemon/RCNativeCalendarRecovery.h"
 #import <Foundation/Foundation.h>
 #import <AddressBook/AddressBook.h>
 #import <EventKit/EventKit.h>
@@ -182,9 +183,19 @@ static void SeriesOccurrenceTests(NSString *directory,int scenario)
   @try {
     NSString *body=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:offline-occurrence\r\nDTSTART:20301012T090000Z\r\nDTEND:20301012T100000Z\r\nSUMMARY:Offline occurrence audit\r\nRRULE:FREQ=DAILY;COUNT=4\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
     if(scenario==2) body=[body stringByReplacingOccurrencesOfString:@";COUNT=4" withString:@""];
-    CalendarSeed(store,Data(body),"\"series-1\""); SyncCalendar(store,NO,YES);
+    CalendarSeed(store,Data(body),"\"series-1\""); SyncCalendar(store,YES,YES);
+    NSString *initialID=[[FirstRow(RCCalendarStoreWriteJournal(store)) objectForKey:@"id"] copy];
+    SyncCalendar(store,YES,YES);
+    CHECK([[FirstRow(RCCalendarStoreWriteJournal(store)) objectForKey:@"id"] isEqual:initialID]);
+    [initialID release];
     RCWriteJournal j=RCCalendarStoreWriteJournal(store);
     if(scenario==2) {
+      CHECK(RCTwoWaySQL(&j,&error,"UPDATE calendar_resources SET scope_excluded=1"));
+      SyncCalendar(store,YES,YES);
+      CHECK(Count(j,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==1);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      CHECK(RCTwoWaySQL(&j,&error,"UPDATE calendar_resources SET scope_excluded=0"));
+      SyncCalendar(store,YES,YES);
       NSString *root=[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"root"];
       CHECK(RCTwoWaySQL(&j,&error,
           "INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,'native-series-unverified')",
@@ -198,7 +209,14 @@ static void SeriesOccurrenceTests(NSString *directory,int scenario)
       SyncCalendar(store,YES,NO);
       CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-remote-edit'")==1);
       CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(body)]);
+      CHECK(!RCNativeRestoreCalendar(store,@"missing-fixture",&error));
+      CHECK(RCNativeRestoreCalendar(store,root,&error));
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      CHECK([[[FirstRow(j) objectForKey:@"resource"] objectForKey:@"body"] isEqual:Data(changed)]);
+      SyncCalendar(store,YES,YES);
       CalendarSeed(store,Data(body),"\"cloud-reverted\"");
+      CHECK(RCNativeRestoreCalendar(store,root,&error));
       SyncCalendar(store,YES,YES);
       CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
       EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
@@ -209,6 +227,16 @@ static void SeriesOccurrenceTests(NSString *directory,int scenario)
       CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-local-edit'")==1);
       CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
       puts("PASS: Unchanged open-ended series clears attention; cloud and local edits remain protected");
+      CHECK(!RCNativeRemoveExcludedCalendar(store,root,&error));
+      CHECK(RCTwoWaySQL(&j,&error,"UPDATE calendar_resources SET scope_excluded=1"));
+      CHECK(RCNativeRemoveExcludedCalendar(store,root,&error));
+      CHECK(Count(j,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention")==0);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      CHECK(Count(j,"SELECT count(*) FROM calendar_resources WHERE length(raw_ical)>0 AND remote_missing=0")==1);
+      SyncCalendar(store,YES,YES);
+      CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+      puts("PASS: Explicit excluded-series removal preserves cloud data and leaves no upload or stale warning");
     } else {
       SyncCalendar(store,YES,YES);
       // A supported cloud edit is deferred, not written over native instances.

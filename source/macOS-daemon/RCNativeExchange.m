@@ -96,7 +96,9 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
         [present addObject:root]; NSDictionary *old=[saved objectForKey:root];
         BOOL busy=NO; if(!RCNativeBusy(j,[r objectForKey:@"href"],&busy,error)) goto done;
         if(busy) { all=NO; continue; }
-        if(twoWay && ([[[[old objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count] ||
+        /* A new cloud series has no native occurrences to protect. Publish it
+           through the normal durable save/readback path before auditing edits. */
+        if(twoWay && old && ([[[[old objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count] ||
             [[[[r objectForKey:@"graph"] objectForKey:root] objectForKey:@"recurrences"] count])) {
           NSString *reason=old ? [native seriesAttention:old error:error] : @"native-series-unverified";
           if(error->code) goto done;
@@ -160,12 +162,20 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
       /* A mapper omission or history exclusion is not remote deletion. */
       sqlite3_stmt *retained=NULL;
       const char *retainSQL=[c->rootEntity isEqual:@"com.apple.contacts.Contact"] ?
-          "SELECT 1 FROM contacts r JOIN collections b ON b.id=r.collection_id WHERE b.account_id=? AND r.href=? AND b.remote_missing=0 AND r.remote_missing=0" :
-          "SELECT 1 FROM calendar_resources r JOIN calendars b ON b.id=r.calendar_id WHERE b.account_id=? AND r.href=? AND b.remote_missing=0 AND r.remote_missing=0";
+          "SELECT 0 FROM contacts r JOIN collections b ON b.id=r.collection_id WHERE b.account_id=? AND r.href=? AND b.remote_missing=0 AND r.remote_missing=0" :
+          "SELECT r.scope_excluded FROM calendar_resources r JOIN calendars b ON b.id=r.calendar_id WHERE b.account_id=? AND r.href=? AND b.remote_missing=0 AND r.remote_missing=0";
       if(sqlite3_prepare_v2(j->db,retainSQL,-1,&retained,NULL)!=SQLITE_OK) { RCErrorSet(error,1,"Could not verify native removal"); goto done; }
       sqlite3_bind_int64(retained,1,j->account); sqlite3_bind_text(retained,2,[[resource objectForKey:@"href"] UTF8String],-1,SQLITE_TRANSIENT);
-      int retainedStep=sqlite3_step(retained); sqlite3_finalize(retained);
-      if(retainedStep==SQLITE_ROW) { all=NO; continue; }
+      int retainedStep=sqlite3_step(retained);
+      BOOL outsideScope=retainedStep==SQLITE_ROW && sqlite3_column_int(retained,0)!=0;
+      sqlite3_finalize(retained);
+      if(retainedStep==SQLITE_ROW) {
+        /* Retaining a native event outside the requested history window is
+           intentional, not an incomplete publication of the current scope.
+           Keep its ownership, attention and pending writes untouched. */
+        if(!outsideScope) all=NO;
+        continue;
+      }
       if(retainedStep!=SQLITE_DONE) { RCErrorSet(error,1,"Could not verify native removal"); goto done; }
       BOOL busy=NO; if(!RCNativeBusy(j,[resource objectForKey:@"href"],&busy,error)) goto done;
       if(busy) { all=NO; continue; }

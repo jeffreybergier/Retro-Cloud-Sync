@@ -2,8 +2,11 @@
 #import "RCTwoWayNative.h"
 #import "RCTwoWayInternal.h"
 #import "RCLogger.h"
+#if TARGET_OS_IPHONE
+#import "../iOS-daemon/RCIOSNativeBackend.h"
+#endif
 
-BOOL RCNativeRestoreCalendar(RCCalendarStore *store,NSString *root,RCError *error)
+static BOOL RepairCalendar(RCCalendarStore *store,NSString *root,BOOL removeExcluded,RCError *error)
 {
   RCWriteJournal j=RCCalendarStoreWriteJournal(store);
   sqlite3_stmt *q=NULL; NSDictionary *saved=nil; NSData *body=nil;
@@ -21,12 +24,13 @@ BOOL RCNativeRestoreCalendar(RCCalendarStore *store,NSString *root,RCError *erro
   sqlite3_finalize(q); q=NULL;
   if(sqlite3_prepare_v2(j.db,
       "SELECT r.raw_ical,r.etag,a.generation FROM calendar_resources r JOIN calendars c ON c.id=r.calendar_id JOIN accounts a ON a.id=c.account_id "
-      "WHERE c.account_id=? AND r.href=? AND c.remote_missing=0 AND r.remote_missing=0 AND r.scope_excluded=0 AND r.parse_error IS NULL "
+      "WHERE c.account_id=? AND r.href=? AND c.remote_missing=0 AND r.remote_missing=0 AND r.scope_excluded=? AND r.parse_error IS NULL "
       "AND NOT EXISTS(SELECT 1 FROM write_operations o WHERE o.account_id=c.account_id AND o.href=r.href AND o.state NOT IN ('acknowledged','cancelled')) "
       "AND NOT EXISTS(SELECT 1 FROM two_way_pending_fields f WHERE f.account_id=c.account_id AND f.root_id=?)",-1,&q,NULL)!=SQLITE_OK) goto done;
   sqlite3_bind_int64(q,1,j.account);
   sqlite3_bind_text(q,2,[[saved objectForKey:@"href"] UTF8String],-1,SQLITE_TRANSIENT);
-  sqlite3_bind_text(q,3,[root UTF8String],-1,SQLITE_TRANSIENT);
+  sqlite3_bind_int(q,3,removeExcluded ? 1 : 0);
+  sqlite3_bind_text(q,4,[root UTF8String],-1,SQLITE_TRANSIENT);
   if(sqlite3_step(q)!=SQLITE_ROW) goto done;
   body=[NSData dataWithBytes:sqlite3_column_blob(q,0) length:sqlite3_column_bytes(q,0)];
   if(sqlite3_column_type(q,1)==SQLITE_NULL) goto done;
@@ -41,6 +45,21 @@ BOOL RCNativeRestoreCalendar(RCCalendarStore *store,NSString *root,RCError *erro
     sqlite3_finalize(q); q=NULL;
     if(step!=SQLITE_DONE) goto done;
   } else if(step!=SQLITE_DONE) goto done;
+  if(removeExcluded) {
+    /* Explicit local removal never implies a cloud tombstone or upload. */
+    RCTwoWayContext c={j,@"explicit-excluded-calendar-removal",nil,@"com.apple.calendars.Event",
+        [NSArray arrayWithObject:saved],[saved objectForKey:@"graph"],RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
+#if TARGET_OS_IPHONE
+    native=RCCreateIOSNativeStore(&c,error);
+#else
+    native=RCCreateMacNativeStore(&c,error);
+#endif
+    if(!native || ![native removeResource:saved error:error]) goto done;
+    NSDictionary *remaining=[native readResource:saved error:error];
+    if(!remaining || [remaining count] || error->code) goto done;
+    ok=RCTwoWaySQL(&j,error,"DELETE FROM two_way_attention WHERE account_id=%lld AND record_id=%Q AND reason LIKE 'native-series-%%'",j.account,[root UTF8String]);
+    goto done;
+  }
   NSMutableDictionary *resource=[NSMutableDictionary dictionaryWithDictionary:saved];
   [resource removeObjectForKey:@"_ids"]; [resource removeObjectForKey:@"_snapshot"];
   NSDictionary *projected=RCCalendarProjectVerified(store,resource,body,error);
@@ -49,7 +68,12 @@ BOOL RCNativeRestoreCalendar(RCCalendarStore *store,NSString *root,RCError *erro
   [resource setObject:etag forKey:@"etag"]; [resource setObject:[NSNumber numberWithLongLong:generation] forKey:@"revision"];
   RCTwoWayContext c={j,@"explicit-calendar-restoration",nil,@"com.apple.calendars.Event",
       [NSArray arrayWithObject:resource],[resource objectForKey:@"graph"],RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
-  native=RCCreateMacNativeStore(&c,error); if(!native) goto done;
+#if TARGET_OS_IPHONE
+  native=RCCreateIOSNativeStore(&c,error);
+#else
+  native=RCCreateMacNativeStore(&c,error);
+#endif
+  if(!native) goto done;
   NSDictionary *truth=[native readResource:saved error:error];
   if(![truth objectForKey:root] || error->code) goto done;
   if(![native canPublishResource:resource error:error] || ![native publishResource:resource error:error]) goto done;
@@ -67,3 +91,8 @@ done:
   if(!ok && !error->code) RCErrorSet(error,1,"Calendar restoration requires an existing owned record, current download and no pending writes");
   return ok;
 }
+
+BOOL RCNativeRestoreCalendar(RCCalendarStore *store,NSString *root,RCError *error)
+{ return RepairCalendar(store,root,NO,error); }
+BOOL RCNativeRemoveExcludedCalendar(RCCalendarStore *store,NSString *root,RCError *error)
+{ return RepairCalendar(store,root,YES,error); }
