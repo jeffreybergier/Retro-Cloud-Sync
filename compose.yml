@@ -51,8 +51,6 @@ services:
   altivec:
     image: ${ALTIVEC_IMAGE:-ghcr.io/jeffreybergier/altivec-intelligence:latest}
     working_dir: /repo/user
-    environment:
-      ALTIVEC_SDK_ARCHIVE_DIR: ${ALTIVEC_SDK_ARCHIVE_DIR:-}
     volumes:
       # Mount the current project as the user workspace
       - .:/repo/user
@@ -71,8 +69,6 @@ services:
     profiles:
       - tools
     image: ${ALTIVEC_IMAGE:-ghcr.io/jeffreybergier/altivec-intelligence:latest}
-    environment:
-      ALTIVEC_SDK_ARCHIVE_DIR: ${ALTIVEC_SDK_ARCHIVE_DIR:-}
     volumes:
       # Search project archives first, then shared host archives (read-only)
       - ${ALTIVEC_SDK_HOST_DIR:-./.altivec-sdk}:/altivec-sdk:ro
@@ -90,7 +86,6 @@ services:
       - IS_SANDBOX=1
       - TERM=xterm-256color
       - COLORTERM=${COLORTERM:-}
-      - ALTIVEC_SDK_ARCHIVE_DIR=${ALTIVEC_SDK_ARCHIVE_DIR:-}
     working_dir: /repo/user
     volumes:
       # Mount the current project as the user workspace
