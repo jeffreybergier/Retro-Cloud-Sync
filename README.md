@@ -222,7 +222,11 @@ Build inside Altivec Intelligence with both SDK volumes installed:
 podman compose run --rm altivec "make release"
 ```
 
-Modern Mac slices are signed with `rcodesign`; PPC/i386 remain unsigned.
+Modern Mac slices are signed with `rcodesign` by default; PPC/i386 remain unsigned.
+For an unsigned x86_64 release to test on Mavericks, run
+`make macOS-release ARCHS=x86_64 MAC_SIGN=0`. This disables signing and the PEM
+requirement for both the app and its embedded daemon. Switching signing identity
+may require approving Contacts/Calendars or Keychain access again on the Mac.
 The Mac app and daemon inherit the shared Altivec `ALTIVEC_SIGNING_PEM` setting.
 Place the existing signing identity at `~/.altivec/signing/development.pem` on
 the Mac host (mode 0600). The standard `~/.altivec:/root` mount makes it available
@@ -231,7 +235,7 @@ without an app-specific mount or setting. Export it with
 `swift bin/altivec-export-signing.swift --local` from the AltivecIntelligence
 checkout on the host. The helper refuses to overwrite an existing file.
 
-Mac releases containing x86_64 or arm64 require a persistent certificate/private
+Signed Mac releases containing x86_64 or arm64 require a persistent certificate/private
 key PEM. Missing, malformed, encrypted, or mismatched identity material fails the
 build. Debug builds may use ad-hoc signing if no PEM is configured. Use the
 same identity for local and GitHub builds. iOS signing is unchanged.

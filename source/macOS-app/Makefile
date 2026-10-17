@@ -39,8 +39,9 @@ rCloud_FLAGS_x86_64 = -fblocks
 rCloud_FLAGS_arm64 = -fblocks
 # libxml headers follow each declared SDK.
 $(foreach a,ppc i386 x86_64 arm64,$(eval rcloudd_FLAGS_$(a) += -I$$(SDK_$(a))/usr/include/libxml2)$(eval RetroCloudShared_FLAGS_$(a) += -I$$(SDK_$(a))/usr/include/libxml2))
-rCloud_MAC_SIGN = 1
-rcloudd_MAC_SIGN = 1
+MAC_SIGN ?= 1
+rCloud_MAC_SIGN = $(MAC_SIGN)
+rcloudd_MAC_SIGN = $(MAC_SIGN)
 rcloudd_SIGN_PLIST = ../macOS-daemon/Info.plist
 rcloudd_IDENTIFIER = com.altivecintelligence.rcloudd
 include $(ALTIVEC_ROOT)/altivec_common_mac.mk
@@ -48,12 +49,14 @@ include $(ALTIVEC_ROOT)/altivec_common_mac.mk
 # Check even when cached signed outputs would otherwise be reused.
 .PHONY: check-mac-signing
 check-mac-signing:
+ifeq ($(MAC_SIGN),1)
 	@bash "$(ALTIVEC_ROOT)/make/check-mac-signing.sh" \
 	  $(call q,$(rCloud_SIGN_PEM)) \
 	  $(if $(and $(filter release,$(CONFIG)),$(filter x86_64 arm64,$(ARCHS))),required,optional)
 	@bash "$(ALTIVEC_ROOT)/make/check-mac-signing.sh" \
 	  $(call q,$(rcloudd_SIGN_PEM)) \
 	  $(if $(and $(filter release,$(CONFIG)),$(filter x86_64 arm64,$(ARCHS))),required,optional)
+endif
 validate: check-mac-signing
 $(call signed,rCloud) $(call signed,rcloudd): | check-mac-signing
 endif
