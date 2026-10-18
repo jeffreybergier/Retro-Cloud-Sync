@@ -371,6 +371,51 @@ static void InvitationTests(NSString *directory)
     if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
   }
 }
+static void CalendarDateRangeTests(NSString *directory)
+{
+  RCCalendarStore *store=RCCalendarStoreOpen([[directory
+      stringByAppendingPathComponent:@"date-range.sqlite"] fileSystemRepresentation],
+      "offline-date-range-test",&error); CHECK(store);
+  @try {
+    RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+    NSString *prefix=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:date-range\r\nSUMMARY:Offline date range\r\n";
+    NSString *suffix=@"END:VEVENT\r\nEND:VCALENDAR\r\n";
+    NSArray *fields=[NSArray arrayWithObjects:
+        @"DTSTART:20400101T120000Z\r\nDTEND:20400101T130000Z\r\n",
+        @"DTSTART:19300101T120000Z\r\nDTEND:19300101T130000Z\r\n",
+        @"DTSTART:20270101T120000Z\r\nDTEND:20400101T130000Z\r\n",
+        @"DTSTART:20270101T120000Z\r\nRRULE:FREQ=YEARLY;UNTIL=20990101T120000Z\r\n",
+        @"DTSTART:20270101T120000Z\r\nRRULE:FREQ=YEARLY;COUNT=3\r\nEXDATE:20400101T120000Z\r\n",
+        @"DTSTART:20270101T120000Z\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;VALUE=DATE-TIME:20400101T120000Z\r\nEND:VALARM\r\n",
+        @"DTSTART:20380119T030000Z\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:PT1H\r\nEND:VALARM\r\n",nil];
+    for (NSString *field in fields) {
+      NSData *body=Data([NSString stringWithFormat:@"%@%@%@",prefix,field,suffix]);
+      CalendarSeed(store,body,"\"unsafe\""); SyncCalendar(store,NO,NO);
+      CHECK(Count(j,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='calendar-import-date-range'")==1);
+      CHECK(Count(j,"SELECT count(*) FROM calendar_resources WHERE raw_ical IS NOT NULL AND export_ical IS NULL AND export_error LIKE '%32-bit date range%'")==1);
+      CHECK(Count(j,"SELECT count(*) FROM accounts WHERE published_generation<generation")==1);
+    }
+    NSData *safe=Data([NSString stringWithFormat:@"%@DTSTART:20270101T120000Z\r\nDTEND:20270101T130000Z\r\n%@",prefix,suffix]);
+    CalendarSeed(store,safe,"\"safe\""); SyncCalendar(store,NO,YES);
+    NSString *identifier=[[[FirstRow(j) objectForKey:@"id"] copy] autorelease];
+    CHECK(identifier);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='calendar-import-date-range'")==0);
+    NSData *unsafe=Data([NSString stringWithFormat:@"%@%@%@",prefix,[fields objectAtIndex:2],suffix]);
+    CalendarSeed(store,unsafe,"\"unsafe-update\""); SyncCalendar(store,YES,NO);
+    CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:identifier]);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
+    EKEvent *event=[events eventWithIdentifier:identifier]; CHECK(event);
+    CHECK([[event endDate] timeIntervalSinceDate:[event startDate]]==3600);
+    CHECK(Count(j,"SELECT count(*) FROM calendar_resources WHERE instr(export_ical,'20270101T130000Z')>0")==1);
+    CalendarSeed(store,safe,"\"safe-again\""); SyncCalendar(store,NO,YES);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='calendar-import-date-range'")==0);
+    puts("PASS: iOS date bounds reject starts, ends, recurrence limits, exclusions and alarms; cloud bytes and prior native event survive without uploads");
+  } @finally {
+    if (store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); }
+  }
+}
 static void CalendarDiscoveryTests(NSString *directory)
 {
   RCCalendarStore *store=RCCalendarStoreOpen([[directory stringByAppendingPathComponent:@"discovery.sqlite"] fileSystemRepresentation],"offline-discovery-test",&error); CHECK(store);
@@ -518,7 +563,7 @@ int RCIOSNativeTests(const char *path) {
     CHECK(Count(cj,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
     CHECK(Count(ej,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
     puts("PASS: remote deletion removes only owned native records");
-    CalendarDiscoveryTests(directory); ContactRecoveryTests(directory); ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES); SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2); InvitationTests(directory);
+    CalendarDateRangeTests(directory); CalendarDiscoveryTests(directory); ContactRecoveryTests(directory); ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES); SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2); InvitationTests(directory);
     result=0;
   } @catch(NSException *exception) {
     fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]);

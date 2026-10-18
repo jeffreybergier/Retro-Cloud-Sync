@@ -39,6 +39,15 @@ retains the pending save for recovery. Existing series whose only difference is
 the exact Mavericks overflow signature receive `native-series-date-overflow`,
 without authorizing a write or clearing attention.
 
+Native regression checks on 2026-10-18 passed on Tiger 10.4.11 PPC
+(`x4-vm`, Sync Services), Mavericks 10.9.5 x86_64 (`x9-vm`, EventKit), and
+an iPhone 5 running iOS 8.4.1 (`koolphone5`, EventKit). They verify rejection,
+retained cloud data, warning/replay behavior and preservation of existing local
+events; they do not establish that every platform intrinsically has the same
+storage limit. The full Mac/iOS native-store suites also completed fixture
+cleanup. The Mac harness drains each scenario's autorelease pool to release
+EventKit stores and observers before starting the next scenario.
+
 Removing UNTIL in iCloud does not automatically overwrite an existing local
 series: rCloud protects local occurrences and exceptions. For a user who has
 explicitly chosen to discard local-only changes to particular events, the

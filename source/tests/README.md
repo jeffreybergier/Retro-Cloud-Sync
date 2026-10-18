@@ -225,6 +225,10 @@ must be Foundation dates:
 archiving the app-only `RCCalendarDate` class into EventKit predicates interrupts
 the calendar service connection on the tested iOS 8.4.1 device. Keep the custom
 date class for journal timezone/floating metadata.
+The native iOS suite also rejects unsafe start/end dates, recurrence limits,
+exclusions, absolute alarms and derived relative alarms. It verifies retained
+cloud bytes, unchanged publication generation, preservation of an existing
+native event, no uploads, and clearing date-range attention after correction.
 `make analyze-ios` checks the armv7/iOS 5 path.
 
 The Mac native harness runs framework operations on a worker with a live main

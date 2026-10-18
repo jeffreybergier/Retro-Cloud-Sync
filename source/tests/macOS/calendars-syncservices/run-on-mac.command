@@ -148,7 +148,8 @@ echo '[PASS] iCal received floating/custom-timezone/finite RDATE events without 
 fi
 export_phase date-bounds date-bounds
 export_phase date-bounds date-bounds
-/usr/bin/sqlite3 Calendar-active.sqlite "SELECT count(*) FROM calendar_resources WHERE export_status='unsupported' AND export_error LIKE '%32-bit date range%';" | grep -qx 2
+/usr/bin/sqlite3 Calendar-active.sqlite "SELECT count(*) FROM calendar_resources WHERE remote_missing=0 AND scope_excluded=0 AND raw_ical IS NOT NULL AND export_ical IS NULL AND export_status='unsupported' AND export_error LIKE '%32-bit date range%';" | grep -qx 2
+/usr/bin/sqlite3 Calendar-active.sqlite "SELECT count(*) FROM accounts WHERE published_generation<generation;" | grep -qx 1
 echo '[PASS] Unsafe recurrence dates were skipped with warnings and retained cloud data'
 if [ "${1:-}" = --restoration ]; then
   export_phase safe-bounds safe-bounds

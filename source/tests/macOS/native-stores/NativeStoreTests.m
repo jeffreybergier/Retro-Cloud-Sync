@@ -6,6 +6,7 @@
 #import "../../../macOS-daemon/RCNativeCalendarDates.h"
 #import "../../../macOS-daemon/RCContactDates.h"
 #import "../../../macOS-daemon/RCNativeCalendarRecovery.h"
+#import "../../../macOS-daemon/RCAutorelease.h"
 #include <unistd.h>
 #include <dispatch/dispatch.h>
 static RCError error;
@@ -953,6 +954,18 @@ static void UploadReconciliationTests(NSString *directory)
   } @finally { Cleanup(j,NO); RCCalendarStoreClose(store); }
 }
 #import "ReceiptTests.h"
+/* Release each scenario's EventKit stores and observers before the next one.
+   Retaining every autoreleased store until suite exit can exhaust Mavericks'
+   dispatch workers with synchronous EventKit/TCC change notifications. */
+static void RunNativeCase(void (^test)(void))
+{
+  NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init];
+  @try { test(); }
+  @catch (id exception) {
+    RCDrainPoolPreservingException(&pool,exception); @throw;
+  }
+  @finally { [pool release]; }
+}
 static int RunTests(int argc,char **argv)
 {
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init]; setbuf(stdout,NULL); int result=1;
@@ -1026,9 +1039,13 @@ static int RunTests(int argc,char **argv)
       if(attempt==0) printf("WAITING FOR CALENDAR ACCESS: %s\n",error.message);
       if(attempt==599) CHECK(NO); [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1]];
     }
-    RecurringDefaultAlarmTests(directory,2); RecurringDefaultAlarmTests(directory,1); RecurringDefaultAlarmTests(directory,0);
-    ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES);
-    AllDayAlarmTests(directory); LegacyDefaultDisplayTests(directory,2); LegacyDefaultDisplayTests(directory,1); LegacyDefaultDisplayTests(directory,0);
+    for (int kind=2;kind>=0;kind--)
+      RunNativeCase(^{ RecurringDefaultAlarmTests(directory,kind); });
+    RunNativeCase(^{ ExcludedOccurrenceTests(directory,NO); });
+    RunNativeCase(^{ ExcludedOccurrenceTests(directory,YES); });
+    RunNativeCase(^{ AllDayAlarmTests(directory); });
+    for (int kind=2;kind>=0;kind--)
+      RunNativeCase(^{ LegacyDefaultDisplayTests(directory,kind); });
     row=FirstRow(ej); CHECK(row); NSString *eventID=[[row objectForKey:@"id"] copy];
     EKEventStore *events=[[[EKEventStore alloc] init] autorelease];
     EKEvent *event=[events eventWithIdentifier:eventID]; CHECK(event); CHECK([[event title] isEqual:@"rCloud Offline Event"]);
@@ -1092,9 +1109,12 @@ static int RunTests(int argc,char **argv)
     CHECK(Count(ej,"SELECT count(*) FROM write_operations WHERE kind='create'")==1);
     [calendarID release];
     puts("PASS: Locally created contacts/events queue once across repeated exchanges");
-    UploadReconciliationTests(directory);
-    CalendarDateRangeTests(directory);
-    SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2); InvitationTests(directory); AudioAlarmTests(directory); result=0;
+    RunNativeCase(^{ UploadReconciliationTests(directory); });
+    RunNativeCase(^{ CalendarDateRangeTests(directory); });
+    for (int scenario=0;scenario<3;scenario++)
+      RunNativeCase(^{ SeriesOccurrenceTests(directory,scenario); });
+    RunNativeCase(^{ InvitationTests(directory); });
+    RunNativeCase(^{ AudioAlarmTests(directory); }); result=0;
   } @catch(NSException *exception) { fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]); }
   @try { if(contacts) Cleanup(RCContactStoreWriteJournal(contacts),YES); if(calendars) Cleanup(RCCalendarStoreWriteJournal(calendars),NO); }
   @catch(NSException *exception) { fprintf(stderr,"Cleanup needs retry: %s\n",[[exception name] UTF8String]); result=1; }
