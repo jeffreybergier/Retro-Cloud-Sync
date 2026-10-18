@@ -61,8 +61,8 @@ int RCCalendarFixturePopulate(RCCalendarStore *s, const char *phase, RCError *e)
     return RCCalendarStoreFinishRun(s, 1, NULL, e);
   if (!RCCalendarStoreCollection(s, &c, &id, e))
     goto fail;
-  if (!strcmp(phase, "date-bounds")) {
-    const char *bounds =
+  if (!strcmp(phase, "date-bounds") || !strcmp(phase, "safe-bounds")) {
+    char bounds[] =
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"
         "BEGIN:VEVENT\r\nUID:rcs-test-future-bound\r\n"
         "DTSTAMP:20260905T000000Z\r\n"
@@ -70,7 +70,7 @@ int RCCalendarFixturePopulate(RCCalendarStore *s, const char *phase, RCError *e)
         "SUMMARY:RCS Calendar Test Future Bound\r\n"
         "RRULE:FREQ=YEARLY;UNTIL=21000101T120000Z\r\n"
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
-    const char *past =
+    char past[] =
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"
         "BEGIN:VEVENT\r\nUID:rcs-test-past-bound\r\n"
         "DTSTAMP:20260905T000000Z\r\n"
@@ -78,6 +78,12 @@ int RCCalendarFixturePopulate(RCCalendarStore *s, const char *phase, RCError *e)
         "SUMMARY:RCS Calendar Test Past Bound\r\n"
         "RRULE:FREQ=YEARLY;UNTIL=19000101T120000Z\r\n"
         "END:VEVENT\r\nEND:VCALENDAR\r\n";
+    if (!strcmp(phase, "safe-bounds")) {
+      memcpy(strstr(bounds,"21000101"),"20350101",8);
+      memcpy(strstr(past,"DTSTART:1890")+8,"1935",4);
+      memcpy(strstr(past,"DTEND:1890")+6,"1935",4);
+      memcpy(strstr(past,"UNTIL=1900")+6,"1936",4);
+    }
     if (!save(s, id, "https://example.test/cal/future.ics", phase, bounds, e) ||
         !save(s, id, "https://example.test/cal/past.ics", phase, past, e))
       goto fail;

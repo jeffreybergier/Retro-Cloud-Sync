@@ -49,7 +49,8 @@ Use the shared C/Objective-C logger (`RCLogger.m`) and its `INFO`/`WARN`/`ERROR`
 ## Native calendar date recovery
 
 - Mavericks stores recurrence ends as signed 32-bit seconds from the 2001 epoch.
-  Reject out-of-range ends before native publication, preserve wire data, and
+  All three importers conservatively require imported dates to fit signed
+  32-bit seconds in both Unix and Apple epochs. Preserve wire data, and
   verify persisted dates through a fresh EventKit read before acknowledging saves.
   Recognizing an old overflow is diagnostic only, never automatic repair.
 - `build-calendar-recovery` builds an opt-in local restoration tool; see

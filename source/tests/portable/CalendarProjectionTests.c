@@ -1,6 +1,7 @@
 #include "RCCalendarProjection.h"
 #include "../fixtures/calendars/CalendarTimeFixtures.h"
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"line %d: %s (%s)\n",__LINE__,#x,error.message); exit(1); } } while (0)
@@ -16,6 +17,15 @@ static int MatchingOffset(void *context,const char *name,struct icaltimetype utc
 }
 static void Dates(void)
 {
+  CHECK(RCCalendarImportSecondsFit(-2147483648.0));
+  CHECK(!RCCalendarImportSecondsFit(-2147483649.0));
+  CHECK(RCCalendarImportSecondsFit(2147483647.0-978307200.0));
+  CHECK(!RCCalendarImportSecondsFit(2147483648.0-978307200.0));
+  CHECK(!RCCalendarImportSecondsFit(2147483647.0));
+  CHECK(!RCCalendarImportSecondsFit(-2147483648.0-978307200.0));
+  CHECK(!RCCalendarImportSecondsFit(NAN));
+  CHECK(!RCCalendarImportSecondsFit(INFINITY));
+  CHECK(!RCCalendarImportSecondsFit(-INFINITY));
   int day;
   CHECK(RCRecurrenceDay(icaltime_from_string("20240228T090000"),icaltime_from_string("20240301T090000"),&day) && day==2);
   CHECK(RCRecurrenceDay(icaltime_from_string("20991231T090000"),icaltime_from_string("21000301T090000"),&day) && day==60);

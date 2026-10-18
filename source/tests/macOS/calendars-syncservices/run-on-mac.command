@@ -148,32 +148,10 @@ echo '[PASS] iCal received floating/custom-timezone/finite RDATE events without 
 fi
 export_phase date-bounds date-bounds
 export_phase date-bounds date-bounds
-# Reopen iCal so the check observes persisted dates, not its live cache.
-/usr/bin/osascript -e 'tell application "iCal" to quit'
-open -a iCal
-/usr/bin/osascript <<'APPLESCRIPT'
-tell application "iCal"
-  repeat 30 times
-    set cs to every calendar whose name starts with "RCS Calendar Test"
-    if (count cs) is 1 then
-      set c to item 1 of cs
-      set fs to every event of c whose summary is "RCS Calendar Test Future Bound"
-      set ps to every event of c whose summary is "RCS Calendar Test Past Bound"
-      if (count fs) is 1 and (count ps) is 1 then
-        set f to item 1 of fs
-        set p to item 1 of ps
-        if recurrence of f does not contain "UNTIL=21000101T120000Z" then error "Future recurrence end changed"
-        if recurrence of p does not contain "UNTIL=19000101T120000Z" then error "Past recurrence end changed"
-        return "iCal preserved both date bounds"
-      end if
-    end if
-    delay 1
-  end repeat
-  error "Timed out waiting for date-bound fixtures in iCal"
-end tell
-APPLESCRIPT
-echo '[PASS] Recurrence ends outside Mavericks limits survive import/replay and iCal restart'
+/usr/bin/sqlite3 Calendar-active.sqlite "SELECT count(*) FROM calendar_resources WHERE export_status='unsupported' AND export_error LIKE '%32-bit date range%';" | grep -qx 2
+echo '[PASS] Unsafe recurrence dates were skipped with warnings and retained cloud data'
 if [ "${1:-}" = --restoration ]; then
+  export_phase safe-bounds safe-bounds
   echo "Investigative check: republication after a synthetic local recurrence edit"
   /usr/bin/osascript <<'APPLESCRIPT'
 tell application "iCal"
@@ -186,14 +164,14 @@ wait_for_phase damaged-bound
 # Exercise existing one-way republication from the committed fixture mirror.
 # This is not the EventKit per-resource recovery tool.
 push_calendar
-wait_for_phase date-bounds
+wait_for_phase safe-bounds
 /usr/bin/osascript <<'APPLESCRIPT'
 tell application "iCal"
   repeat 30 times
     set c to first calendar whose name starts with "RCS Calendar Test"
     set fs to every event of c whose summary is "RCS Calendar Test Future Bound"
     if (count fs) is 1 then
-      if recurrence of item 1 of fs contains "UNTIL=21000101T120000Z" then return "iCal recovery verified without duplicate series"
+      if recurrence of item 1 of fs contains "UNTIL=20350101T120000Z" then return "iCal recovery verified without duplicate series"
     end if
     delay 1
   end repeat

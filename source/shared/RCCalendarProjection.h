@@ -4,6 +4,10 @@
 /* Adapter returns the native platform's offset at a UTC instant, or 0 when
    the zone is unknown. All authoritative calculations use the wire VTIMEZONE. */
 typedef int (*RCCalendarNativeOffset)(void *, const char *, struct icaltimetype, int *);
+/* Conservative native-import policy, independent of host time_t and CPU width.
+   Input is seconds from Apple's 2001 epoch; both signed 32-bit epochs must fit. */
+enum { RCCalendarImportDateRangeError = 32 };
+int RCCalendarImportSecondsFit(double);
 icaltimezone *RCCalendarSourceZone(icalcomponent *, icalproperty *);
 int RCRecurrenceDay(struct icaltimetype, struct icaltimetype, int *);
 int RCExpandFiniteRecurrence(icalcomponent *, RCError *);

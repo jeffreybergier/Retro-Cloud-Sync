@@ -48,6 +48,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
   NSString *clientID = nil;
   long long generation = 0;
   int success = 0, step = SQLITE_DONE;
+  BOOL complete = YES;
   RCErrorClear(error);
   if (count)
     *count = 0;
@@ -142,6 +143,7 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
                      forKey:@"raw"];
           [update setObject:@"exported" forKey:@"status"];
         } else {
+          complete = NO;
           [update setObject:String(mappingError.message) forKey:@"error"];
           if (sqlite3_column_type(q, 3) != SQLITE_NULL) {
             RCError oldError;
@@ -150,8 +152,8 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
             if (!mapped) {
               RCErrorSet(
                   error, 1,
-                  "Could not reconstruct previously exported calendar resource %lld",
-                  resource);
+                  "Could not reconstruct previously exported calendar resource %lld; "
+                  "existing local events preserved: %s",resource,oldError.message);
               goto done;
             }
           }
@@ -297,14 +299,16 @@ int RCSyncServicesPushCalendars(RCCalendarStore *store, const char *descriptionP
       sqlite3_finalize(q);
       q = NULL;
     }
-    if (!RCCalendarStoreSnapshotWriteBases(store, generation, error)) goto done;
-    if (!RCCalendarStoreSQL(
+    if (complete && !RCCalendarStoreSnapshotWriteBases(store, generation, error))
+      goto done;
+    if (complete && !RCCalendarStoreSQL(
             store, error,
             "UPDATE accounts SET published_generation=%lld WHERE id=%lld;COMMIT",
             generation, store->account))
       goto done;
+    if (!complete && !RCCalendarStoreSQL(store,error,"COMMIT")) goto done;
     if (count)
-      *count = (long)[records count];
+      *count = complete ? (long)[records count] : -1;
     success = 1;
     goto done;
   sqlError:

@@ -219,7 +219,9 @@ read, updated and removed to verify daemon credential access. Cleanup is restric
 the contact snapshot must match its pre-test value. Retain failed-run journals
 for targeted cleanup. The suite enables DEBUG query-window logging (no event
 contents) and verifies local event discovery in 1972, 2040 and 2099, including
-empty windows and duplicate-free replay. Query dates must be Foundation dates:
+empty windows and duplicate-free replay. Only the safe 1972 creation queues;
+post-2038 creations remain pending under the import date policy. Query dates
+must be Foundation dates:
 archiving the app-only `RCCalendarDate` class into EventKit predicates interrupts
 the calendar service connection on the tested iOS 8.4.1 device. Keep the custom
 date class for journal timezone/floating metadata.

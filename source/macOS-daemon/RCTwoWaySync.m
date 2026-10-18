@@ -232,7 +232,9 @@ static NSDictionary *LiveReceipt(NSDictionary *receipt)
 BOOL RCTwoWayAttention(RCWriteJournal *j, NSString *root, const char *reason, RCError *error)
 {
   const char *description = "Local change cannot be applied safely; edit preserved";
-  if (!strcmp(reason,"native-series-local-edit"))
+  if (!strcmp(reason,"calendar-import-date-range"))
+    description = "Event skipped during local calendar import: date exceeds the supported 32-bit range; cloud data and existing local copy preserved";
+  else if (!strcmp(reason,"native-series-local-edit"))
     description = "Recurring series was edited locally; upload deferred and local edit preserved";
   else if (!strcmp(reason,"native-series-date-overflow"))
     description = "EventKit recurrence end overflowed its 32-bit date range; cloud series preserved, explicit local restoration required";

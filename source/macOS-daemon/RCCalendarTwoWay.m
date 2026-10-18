@@ -4,6 +4,7 @@
 #import "RCAutorelease.h"
 #import "RCLogger.h"
 #import "RCTwoWayNative.h"
+#import "RCTwoWayInternal.h"
 #import "RCCalendarSyncClient.h"
 #import "RCSyncRecordEquality.h"
 #import "RCCalendarTime.h"
@@ -559,7 +560,8 @@ int RCExchangeCalendars(RCCalendarStore *store,const char *description,RCBackend
   RCWriteJournal j=RCCalendarStoreWriteJournal(store); sqlite3_stmt *q=NULL;
   NSMutableDictionary *graph=[NSMutableDictionary dictionary], *calendarIDs=[NSMutableDictionary dictionary];
   NSMutableArray *resources=[NSMutableArray array];
-  NSString *accountID=nil; long long generation=0; int step=SQLITE_ERROR; BOOL currentMapping=YES;
+  NSString *accountID=nil; long long generation=0; int step=SQLITE_ERROR; BOOL currentMapping=YES, dateRangeSkipped=NO;
+  if (!RCTwoWayInitialize(&j,error)) return 0;
   if (sqlite3_prepare_v2(j.db,"SELECT sync_id,generation FROM accounts WHERE id=?",-1,&q,NULL)!=SQLITE_OK) goto failed;
   sqlite3_bind_int64(q,1,j.account);
   if (sqlite3_step(q)==SQLITE_ROW) { accountID=S((const char *)sqlite3_column_text(q,0)); generation=sqlite3_column_int64(q,1); }
@@ -596,12 +598,39 @@ int RCExchangeCalendars(RCCalendarStore *store,const char *description,RCBackend
       NSString *etag=S((const char *)sqlite3_column_text(q,4)); RCError mappingError; RCErrorClear(&mappingError);
       NSDictionary *mapped=sqlite3_column_type(q,7)==SQLITE_NULL ? RCCalendarNativeGraph(store,id,calendar,body,&mappingError) : nil;
       if(!mapped) currentMapping=NO;
+      if (!mapped && mappingError.code==RCCalendarImportDateRangeError) {
+        dateRangeSkipped=YES;
+        if (!RCTwoWayAttention(&j,[NSString stringWithFormat:@"resource-%lld",id],
+            "calendar-import-date-range",error)) goto failed;
+        RCLogger(RCLogWarning,"Calendars","Apply",@"Calendar resource %lld: %s",
+            id,mappingError.message);
+        if (!RCTwoWaySQL(&j,error,"UPDATE calendar_resources SET "
+            "export_status='unsupported',export_error=%Q WHERE id=%lld",
+            mappingError.message,id)) goto failed;
+        /* Native ownership keeps omitted resources intact and excludes them
+           from local edit collection. Never republish an older cloud body. */
+        if (requireCurrentMapping) continue;
+        if (sqlite3_column_type(q,5)!=SQLITE_NULL) {
+          RCErrorSet(error,1,"Calendar import paused to preserve a previously "
+              "published event: %s",mappingError.message);
+          goto failed;
+        }
+      }
       if (!mapped && sqlite3_column_type(q,5)!=SQLITE_NULL) {
         body=[NSData dataWithBytes:sqlite3_column_blob(q,5) length:sqlite3_column_bytes(q,5)]; etag=S((const char *)sqlite3_column_text(q,6));
         mapped=RCCalendarNativeGraph(store,id,calendar,body,&mappingError);
-        if (!mapped) { RCErrorSet(error,1,"Could not reconstruct retained calendar graph"); goto failed; }
+        if (!mapped) {
+          /* EventKit retains owned records omitted by the mapper. A complete
+             Sync Services graph cannot safely omit a prior publication. */
+          RCErrorSet(error,1,"Could not reconstruct retained calendar graph; "
+              "existing local events preserved: %s",mappingError.message);
+          goto failed;
+        }
       }
       if (!mapped) { RCLogger(RCLogWarning, "Calendars", "Apply", @"Two-way calendar resource %lld is unsupported: %s",id,sqlite3_column_type(q,7)!=SQLITE_NULL ? (const char *)sqlite3_column_text(q,7) : mappingError.message); continue; }
+      if (!RCTwoWaySQL(&j,error,"DELETE FROM two_way_attention WHERE "
+          "account_id=%lld AND record_id=%Q AND reason='calendar-import-date-range'",
+          j.account,[[NSString stringWithFormat:@"resource-%lld",id] UTF8String])) goto failed;
       NSString *root=nil; NSDictionary *paths=Paths(store,id,body,mapped,&root,error);
       if (!paths || !root) goto failed;
       [resources addObject:[NSDictionary dictionaryWithObjectsAndKeys:[NSString stringWithFormat:@"resource-%lld",id],@"key",root,@"root",
@@ -618,7 +647,7 @@ int RCExchangeCalendars(RCCalendarStore *store,const char *description,RCBackend
   sqlite3_finalize(q); q=NULL;
   RCTwoWayContext c={j,RCCalendarSyncClientIdentifier(accountID),S(description),eventEntity,resources,graph,RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
   if (!exchange(&c,twoWay,error)) return 0;
-  if(requireCurrentMapping && !currentMapping) c.didPublishAll=NO;
+  if(dateRangeSkipped || (requireCurrentMapping && !currentMapping)) c.didPublishAll=NO;
   if (c.didPublishAll) {
     if (!RCTwoWaySQL(&j,error,"BEGIN IMMEDIATE")) return 0;
     NSEnumerator *it=[resources objectEnumerator]; NSDictionary *r;

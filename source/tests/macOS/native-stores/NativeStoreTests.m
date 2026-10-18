@@ -818,15 +818,22 @@ static void CalendarDateRangeTests(NSString *directory)
   @try {
     NSString *body=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:date-range\r\nDTSTART;VALUE=DATE:20301012\r\nDTEND;VALUE=DATE:20301013\r\nSUMMARY:Offline range fixture\r\nRRULE:FREQ=YEARLY;UNTIL=20991012\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
     RCWriteJournal j=RCCalendarStoreWriteJournal(store);
-    if(RCNativeCalendarUses32BitRecurrenceEnds()) {
+    { /* The conservative import policy applies on Mac and iOS alike. */
       CalendarSeed(store,Data(body),"\"range-1\""); SyncCalendar(store,NO,NO);
       CHECK(Count(j,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
-      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-publication-pending'")==1);
+      CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='calendar-import-date-range'")==1);
       CHECK(Count(j,"SELECT count(*) FROM calendar_resources WHERE instr(raw_ical,'UNTIL=20991012')>0")==1);
     }
     NSString *finite=[body stringByReplacingOccurrencesOfString:@"20991012" withString:@"20351012"];
     CalendarSeed(store,Data(finite),"\"range-2\""); SyncCalendar(store,NO,YES);
     NSDictionary *row=FirstRow(j); NSString *identifier=[[row objectForKey:@"id"] copy]; root=[[row objectForKey:@"resource"] objectForKey:@"root"];
+    CalendarSeed(store,Data(body),"\"range-unsafe-update\""); SyncCalendar(store,YES,NO);
+    CHECK([[[FirstRow(j) objectForKey:@"id"] description] isEqual:identifier]);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='calendar-import-date-range'")==1);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    CHECK(Count(j,"SELECT count(*) FROM calendar_resources WHERE instr(export_ical,'UNTIL=20351012')>0")==1);
+    CalendarSeed(store,Data(finite),"\"range-safe-again\""); SyncCalendar(store,NO,YES);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='calendar-import-date-range'")==0);
     NSString *unbounded=[finite stringByReplacingOccurrencesOfString:@";UNTIL=20351012" withString:@""];
     CalendarSeed(store,Data(unbounded),"\"range-3\""); SyncCalendar(store,YES,NO);
     CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='native-series-remote-edit'")==1);

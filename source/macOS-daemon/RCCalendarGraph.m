@@ -109,6 +109,99 @@ static RCCalendarDate *Date(icalcomponent *root, icalproperty *p, struct icaltim
   [date setTimeZone:native];
   return date;
 }
+/* Validate before projection can turn source rules/dates into another shape.
+   Metadata and VTIMEZONE transition history are retained, not native dates. */
+static BOOL ImportDate(NSDate *date, const char *field, RCError *error)
+{
+  if (date && RCCalendarImportSecondsFit([date timeIntervalSinceReferenceDate]))
+    return YES;
+  if (date)
+    RCErrorSet(error, RCCalendarImportDateRangeError, "Event skipped during local calendar import: %s exceeds "
+        "the supported 32-bit date range; cloud data retained", field);
+  return NO;
+}
+static double DurationSeconds(struct icaldurationtype duration)
+{
+  double seconds=duration.seconds+60.0*duration.minutes+3600.0*duration.hours+
+      86400.0*duration.days+604800.0*duration.weeks;
+  return duration.is_neg ? -seconds : seconds;
+}
+static BOOL ImportDates(icalcomponent *root, RCError *error)
+{
+  icalcomponent *event;
+  for (event=icalcomponent_get_first_component(root,ICAL_VEVENT_COMPONENT); event;
+       event=icalcomponent_get_next_component(root,ICAL_VEVENT_COMPONENT)) {
+    icalproperty *basis=icalcomponent_get_first_property(event,ICAL_DTSTART_PROPERTY);
+    icalproperty *duration=icalcomponent_get_first_property(event,ICAL_DURATION_PROPERTY);
+    if (duration && basis) {
+      NSDate *start=Date(root,basis,icalproperty_get_dtstart(basis),NULL,error);
+      if (!start || !ImportDate([NSDate dateWithTimeIntervalSinceReferenceDate:
+          [start timeIntervalSinceReferenceDate]+
+          DurationSeconds(icalproperty_get_duration(duration))],
+          "duration-derived end",error)) return NO;
+    }
+    icalproperty *p;
+    for (p=icalcomponent_get_first_property(event,ICAL_ANY_PROPERTY); p;
+         p=icalcomponent_get_next_property(event,ICAL_ANY_PROPERTY)) {
+      icalproperty_kind kind=icalproperty_isa(p);
+      struct icaltimetype t;
+      const char *field=icalproperty_kind_to_string(kind);
+      icalproperty *zoneProperty=p;
+      switch (kind) {
+        case ICAL_DTSTART_PROPERTY: t=icalproperty_get_dtstart(p); break;
+        case ICAL_DTEND_PROPERTY: t=icalproperty_get_dtend(p); break;
+        case ICAL_RECURRENCEID_PROPERTY: t=icalproperty_get_recurrenceid(p); break;
+        case ICAL_EXDATE_PROPERTY: t=icalproperty_get_exdate(p); break;
+        case ICAL_RDATE_PROPERTY: t=icalproperty_get_rdate(p).time; break;
+        case ICAL_RRULE_PROPERTY:
+        case ICAL_EXRULE_PROPERTY:
+          t=(kind==ICAL_RRULE_PROPERTY ? icalproperty_get_rrule(p) :
+              icalproperty_get_exrule(p)).until;
+          zoneProperty=icaltime_is_utc(t) ? p : basis;
+          field="recurrence end";
+          break;
+        default: continue;
+      }
+      if (!icaltime_is_null_time(t) &&
+          !ImportDate(Date(root,zoneProperty,t,NULL,error),field,error)) return NO;
+    }
+  }
+  return YES;
+}
+BOOL RCCalendarImportGraphDates(NSDictionary *records, RCError *error)
+{
+  NSEnumerator *keys=[records keyEnumerator]; NSString *key;
+  while ((key=[keys nextObject])) {
+    NSDictionary *record=[records objectForKey:key];
+    NSEnumerator *fields=[record keyEnumerator]; NSString *field;
+    while ((field=[fields nextObject])) {
+      id value=[record objectForKey:field];
+      if ([value isKindOfClass:[NSDate class]] &&
+          !ImportDate(value,[field UTF8String],error)) return NO;
+      if ([value isKindOfClass:[NSArray class]]) {
+        NSEnumerator *dates=[value objectEnumerator]; id date;
+        while ((date=[dates nextObject]))
+          if ([date isKindOfClass:[NSDate class]] &&
+              !ImportDate(date,[field UTF8String],error)) return NO;
+      }
+    }
+    NSNumber *offset=[record objectForKey:@"triggerduration"];
+    NSDate *absolute=[record objectForKey:@"triggerdate"];
+    if (offset || absolute) {
+      NSString *owner=[[record objectForKey:@"owner"] lastObject];
+      NSDate *start=[[records objectForKey:owner] objectForKey:@"start date"];
+      double seconds=absolute ? [absolute timeIntervalSinceReferenceDate] :
+          [start timeIntervalSinceReferenceDate]+[offset doubleValue];
+      double repeat=[[record objectForKey:@"repeat count"] doubleValue] *
+          [[record objectForKey:@"repeat interval"] doubleValue];
+      if (!ImportDate([NSDate dateWithTimeIntervalSinceReferenceDate:seconds],
+              "relative alarm",error) ||
+          !ImportDate([NSDate dateWithTimeIntervalSinceReferenceDate:seconds+repeat],
+              "repeated alarm",error)) return NO;
+    }
+  }
+  return YES;
+}
 static NSArray *Numbers(short *values, size_t capacity)
 {
   NSMutableArray *a = [NSMutableArray array];
@@ -324,7 +417,7 @@ static int Alarms(RCCalendarStore *store, icalcomponent *root, icalcomponent *ev
         return 0;
       [a setObject:date forKey:@"triggerdate"];
     } else
-      [a setObject:[NSNumber numberWithInt:icaldurationtype_as_int(trigger.duration)]
+      [a setObject:[NSNumber numberWithDouble:DurationSeconds(trigger.duration)]
             forKey:@"triggerduration"];
     Text(a, @"description", RCICalendarValue(alarm, ICAL_DESCRIPTION_PROPERTY));
     /* Tiger's sound field is a URL. Only a single URI attachment has a
@@ -342,8 +435,7 @@ static int Alarms(RCCalendarStore *store, icalcomponent *root, icalcomponent *ev
             forKey:@"repeat count"];
     p = icalcomponent_get_first_property(alarm, ICAL_DURATION_PROPERTY);
     if (p)
-      [a setObject:[NSNumber numberWithInt:icaldurationtype_as_int(
-                                               icalproperty_get_duration(p))]
+      [a setObject:[NSNumber numberWithDouble:DurationSeconds(icalproperty_get_duration(p))]
             forKey:@"repeat interval"];
     [records setObject:a forKey:id];
     [!strcmp(action, "DISPLAY") ? display : audio addObject:id];
@@ -371,7 +463,7 @@ NSMutableDictionary *RCCalendarResourceGraph(RCCalendarStore *store, long long r
   int success = 0;
   if (!root)
     return nil;
-  if(!RCPrepareCalendarProjection(root,error)) goto done;
+  if(!ImportDates(root,error) || !RCPrepareCalendarProjection(root,error)) goto done;
   for (component = icalcomponent_get_first_component(root, ICAL_ANY_COMPONENT);
        component;
        component = icalcomponent_get_next_component(root, ICAL_ANY_COMPONENT)) {
@@ -514,7 +606,7 @@ NSMutableDictionary *RCCalendarResourceGraph(RCCalendarStore *store, long long r
   [[records objectForKey:masterID] setObject:detached forKey:@"detached events"];
   [[[records objectForKey:masterID] objectForKey:@"exception dates"]
       addObjectsFromArray:cancelled];
-  success = 1;
+  success = RCCalendarImportGraphDates(records,error);
 done:
   icalcomponent_free(root);
   return success ? records : nil;

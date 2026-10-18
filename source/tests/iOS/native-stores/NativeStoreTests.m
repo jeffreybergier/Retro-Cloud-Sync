@@ -392,11 +392,12 @@ static void CalendarDiscoveryTests(NSString *directory)
       CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
     }
     SyncCalendar(store,YES,NO);
-    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE kind='create' AND state='queued'")==3);
-    CHECK(Count(j,"SELECT count(*) FROM write_operations")==3);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE kind='create' AND state='queued'")==1);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
     SyncCalendar(store,YES,NO);
-    CHECK(Count(j,"SELECT count(*) FROM write_operations")==3);
-    puts("PASS: EventKit discovery crosses empty and post-2038 windows; native events queue once without network writes");
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='unsupported-native-creation'")==2);
+    puts("PASS: EventKit discovers all windows; safe native events queue once and post-2038 creations remain pending");
   } @finally { if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); } }
 }
 static void PendingCalendarSave(RCWriteJournal j,NSString *root,BOOL loseIdentity)

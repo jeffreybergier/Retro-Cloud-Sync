@@ -90,13 +90,17 @@ int main(int argc, char **argv)
     ok = testCalendars == 0 && [testEvents count] == 0;
     goto done;
   }
-  if (argc == 2 && (!strcmp(argv[1], "date-bounds") ||
+  if (argc == 2 && !strcmp(argv[1], "date-bounds")) {
+    ok = testCalendars == 1 && [testEvents count] == 0;
+    goto done;
+  }
+  if (argc == 2 && (!strcmp(argv[1], "safe-bounds") ||
       !strcmp(argv[1], "damaged-bound"))) {
     NSArray *titles = [NSArray arrayWithObjects:
         @"RCS Calendar Test Future Bound", @"RCS Calendar Test Past Bound", nil];
     NSArray *ends = [NSArray arrayWithObjects:
         !strcmp(argv[1], "damaged-bound") ? @"20310101T120000Z" :
-        @"21000101T120000Z", @"19000101T120000Z", nil];
+        @"20350101T120000Z", @"19360101T120000Z", nil];
     NSUInteger i;
     ok = testCalendars == 1 && [testEvents count] == 2;
     for (i = 0; i < [titles count]; i++) {
@@ -147,7 +151,7 @@ int main(int argc, char **argv)
             allValues] lastObject];
     NSCalendarDate *start = [day objectForKey:@"start date"],
                    *end = [day objectForKey:@"end date"];
-    ok = testCalendars == 1 && [testEvents count] == (updated ? 4 : 5) &&
+    ok = testCalendars == 1 && [testEvents count] == 4 &&
          [[day objectForKey:@"all day"] boolValue] && [start yearOfCommonEra] == 2030 &&
          [start dayOfMonth] == 20 && [end dayOfMonth] == 22 && weekly && moved &&
          [[weekly objectForKey:@"recurrences"] count] == 1 &&
@@ -158,10 +162,7 @@ int main(int argc, char **argv)
          [[alarm objectForKey:@"triggerduration"] intValue] == -900 &&
          [[weekly objectForKey:@"attendees"] count] == 1 &&
          [[attendee objectForKey:@"status"] isEqual:@"accepted"] &&
-         (updated ||
-          ([[single objectForKey:@"start date"] yearOfCommonEra] == 2040 &&
-           [[single objectForKey:@"end date"]
-               timeIntervalSinceDate:[single objectForKey:@"start date"]] == 3600));
+         single == nil;
   }
 done:
   if (!ok)

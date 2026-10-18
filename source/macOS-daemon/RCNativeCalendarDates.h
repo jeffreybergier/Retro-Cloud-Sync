@@ -13,14 +13,6 @@ static inline BOOL RCNativeRecurrenceEndFits32Bits(NSDate *date)
   double seconds=[date timeIntervalSinceReferenceDate];
   return isfinite(seconds) && seconds>=-2147483648.0 && seconds<=2147483647.0;
 }
-static inline BOOL RCNativeCalendarUses32BitRecurrenceEnds(void)
-{
-#if TARGET_OS_IPHONE
-  return NO;
-#else
-  return floor(NSFoundationVersionNumber)<=floor(NSFoundationVersionNumber10_9_2);
-#endif
-}
 /* Diagnose only the exact overflow signature. This never authorizes a save,
    clears attention, or treats unrelated local differences as unchanged. */
 static inline BOOL RCNativeCalendarRecurrenceOverflow(NSDictionary *before,

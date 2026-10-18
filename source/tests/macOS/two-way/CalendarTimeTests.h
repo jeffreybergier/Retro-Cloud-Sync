@@ -10,6 +10,34 @@ static NSString *ChangedZone(void)
 }
 static void CalendarTimeMapperTests(RCCalendarStore *store)
 {
+  /* Every importer shares this mapper, including source checks before
+     projection and derived alarm/end dates afterward. */
+  NSArray *badFields=[NSArray arrayWithObjects:
+      @"DTSTART:20380119T031408Z\r\nDTEND:20380119T041408Z\r\n",
+      @"DTSTART:20260301T090000Z\r\nDTEND:20400101T000000Z\r\n",
+      @"DTSTART:19321213T204551Z\r\nDTEND:19321214T090000Z\r\n",
+      @"DTSTART:20260301T090000Z\r\nRRULE:FREQ=DAILY;UNTIL=20990101T000000Z\r\n",
+      @"DTSTART:20260301T090000Z\r\nEXDATE:20400101T000000Z\r\n",
+      @"DTSTART:20260301T090000Z\r\nRDATE:20400101T000000Z\r\n",
+      @"DTSTART:20260301T090000Z\r\nRECURRENCE-ID:20400101T000000Z\r\n",
+      @"DTSTART;VALUE=DATE:20380118\r\nDURATION:P2D\r\n",
+      @"DTSTART:20260301T090000Z\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;VALUE=DATE-TIME:20380119T030000Z\r\nREPEAT:2\r\nDURATION:PT1H\r\nEND:VALARM\r\n",
+      @"DTSTART:20260301T090000Z\r\nDURATION:P999999W\r\n",
+      @"DTSTART:20260301T090000Z\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER;VALUE=DATE-TIME:20400101T000000Z\r\nEND:VALARM\r\n",
+      @"DTSTART:20380119T030000Z\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:PT1H\r\nEND:VALARM\r\n",
+      @"DTSTART:20260301T090000Z\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:P999999W\r\nEND:VALARM\r\n",nil];
+  RCError rangeError;
+  NSEnumerator *badDates=[badFields objectEnumerator]; NSString *fields;
+  while ((fields=[badDates nextObject])) {
+    NSString *wire=[NSString stringWithFormat:@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:range-test\r\n%@END:VEVENT\r\nEND:VCALENDAR\r\n",fields];
+    RCErrorClear(&rangeError);
+    CHECK(!RCCalendarNativeGraph(store,230,@"calendar-fixture",
+        [wire dataUsingEncoding:NSUTF8StringEncoding],&rangeError));
+    CHECK(strstr(rangeError.message,"supported 32-bit date range"));
+  }
+  NSString *safe=@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:range-safe\r\nDTSTART:20380119T030000Z\r\nDTEND:20380119T031407Z\r\nCREATED:19000101T000000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+  CHECK(RCCalendarNativeGraph(store,231,@"calendar-fixture",
+      [safe dataUsingEncoding:NSUTF8StringEncoding],&rangeError));
   NSArray *fixtures=[NSArray arrayWithObjects:TimeFixture(@"",@"",@"RRULE:FREQ=DAILY;UNTIL=20260304T090000\r\n"),
       TimeFixture(ChangedZone(),@";TZID=Europe/London",@"RRULE:FREQ=WEEKLY;COUNT=40\r\n"),nil];
   int index;
@@ -80,7 +108,8 @@ static void CalendarTimeMapperTests(RCCalendarStore *store)
   body=[TimeFixture(Replace(ChangedZone(),@"TZOFFSETFROM:+0230\r\n",@""),@";TZID=Europe/London",@"RRULE:FREQ=WEEKLY;COUNT=4\r\n") dataUsingEncoding:NSUTF8StringEncoding];
   CHECK(!RCCalendarNativeGraph(store,221,@"calendar-fixture",body,&error));
   body=[Replace(TimeFixture(ChangedZone(),@";TZID=Europe/London",@"RRULE:FREQ=WEEKLY;COUNT=4\r\n"),@"20260301",@"19300301") dataUsingEncoding:NSUTF8StringEncoding];
-  CHECK(RCCalendarNativeGraph(store,223,@"calendar-fixture",body,&error));
+  CHECK(!RCCalendarNativeGraph(store,223,@"calendar-fixture",body,&error) &&
+      error.code==RCCalendarImportDateRangeError);
   NSTimeZone *savedZone=[[NSTimeZone defaultTimeZone] retain];
   @try {
     [NSTimeZone setDefaultTimeZone:[NSTimeZone timeZoneWithName:@"America/New_York"]];

@@ -5,6 +5,7 @@
 #import "RCLogger.h"
 #import "RCSyncFieldScope.h"
 #import "RCCalendarTime.h"
+#import "RCCalendarGraph.h"
 #if defined(__LP64__) || TARGET_OS_IPHONE
 #import <EventKit/EventKit.h>
 #import "RCNativeCalendarDates.h"
@@ -412,6 +413,16 @@ static BOOL EKRepairDefaultAlarm(EKEventStore *store,id event,
 static BOOL EKCanWrite(NSDictionary *resource,RCError *error)
 {
   NSDictionary *graph=[resource objectForKey:@"graph"], *r=[graph objectForKey:[resource objectForKey:@"root"]];
+  if (!RCCalendarImportGraphDates(graph,error)) return NO;
+  BOOL allDay=[[r objectForKey:@"all day"] boolValue];
+  NSMutableDictionary *converted=[NSMutableDictionary dictionaryWithDictionary:r];
+  for (NSString *field in [NSArray arrayWithObjects:@"start date",@"end date",nil]) {
+    NSDate *date=EKDate([r objectForKey:field],allDay,YES);
+    if (date) [converted setObject:date forKey:field];
+  }
+  NSMutableDictionary *nativeGraph=[NSMutableDictionary dictionaryWithDictionary:graph];
+  [nativeGraph setObject:converted forKey:[resource objectForKey:@"root"]];
+  if (!RCCalendarImportGraphDates(nativeGraph,error)) return NO;
   /* Project a recurring master without its EXDATE exclusions. The full wire
      base retains them; native two-way series edits/deletions remain deferred.
      Detached components and non-recurring exception structures stay pending. */
@@ -423,10 +434,6 @@ static BOOL EKCanWrite(NSDictionary *resource,RCError *error)
   NSEnumerator *it=[[r objectForKey:@"recurrences"] objectEnumerator]; NSString *key;
   while((key=[it nextObject])) {
     NSDictionary *rule=[graph objectForKey:key]; NSString *week=[rule objectForKey:@"weekstartday"];
-    if(RCNativeCalendarUses32BitRecurrenceEnds() &&
-        !RCNativeRecurrenceEndFits32Bits([rule objectForKey:@"until"])) {
-      RCErrorSet(error,1,"Recurrence end exceeds this system's 32-bit EventKit date range; cloud data retained"); return NO;
-    }
     if((week && ![week isEqual:@"monday"]) || !EKRule(rule)) { RCErrorSet(error,1,"EventKit cannot represent this recurrence rule"); return NO; }
   }
   NSMutableArray *alarms=[NSMutableArray array];

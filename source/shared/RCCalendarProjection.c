@@ -1,6 +1,15 @@
 #include "RCCalendarProjection.h"
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
+
+int RCCalendarImportSecondsFit(double seconds)
+{
+  double unixSeconds = seconds + 978307200.0;
+  return isfinite(seconds) && seconds >= -2147483648.0 &&
+      seconds <= 2147483647.0 && unixSeconds >= -2147483648.0 &&
+      unixSeconds <= 2147483647.0;
+}
 
 icaltimezone *RCCalendarSourceZone(icalcomponent *root, icalproperty *p)
 {
