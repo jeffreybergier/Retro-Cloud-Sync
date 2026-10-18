@@ -343,6 +343,93 @@ static void Diagnose(ISyncRecordSnapshot *snapshot, NSDictionary *people)
     }
   }
 }
+/* Check stored dates in several process timezones. The optional Apple
+   exporter probe does not change the machine timezone or contact. */
+static BOOL VerifyDateZones(ABAddressBook *book, BOOL checkExport)
+{
+  NSTimeZone *original = [[NSTimeZone defaultTimeZone] retain];
+  NSArray *zones = [NSArray arrayWithObjects:@"UTC", @"Asia/Tokyo",
+      @"America/Los_Angeles", @"Pacific/Kiritimati", @"Pacific/Pago_Pago", nil];
+  BOOL ok = YES;
+  @try {
+    NSEnumerator *it = [zones objectEnumerator]; NSString *name;
+    while ((name = [it nextObject])) {
+      NSTimeZone *zone = [NSTimeZone timeZoneWithName:name];
+      if (!zone) { ok = NO; break; }
+      [NSTimeZone setDefaultTimeZone:zone];
+      ISyncRecordSnapshot *snapshot = [[ISyncManager sharedManager]
+          snapshotOfRecordsInTruthWithEntityNames:[NSArray arrayWithObjects:
+          Entity(@"Contact"), Entity(@"Date"), nil] usingIdentifiersForClient:nil];
+      NSDictionary *contact = nil;
+      NSEnumerator *contacts = [Records(snapshot, Entity(@"Contact")) objectEnumerator];
+      NSDictionary *candidate;
+      while ((candidate = [contacts nextObject]))
+        if ([[candidate objectForKey:@"first name"] isEqual:kRCAlpha]) contact = candidate;
+      NSDictionary *dates = [snapshot recordsWithIdentifiers:[contact objectForKey:@"dates"]];
+      NSDate *birth = [contact objectForKey:@"birthday"];
+      NSDate *anniversaryDate = [[[dates allValues] lastObject] objectForKey:@"value"];
+      NSTimeZone *utc = [NSTimeZone timeZoneForSecondsFromGMT:0];
+      BOOL canonical = [dates count] == 1 &&
+          [[birth descriptionWithCalendarFormat:@"%Y-%m-%d" timeZone:utc locale:nil]
+              isEqual:@"2001-02-03"] &&
+          [[anniversaryDate descriptionWithCalendarFormat:@"%Y-%m-%d" timeZone:utc locale:nil]
+              isEqual:@"2000-02-29"];
+      fprintf(stdout, "%s: Sync Services UTC date values in %s\n",
+          canonical ? "PASS" : "FAIL", [name UTF8String]);
+      if (!canonical) ok = NO;
+      if (!checkExport) continue;
+      ABPerson *person = [People(book) objectForKey:kRCAlpha];
+      NSData *data = [person vCardRepresentation];
+      /* Tiger exports UTF-16BE without a BOM; newer systems may use UTF-8. */
+      const unsigned char *bytes = [data bytes];
+      NSStringEncoding encoding = NSUTF8StringEncoding;
+      if ([data length] >= 2) {
+        if (bytes[0] == 0 && bytes[1] == 'B')
+          encoding = NSUTF16BigEndianStringEncoding;
+        else if (bytes[0] == 'B' && bytes[1] == 0)
+          encoding = NSUTF16LittleEndianStringEncoding;
+        else if ((bytes[0] == 0xff && bytes[1] == 0xfe) ||
+                 (bytes[0] == 0xfe && bytes[1] == 0xff))
+          encoding = NSUnicodeStringEncoding;
+      }
+      NSString *card = [[[NSString alloc] initWithData:data encoding:encoding]
+          autorelease];
+      card = [[card componentsSeparatedByString:@"\r"]
+          componentsJoinedByString:@"\n"];
+      BOOL found = NO, anniversary = NO;
+      NSEnumerator *lines = [[card componentsSeparatedByString:@"\n"] objectEnumerator];
+      NSString *line;
+      while ((line = [lines nextObject])) {
+        NSString *upper = [line uppercaseString];
+        NSString *property = [[[[upper componentsSeparatedByString:@":"]
+            objectAtIndex:0] componentsSeparatedByString:@";"] objectAtIndex:0];
+        BOOL birthday = [property isEqual:@"BDAY"] || [property hasSuffix:@".BDAY"];
+        BOOL otherDate = [property isEqual:@"X-ABDATE"] ||
+            [property hasSuffix:@".X-ABDATE"];
+        if (!birthday && !otherDate) continue;
+        NSRange colon = [line rangeOfString:@":"];
+        NSString *value = [[line substringFromIndex:colon.location + 1]
+            stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        fprintf(stdout, "Synthetic %s in %s: %s\n",
+            birthday ? "birthday" : "anniversary", [name UTF8String],
+            [value UTF8String]);
+        if (birthday) found = [value isEqual:@"2001-02-03"] || [value isEqual:@"20010203"];
+        else anniversary = [value isEqual:@"2000-02-29"] || [value isEqual:@"20000229"];
+      }
+      fprintf(stdout, "%s: Native Address Book birthday/anniversary export in %s\n",
+          found && anniversary ? "PASS" : "FAIL", [name UTF8String]);
+      if (!found || !anniversary) {
+        [data writeToFile:@"synthetic-date-export.vcf" atomically:YES];
+        ok = NO;
+      }
+    }
+  } @finally {
+    [NSTimeZone setDefaultTimeZone:original];
+    [original release];
+  }
+  return ok;
+}
+
 static BOOL VerifyAccountClient(NSString *description)
 {
   NSString *account = @"00000000000000000000000000000001";
@@ -376,7 +463,10 @@ int main(int argc, char **argv)
       fprintf(stderr, "Address Book/Sync Services unavailable\n");
       [pool release]; return 1;
     }
-    if (argc == 2 && [command isEqual:@"unregistered"]) ok = [manager clientWithIdentifier:kRCTestClient] == nil;
+    if (argc == 2 && [command isEqual:@"date-zones"]) ok = VerifyDateZones(book, NO);
+    else if (argc == 2 && [command isEqual:@"date-export"])
+      ok = VerifyDateZones(book, YES);
+    else if (argc == 2 && [command isEqual:@"unregistered"]) ok = [manager clientWithIdentifier:kRCTestClient] == nil;
     else if (argc == 3 && [command isEqual:@"client-registration"])
       ok = VerifyAccountClient([NSString stringWithUTF8String:argv[2]]);
     else if (argc == 3 && ([command isEqual:@"snapshot"] || [command isEqual:@"baseline"])) {

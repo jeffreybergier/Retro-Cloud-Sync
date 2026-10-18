@@ -13,9 +13,10 @@ static void ContactDateTests(RCContactStore *store)
       @"https://fixture.invalid/book/date.vcf",@"\"date-base\"");
   NSDictionary *base=[resource objectForKey:@"graph"];
   NSTimeZone *utc=[NSTimeZone timeZoneForSecondsFromGMT:0];
+  /* Use the spelling present in Tiger's bundled timezone database. */
   NSArray *zones=[NSArray arrayWithObjects:@"Asia/Yakutsk",
       @"America/Los_Angeles",@"Pacific/Kiritimati",@"Pacific/Pago_Pago",
-      @"Asia/Kathmandu",@"Europe/London",nil];
+      @"Asia/Katmandu",@"Europe/London",nil];
   NSMutableDictionary *legacy=[NSMutableDictionary dictionaryWithDictionary:base];
   NSEnumerator *records=[base keyEnumerator]; NSString *identifier;
   while((identifier=[records nextObject])) {

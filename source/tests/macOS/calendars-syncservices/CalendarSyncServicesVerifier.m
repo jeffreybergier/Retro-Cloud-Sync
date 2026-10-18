@@ -90,6 +90,30 @@ int main(int argc, char **argv)
     ok = testCalendars == 0 && [testEvents count] == 0;
     goto done;
   }
+  if (argc == 2 && (!strcmp(argv[1], "date-bounds") ||
+      !strcmp(argv[1], "damaged-bound"))) {
+    NSArray *titles = [NSArray arrayWithObjects:
+        @"RCS Calendar Test Future Bound", @"RCS Calendar Test Past Bound", nil];
+    NSArray *ends = [NSArray arrayWithObjects:
+        !strcmp(argv[1], "damaged-bound") ? @"20310101T120000Z" :
+        @"21000101T120000Z", @"19000101T120000Z", nil];
+    NSUInteger i;
+    ok = testCalendars == 1 && [testEvents count] == 2;
+    for (i = 0; i < [titles count]; i++) {
+      NSDictionary *event = [testEvents objectForKey:[titles objectAtIndex:i]];
+      NSDictionary *rule = [[[snapshot recordsWithIdentifiers:
+          [event objectForKey:@"recurrences"]] allValues] lastObject];
+      NSDate *until = [rule objectForKey:@"until"];
+      NSString *actual = [until descriptionWithCalendarFormat:@"%Y%m%dT%H%M%SZ"
+          timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0] locale:nil];
+      if (![actual isEqual:[ends objectAtIndex:i]]) {
+        NSLog(@"Synthetic recurrence bound: %@ expected=%@ actual=%@",
+            [titles objectAtIndex:i], [ends objectAtIndex:i], actual);
+        ok = NO;
+      }
+    }
+    goto done;
+  }
   if(argc==2 && !strcmp(argv[1],"time")) {
     NSDictionary *floating=[testEvents objectForKey:@"RCS Calendar Test Floating"],
       *custom=[testEvents objectForKey:@"RCS Calendar Test Custom Time"],

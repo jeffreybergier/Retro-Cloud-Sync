@@ -61,6 +61,28 @@ int RCCalendarFixturePopulate(RCCalendarStore *s, const char *phase, RCError *e)
     return RCCalendarStoreFinishRun(s, 1, NULL, e);
   if (!RCCalendarStoreCollection(s, &c, &id, e))
     goto fail;
+  if (!strcmp(phase, "date-bounds")) {
+    const char *bounds =
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"
+        "BEGIN:VEVENT\r\nUID:rcs-test-future-bound\r\n"
+        "DTSTAMP:20260905T000000Z\r\n"
+        "DTSTART:20300101T120000Z\r\nDTEND:20300101T130000Z\r\n"
+        "SUMMARY:RCS Calendar Test Future Bound\r\n"
+        "RRULE:FREQ=YEARLY;UNTIL=21000101T120000Z\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n";
+    const char *past =
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"
+        "BEGIN:VEVENT\r\nUID:rcs-test-past-bound\r\n"
+        "DTSTAMP:20260905T000000Z\r\n"
+        "DTSTART:18900101T120000Z\r\nDTEND:18900101T130000Z\r\n"
+        "SUMMARY:RCS Calendar Test Past Bound\r\n"
+        "RRULE:FREQ=YEARLY;UNTIL=19000101T120000Z\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n";
+    if (!save(s, id, "https://example.test/cal/future.ics", phase, bounds, e) ||
+        !save(s, id, "https://example.test/cal/past.ics", phase, past, e))
+      goto fail;
+    return RCCalendarStoreFinishRun(s, 1, NULL, e);
+  }
   if(!strcmp(phase,"time")) {
     ok=save(s,id,"https://example.test/cal/custom.ics","time",RC_TIME_CUSTOM,e) &&
        save(s,id,"https://example.test/cal/floating.ics","time",RC_TIME_FLOAT,e) &&

@@ -111,6 +111,13 @@ for phase in initial initial; do
   "$verifier" baseline AddressBook-baseline.plist
 done
 echo '[PASS] Initial and repeated exports: exact values, Unicode, birthday, labels, preferred entries, company flag, truth relationships and stable identities'
+"$verifier" date-zones
+if [ "${1:-}" = --date-export ]; then
+  echo "Investigative check: Apple vCard export date preservation"
+  "$verifier" date-export
+  exit 0
+fi
+if [ "${1:-}" = --date-zones ]; then exit 0; fi
 if "$daemon" --test-syncservices ./Contacts-fresh.sqlite "$description" > fresh-export.log 2>&1; then
   echo 'FAIL: A never-completed mirror unexpectedly exported'
   exit 1

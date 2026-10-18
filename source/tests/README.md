@@ -39,6 +39,40 @@ original logs first, since the wrapper writes a new `two-way.log`.
 probes and `compare-host-libicalvcal` are also separate from the three suites.
 Offline fixtures do not establish live iCloud compatibility.
 
+## Sync Services date checks
+
+The normal contacts suite checks birthday and anniversary values in Sync
+Services under five process timezones. The normal calendar suite checks yearly
+recurrence ends in 1900 and 2100 after repeated publication and an iCal restart.
+These checks use synthetic fixtures and do not change the system timezone.
+
+Two investigative checks are opt-in, excluded from the normal suites:
+
+```sh
+CONTACTS_TEST_MODE=export make test-mac-contacts-syncservices TEST_HOST=x4-vm
+CALENDAR_TEST_MODE=restoration make test-mac-calendars-syncservices TEST_HOST=x4-vm
+```
+
+On x4-vm (Mac OS X 10.4.11, PowerPC), the Apple Address Book vCard exporter
+advances the synthetic birthday and anniversary by one day in Pacific/Kiritimati
+(UTC+14). The stored Sync Services dates remain correct in all five zones.
+The export probe exits nonzero when dates differ; this finding does not establish
+incorrect DAV uploads. System-timezone changes and the Address Book UI remain
+untested.
+
+The restoration probe edits only its synthetic recurrence end, then republishes
+the unchanged committed mirror. On x4-vm the local edit remains, so this probe
+exits nonzero. It investigates a capability the legacy backend does not provide;
+it is not a regression assertion for an implemented recovery tool. Ordinary
+publication must not be assumed to overwrite local edits. The modern native
+store recovery tool is separate.
+
+Use `CONTACTS_TEST_MODE=dates` or `CALENDAR_TEST_MODE=dates` for just the passing
+date checks. Investigative failures remain visible in exit statuses and logs;
+the runners still clean owned fixtures and check pre-existing records. Run all
+native checks sequentially with the production daemon stopped. Use `MAC_SIGN=0`
+only when an unsigned local test build is intended.
+
 ## Boundaries
 
 Keep business decisions in production C under `source/shared` and test those same
