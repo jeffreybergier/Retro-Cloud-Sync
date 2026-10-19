@@ -78,6 +78,13 @@ path. Older timestamp snapshots can reconcile against the retained cloud
 date without rewriting a contact. A normal two-way sync rechecks pending
 fields and clears only resolved warnings; unrelated unsupported fields remain
 pending. A pending-field entry and its attention entry count as one item.
+Resolved native edit warnings clear after verified reversion or successful
+queueing. Rejected local calendar creations clear after a successful two-way
+scan and a direct identifier lookup confirms deletion. Events merely outside
+the scan window or moved to another calendar remain protected, as do pending
+fields, unfinished uploads, saved ownership and unrelated warnings. Cleanup
+changes only rCloud's warning metadata; it never deletes calendar events or
+writes to iCloud.
 
 Native calendar publication supports ordinary events, display alarms and sound
 alarms with relative or absolute triggers. On Mac, sounds use the matching installed

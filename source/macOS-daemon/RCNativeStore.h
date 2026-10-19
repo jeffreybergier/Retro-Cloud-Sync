@@ -14,6 +14,11 @@
 - (NSString *)seriesAttention:(NSDictionary *)saved error:(RCError *)error;
 - (BOOL)rememberResource:(NSDictionary *)resource native:(NSDictionary *)saved error:(RCError *)error;
 - (NSArray *)untrackedResources:(RCError *)error;
+/* Owner-thread, read-only check of a rejected local calendar creation by its
+   original identifier, independent of discovery windows/calendar membership.
+   YES proves absence; NO preserves attention. Access failures set error.
+   Unsupported identities (including contacts) conservatively return NO. */
+- (BOOL)untrackedCalendarDeleted:(NSString *)root error:(RCError *)error;
 - (BOOL)canPublishResource:(NSDictionary *)resource error:(RCError *)error;
 - (BOOL)publishResource:(NSDictionary *)resource error:(RCError *)error;
 - (BOOL)removeResource:(NSDictionary *)saved error:(RCError *)error;

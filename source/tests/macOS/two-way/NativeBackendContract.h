@@ -4,7 +4,11 @@
 /* Exercise the framework-free native exchange on Tiger as well as modern Macs.
    No system store or network is touched; the factory is an injected backend. */
 static int backendMode, backendReleased;
-static NSDictionary *backendTruth;
+static NSDictionary *backendTruth, *backendSaved;
+static NSArray *backendDiscovered;
+static NSSet *backendExisting;
+static NSString *backendLookupError;
+static int backendLookups;
 @interface RCContractStore : NSObject <RCNativeStore> {
   RCTwoWayContext *context_;
 }
@@ -26,6 +30,7 @@ static NSDictionary *backendTruth;
 }
 - (NSDictionary *)savedResources:(RCError *)failure
 {
+  if(backendSaved) return backendSaved;
   if(backendMode==5) {
     NSDictionary *r=[context_->resources objectAtIndex:0];
     return [NSDictionary dictionaryWithObject:r forKey:[r objectForKey:@"root"]];
@@ -34,12 +39,23 @@ static NSDictionary *backendTruth;
   return [NSDictionary dictionary];
 }
 - (NSArray *)untrackedResources:(RCError *)failure
-{ (void)failure; return [NSArray array]; }
+{
+  if(backendMode==6) { RCErrorSet(failure,1,"Incomplete discovery"); return nil; }
+  return backendDiscovered ?: [NSArray array];
+}
+- (BOOL)untrackedCalendarDeleted:(NSString *)root error:(RCError *)failure;
+{
+  backendLookups++;
+  if([root isEqual:backendLookupError]) {
+    RCErrorSet(failure,1,"Calendar access lost"); return NO;
+  }
+  return ![backendExisting containsObject:root];
+}
 - (NSDictionary *)readResource:(NSDictionary *)saved error:(RCError *)failure
 { (void)saved; if(backendMode==5) return backendTruth;
   RCErrorSet(failure,1,"Unexpected read"); return nil; }
 - (BOOL)rememberResource:(NSDictionary *)resource native:(NSDictionary *)saved error:(RCError *)failure
-{ (void)resource; (void)saved; RCErrorSet(failure,1,"Unexpected remember"); return NO; }
+{ (void)resource; (void)saved; if(backendMode==7) return YES; RCErrorSet(failure,1,"Unexpected remember"); return NO; }
 - (BOOL)canPublishResource:(NSDictionary *)resource error:(RCError *)failure
 { (void)resource; RCErrorSet(failure,1,"Unsupported fixture projection"); return NO; }
 - (BOOL)publishResource:(NSDictionary *)resource error:(RCError *)failure
@@ -49,6 +65,7 @@ static NSDictionary *backendTruth;
 - (BOOL)captureReceipt:(NSDictionary *)receipt operation:(long long)operation
     scopes:(NSDictionary *)scopes resource:(NSDictionary *)resource error:(RCError *)failure
 { (void)receipt; (void)operation; (void)scopes; (void)resource;
+  if(backendMode==7) return YES;
   RCErrorSet(failure,1,"Unexpected capture"); return NO; }
 - (BOOL)acceptReceipt:(NSDictionary *)receipt operation:(long long)operation scopes:(NSDictionary *)scopes
     newerTruth:(NSDictionary **)newer error:(RCError *)failure

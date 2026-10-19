@@ -59,6 +59,10 @@ static BOOL RCNativeQueue(RCTwoWayContext *c,NSDictionary *base,NSDictionary *tr
       !RCTwoWaySaveResource(j,operation,base ?: desired,error) ||
       ![native captureReceipt:receipt operation:operation scopes:[desired objectForKey:@"fieldScopes"] resource:observed ?: base error:error] ||
       (creating && ![native rememberResource:desired native:observed error:error]) ||
+      !RCTwoWaySQL(j,error,"DELETE FROM two_way_attention WHERE account_id=%lld "
+          "AND record_id=%Q AND reason IN ('unsupported-native-creation',"
+          "'unsupported-native-edit','remote-delete-local-edit','native-series-unverified')",
+          j->account,[root UTF8String]) ||
       !RCTwoWaySQL(j,error,"COMMIT")) goto failed;
   return YES;
 failed:
@@ -88,6 +92,82 @@ static BOOL RCNativePendingFields(RCWriteJournal *j,NSString *root,
     RCErrorSet(error,1,"Could not read pending native fields"); return NO;
   }
   return YES;
+}
+/* Reconcile only rejected, never-owned calendar creations. Discovery alone
+   cannot prove absence: it is bounded in time and limited to managed calendars.
+   Never remove pending fields, native receipts, or write/conflict attention. */
+static BOOL RCNativeClearDeletedCreations(RCWriteJournal *j,
+    id<RCNativeStore> native,NSDictionary *saved,NSArray *discovered,
+    RCError *error)
+{
+  NSMutableSet *protected=[NSMutableSet setWithArray:[saved allKeys]];
+  NSEnumerator *items=[discovered objectEnumerator]; NSDictionary *resource;
+  while((resource=[items nextObject]))
+    [protected addObject:[resource objectForKey:@"root"]];
+  sqlite3_stmt *q=NULL; int step=SQLITE_ERROR;
+  NSMutableArray *candidates=[NSMutableArray array];
+  if(sqlite3_prepare_v2(j->db,
+      "SELECT record_id FROM two_way_attention a WHERE account_id=? "
+      "AND record_id LIKE 'native-event-%' "
+      "AND reason IN ('unsupported-native-creation','native-series-unverified') "
+      "AND NOT EXISTS(SELECT 1 FROM two_way_pending_fields p "
+      "WHERE p.account_id=a.account_id AND p.root_id=a.record_id)",
+      -1,&q,NULL)!=SQLITE_OK) goto failed;
+  sqlite3_bind_int64(q,1,j->account);
+  while((step=sqlite3_step(q))==SQLITE_ROW)
+    [candidates addObject:[NSString stringWithUTF8String:
+        (const char *)sqlite3_column_text(q,0)]];
+  sqlite3_finalize(q); q=NULL;
+  if(step!=SQLITE_DONE) goto failed;
+  if(![candidates count]) return YES;
+  /* Old journals may have an unfinished creation without native ownership.
+     Resolve its immutable resource root, not an inferred href or current graph.
+     Unknown legacy ownership prevents cleanup, rather than guessing. */
+  if(sqlite3_prepare_v2(j->db,
+      "SELECT r.resource FROM write_operations o LEFT JOIN two_way_resources r "
+      "ON r.operation_id=o.id WHERE o.account_id=? "
+      "AND o.state NOT IN ('acknowledged','cancelled')",-1,&q,NULL)!=SQLITE_OK)
+    goto failed;
+  sqlite3_bind_int64(q,1,j->account);
+  BOOL unknown=NO;
+  @try {
+    while((step=sqlite3_step(q))==SQLITE_ROW) {
+      NSDictionary *resource=RCTwoWayUnarchive(q,0);
+      NSString *root=[resource objectForKey:@"root"];
+      if(![root isKindOfClass:[NSString class]] || ![root length]) unknown=YES;
+      else [protected addObject:root];
+    }
+  } @finally { sqlite3_finalize(q); q=NULL; }
+  if(step!=SQLITE_DONE) goto failed;
+  if(unknown) return YES;
+  /* Validate every lookup before mutating attention, so a later unavailable
+     store or cancelled scan cannot partially clear the reviewed set. */
+  NSMutableArray *deleted=[NSMutableArray array];
+  items=[candidates objectEnumerator]; NSString *root;
+  while((root=[items nextObject])) {
+    if(RCCheckCancellation(error)) return NO;
+    if([protected containsObject:root]) continue;
+    BOOL absent=[native untrackedCalendarDeleted:root error:error];
+    if(error->code) return NO;
+    if(absent) [deleted addObject:root];
+  }
+  if(![deleted count]) return YES;
+  if(RCCheckCancellation(error) || !RCTwoWaySQL(j,error,"BEGIN IMMEDIATE")) return NO;
+  items=[deleted objectEnumerator];
+  while((root=[items nextObject]))
+    if(!RCTwoWaySQL(j,error,"DELETE FROM two_way_attention WHERE account_id=%lld "
+        "AND record_id=%Q AND reason IN "
+        "('unsupported-native-creation','native-series-unverified')",
+        j->account,[root UTF8String])) return NO;
+  if(!RCTwoWaySQL(j,error,"COMMIT")) return NO;
+  RCLogger(RCLogInfo,NULL,"Recovery",
+      @"Cleared warnings for %lu verified deleted local calendar creations",
+      (unsigned long)[deleted count]);
+  return YES;
+failed:
+  sqlite3_finalize(q);
+  RCErrorSet(error,1,"Could not inspect unresolved native creation warnings");
+  return NO;
 }
 BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,RCError *error)
 {
@@ -160,7 +240,7 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
            fields through the lossless encoder, never blindly clear attention.
            In particular, normalized birthday readback can match a legacy
            timestamp snapshot's original wire date without a native write. */
-        if(twoWay && old && [c->rootEntity isEqual:@"com.apple.contacts.Contact"]) {
+        if(twoWay && old) {
           BOOL pending=NO;
           if(!RCNativePendingFields(j,root,&pending,error)) goto done;
           if(pending) {
@@ -176,7 +256,13 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
         }
         if(old && [[old objectForKey:@"body"] isEqual:[r objectForKey:@"body"]] &&
             [[old objectForKey:@"etag"] isEqual:[r objectForKey:@"etag"]] &&
-            RCTwoWayGraphsEqual([old objectForKey:@"graph"],truth)) continue;
+            RCTwoWayGraphsEqual([old objectForKey:@"graph"],truth)) {
+          if(!RCTwoWaySQL(j,error,"DELETE FROM two_way_attention WHERE "
+              "account_id=%lld AND record_id=%Q AND reason IN "
+              "('unsupported-native-edit','native-publication-pending')",
+              j->account,[root UTF8String])) goto done;
+          continue;
+        }
         if(![native canPublishResource:r error:error]) {
           RCLogger(RCLogWarning,NULL,"Apply",@"Native publication deferred: %s",error->message);
           if(!RCTwoWayAttention(j,root,"native-publication-pending",error)) goto done;
@@ -242,6 +328,7 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
         }
         all=NO;
       }
+      if(!RCNativeClearDeletedCreations(j,native,saved,newRecords,error)) goto done;
     }
     /* Calendar mapping can retain an older export, but must not report a full
        success while unsupported resources are absent from the native store. */

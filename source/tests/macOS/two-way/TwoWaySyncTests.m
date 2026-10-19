@@ -720,10 +720,12 @@ static void ExpandedContactTests(RCContactStore *store)
 }
 
 #import "ContactDateTests.h"
+#import "NativeAttentionTests.h"
 
 static void MapperTests(void)
 {
   NativeBackendContractTests();
+  NativeAttentionTests();
   MappingPoolTests();
   CHECK(RCTwoWayRecordsEqual([NSDictionary dictionary], [NSDictionary dictionaryWithObject:[NSArray array] forKey:@"phone numbers"]));
   CHECK(!RCTwoWayRecordsEqual([NSDictionary dictionaryWithObject:@"com.apple.calendars.Event" forKey:ISyncRecordEntityNameKey], [NSDictionary dictionary]));

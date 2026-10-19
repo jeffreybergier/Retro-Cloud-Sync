@@ -428,6 +428,7 @@ static void CalendarDiscoveryTests(NSString *directory)
     EKCalendar *calendar=[seed calendar]; CHECK(calendar);
     // Exercise early, post-2038 and final query windows with native-only events.
     int years[]={1972,2040,2099};
+    NSMutableArray *rejected=[NSMutableArray array];
     for(NSUInteger n=0;n<3;n++) {
       NSDate *date=[RCCalendarDate dateWithYear:years[n] month:6 day:1 hour:12 minute:0 second:0 timeZone:[NSTimeZone timeZoneForSecondsFromGMT:0]];
       date=[NSDate dateWithTimeIntervalSinceReferenceDate:[date timeIntervalSinceReferenceDate]];
@@ -435,6 +436,7 @@ static void CalendarDiscoveryTests(NSString *directory)
       [event setTitle:[NSString stringWithFormat:@"Offline discovery %d",years[n]]];
       [event setStartDate:date]; [event setEndDate:[date dateByAddingTimeInterval:3600]];
       CHECK([events saveEvent:event span:EKSpanFutureEvents commit:YES error:NULL]);
+      if(n) [rejected addObject:[event eventIdentifier]];
     }
     SyncCalendar(store,YES,NO);
     CHECK(Count(j,"SELECT count(*) FROM write_operations WHERE kind='create' AND state='queued'")==1);
@@ -442,7 +444,21 @@ static void CalendarDiscoveryTests(NSString *directory)
     SyncCalendar(store,YES,NO);
     CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
     CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='unsupported-native-creation'")==2);
-    puts("PASS: EventKit discovers all windows; safe native events queue once and post-2038 creations remain pending");
+    /* Deleting one rejected local event clears only its warning, even while
+       another rejected event and an unrelated queued creation remain. */
+    EKEvent *removed=[events eventWithIdentifier:[rejected objectAtIndex:0]];
+    CHECK(removed);
+    CHECK([events removeEvent:removed span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='unsupported-native-creation'")==1);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    CHECK([events eventWithIdentifier:[rejected objectAtIndex:1]]);
+    removed=[events eventWithIdentifier:[rejected objectAtIndex:1]];
+    CHECK([events removeEvent:removed span:EKSpanFutureEvents commit:YES error:NULL]);
+    SyncCalendar(store,YES,NO);
+    CHECK(Count(j,"SELECT count(*) FROM two_way_attention WHERE reason='unsupported-native-creation'")==0);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==1);
+    puts("PASS: EventKit discovers all windows; rejected creations clear only after verified deletion without additional uploads");
   } @finally { if(store) { Cleanup(RCCalendarStoreWriteJournal(store),NO); RCCalendarStoreClose(store); } }
 }
 static void PendingCalendarSave(RCWriteJournal j,NSString *root,BOOL loseIdentity)

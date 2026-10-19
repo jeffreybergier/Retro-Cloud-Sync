@@ -960,6 +960,27 @@ failed:
 {
   return RCSaveNative(context_->journal,resource,[saved objectForKey:@"_ids"],[saved objectForKey:@"_snapshot"],NO,error);
 }
+- (BOOL)untrackedCalendarDeleted:(NSString *)root error:(RCError *)error;
+{
+  NSString *prefix=@"native-event-";
+  if(contacts_ || ![root hasPrefix:prefix] ||
+      [root length]==[prefix length]) return NO;
+  if(![self calendarAccess:error]) return NO;
+  /* An empty/unavailable store must never prove deletion. The successful
+     discovery pass also verified every managed calendar before this lookup. */
+  BOOL managed=NO;
+  for(NSDictionary *record in [context_->graph allValues])
+    if([[record objectForKey:RCRecordEntityNameKey]
+        isEqual:@"com.apple.calendars.Calendar"]) managed=YES;
+  if(!managed || ![[events_ valueForKey:@"sources"] count]) {
+    RCErrorSet(error,1,"Calendar store unavailable during attention review");
+    return NO;
+  }
+  id event=[(EKEventStore *)events_ eventWithIdentifier:
+      [root substringFromIndex:[prefix length]]];
+  if(![self calendarAccess:error]) return NO;
+  return event==nil;
+}
 - (NSArray *)untrackedResources:(RCError *)error
 {
   NSDictionary *saved=[self savedResources:error]; if(!saved) return nil;
@@ -981,7 +1002,8 @@ failed:
        predicate limit). Existing resource lookups never depend on this window. */
     NSEnumerator *calendars=[context_->graph keyEnumerator]; NSString *calendar;
     while((calendar=[calendars nextObject])) if([[[context_->graph objectForKey:calendar] objectForKey:RCRecordEntityNameKey] isEqual:@"com.apple.calendars.Calendar"]) {
-      id container=[self container:calendar create:NO error:error]; if(error->code) return nil; if(!container) continue;
+      id container=[self container:calendar create:NO error:error]; if(error->code) return nil;
+      if(!container) { RCErrorSet(error,1,"Managed Calendar is missing during discovery"); return nil; }
       NSString *calendarID=[container calendarIdentifier];
       if(![calendarID length]) { RCErrorSet(error,1,"Managed calendar identity is unavailable; local inventory is incomplete"); return nil; }
       int year; for(year=1970;year<2100;year+=4) {

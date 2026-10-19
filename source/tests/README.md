@@ -326,3 +326,10 @@ exercise the production native checkpoint with an injected readback and an
 in-memory journal. That mode needs no Contacts/Calendar permission and checks
 partial-field acknowledgement, newer edits, unrelated interrupted saves,
 verified body/ETag retention, legacy receipts and crash replay.
+
+Native attention regressions in the mapper suite cover deleted rejected
+creations, reverted edits, successful queueing, repeated sync, other accounts,
+owned records, pending fields/uploads, incomplete discovery, cancellation and
+lost access. Direct identifier lookup protects events outside discovery windows.
+The iOS discovery fixture deletes rejected synthetic events and verifies that
+only their warnings clear, without creating additional upload operations.
