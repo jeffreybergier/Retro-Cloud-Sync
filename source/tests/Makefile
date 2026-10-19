@@ -55,9 +55,12 @@ test-business-mac:
 	+$(MAKE) -f source/tests/Makefile test-mac-shutdown
 	+$(MAKE) -f source/tests/Makefile test-mac-contacts-syncservices
 	+$(MAKE) -f source/tests/Makefile test-mac-calendars-syncservices
+	+$(MAKE) -f source/tests/Makefile test-mac-calendars-syncservices CALENDAR_TEST_MODE=recurrence
 	+$(MAKE) -f source/tests/Makefile test-mac-conflicts
 	+$(MAKE) -f source/tests/Makefile test-mac-two-way TWO_WAY_TEST_MODE=full
 	+$(MAKE) -f source/tests/Makefile test-mac-two-way TWO_WAY_TEST_MODE=fields
+	+$(MAKE) -f source/tests/Makefile test-mac-two-way TWO_WAY_TEST_MODE=calendar-recurrence
+	+$(MAKE) -f source/tests/Makefile test-mac-two-way TWO_WAY_TEST_MODE=calendar-recurrence-refresh
 build-mac-app-tests: test-config
 build-mac-contacts-syncservices-tests: syncservices-test-config
 test-mac-app: release build-mac-app-tests

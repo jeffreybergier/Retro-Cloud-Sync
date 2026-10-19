@@ -1,5 +1,6 @@
 #include "CalendarFixtures.h"
 #include "CalendarTimeFixtures.h"
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -61,6 +62,23 @@ int RCCalendarFixturePopulate(RCCalendarStore *s, const char *phase, RCError *e)
     return RCCalendarStoreFinishRun(s, 1, NULL, e);
   if (!RCCalendarStoreCollection(s, &c, &id, e))
     goto fail;
+  if (!strcmp(phase, "recurrence-bounded") ||
+      !strcmp(phase, "recurrence-unbounded")) {
+    char body[1024];
+    int bounded = !strcmp(phase, "recurrence-bounded");
+    snprintf(body, sizeof(body),
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"
+        "BEGIN:VEVENT\r\nUID:rcs-test-rule-update\r\n"
+        "DTSTAMP:20260905T000000Z\r\n"
+        "DTSTART;VALUE=DATE:20301116\r\n"
+        "DTEND;VALUE=DATE:20301117\r\n"
+        "SUMMARY:RCS Calendar Test Rule Update\r\n"
+        "RRULE:FREQ=YEARLY%s\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        bounded ? ";UNTIL=20351116" : "");
+    if (!save(s, id, "https://example.test/cal/rule-update.ics", phase,
+              body, e)) goto fail;
+    return RCCalendarStoreFinishRun(s, 1, NULL, e);
+  }
   if (!strcmp(phase, "date-bounds") || !strcmp(phase, "safe-bounds")) {
     char bounds[] =
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n"

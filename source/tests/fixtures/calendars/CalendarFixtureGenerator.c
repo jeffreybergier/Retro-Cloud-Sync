@@ -10,8 +10,10 @@ int main(int argc, char **argv)
   if (argc != 3 || (strcmp(argv[1], "initial") && strcmp(argv[1], "updated") &&
       strcmp(argv[1], "empty") && strcmp(argv[1], "malformed") &&
       strcmp(argv[1], "missing-uid") && strcmp(argv[1], "unsupported") &&
-      strcmp(argv[1], "time") && strcmp(argv[1], "date-bounds"))) {
-    fprintf(stderr, "usage: %s initial|updated|empty|malformed|missing-uid|unsupported|time|date-bounds DATABASE\n", argv[0]);
+      strcmp(argv[1], "time") && strcmp(argv[1], "date-bounds") &&
+      strcmp(argv[1], "recurrence-bounded") &&
+      strcmp(argv[1], "recurrence-unbounded"))) {
+    fprintf(stderr, "usage: %s initial|updated|empty|malformed|missing-uid|unsupported|time|date-bounds|recurrence-bounded|recurrence-unbounded DATABASE\n", argv[0]);
     return 2;
   }
   RCErrorClear(&error);

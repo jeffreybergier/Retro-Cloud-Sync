@@ -7,7 +7,8 @@ case "${CALENDAR_TEST_MODE:-full}" in
   full) test_arg= ;;
   dates) test_arg=--date-bounds ;;
   restoration) test_arg=--restoration ;;
-  *) echo 'CALENDAR_TEST_MODE must be full, dates or restoration' >&2; exit 1 ;;
+  recurrence) test_arg=--recurrence-update ;;
+  *) echo 'CALENDAR_TEST_MODE must be full, dates, restoration or recurrence' >&2; exit 1 ;;
 esac
 run_name="RetroCloudSync-CalendarTests-$(date +%Y%m%d-%H%M%S)-$$"
 remote_relative="Desktop/$run_name"

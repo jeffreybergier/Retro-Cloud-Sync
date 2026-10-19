@@ -39,6 +39,29 @@ original logs first, since the wrapper writes a new `two-way.log`.
 probes and `compare-host-libicalvcal` are also separate from the three suites.
 Offline fixtures do not establish live iCloud compatibility.
 
+## Recurrence end removal diagnostics
+
+These checks are included in `test-business-mac`. Run them individually on a
+disposable test Mac:
+
+```sh
+CALENDAR_TEST_MODE=recurrence make test-mac-calendars-syncservices TEST_HOST=x4-vm
+TWO_WAY_TEST_MODE=calendar-recurrence make test-mac-two-way TEST_HOST=x4-vm
+TWO_WAY_TEST_MODE=calendar-recurrence-refresh make test-mac-two-way TEST_HOST=x4-vm
+```
+
+The one-way check changes a finite yearly rule to an unbounded rule. The two-way
+check seeds a historical 2099 recurrence end in its fixture graph, bypassing the
+current import guard only for that synthetic initial publication. It then
+publishes the unbounded rule through the production backend and checks both
+Sync Services and iCal, migration from the old fixed recurrence identity,
+removal of the old child, stable rule identity on replay, unchanged event
+identity, no queued uploads, and iCal quit/reopen persistence. Both runners remove owned fixtures and check that
+pre-existing records remain unchanged. The refresh variant starts with an
+already-unbounded legacy rule and verifies that the global Sync Services child
+identity changes, not just the client identifier. They make no live cloud
+requests.
+
 ## Sync Services date checks
 
 The normal contacts suite checks birthday and anniversary values in Sync

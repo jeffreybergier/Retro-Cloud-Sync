@@ -94,6 +94,17 @@ int main(int argc, char **argv)
     ok = testCalendars == 1 && [testEvents count] == 0;
     goto done;
   }
+  if (argc == 2 && (!strcmp(argv[1], "recurrence-bounded") ||
+      !strcmp(argv[1], "recurrence-unbounded"))) {
+    NSDictionary *event = [testEvents objectForKey:
+        @"RCS Calendar Test Rule Update"];
+    NSDictionary *rule = [[[snapshot recordsWithIdentifiers:
+        [event objectForKey:@"recurrences"]] allValues] lastObject];
+    ok = testCalendars == 1 && [testEvents count] == 1 && rule &&
+        (([rule objectForKey:@"until"] != nil) ==
+         !strcmp(argv[1], "recurrence-bounded"));
+    goto done;
+  }
   if (argc == 2 && (!strcmp(argv[1], "safe-bounds") ||
       !strcmp(argv[1], "damaged-bound"))) {
     NSArray *titles = [NSArray arrayWithObjects:

@@ -1451,6 +1451,7 @@ static void CalendarExceptionIntegration(RCTwoWayContext *c,ISyncClient *local,R
   puts("PASS: Native recurrence, reminder timing and attendee edits upload, acknowledge and replay without duplicate PUTs");
   CalendarTimeIntegration(c,local,store);
 }
+#include "CalendarRecurrenceTests.h"
 static void CalendarTests(int subsetMode)
 {
   ISyncManager *manager=[ISyncManager sharedManager]; ISyncClient *local=nil,*server=nil;
@@ -1475,7 +1476,8 @@ static void CalendarTests(int subsetMode)
       remoteBodies=[NSMutableDictionary dictionary]; remoteETags=[NSMutableDictionary dictionary]; mutations=0;
       RCTwoWayContext subset={j,@"com.altivecintelligence.tw.test.cal.server",description,@"com.apple.calendars.Event",[NSArray array],CalendarGraph([NSArray array]),RCCalendarEncodeLocal,store,NO,RCCalendarProjectVerified,NO};
       @try {
-        if (subsetMode==2) CalendarTimeIntegration(&subset,local,store);
+        if (subsetMode>=3) CalendarRecurrenceIntegration(&subset,store,subsetMode==3);
+        else if (subsetMode==2) CalendarTimeIntegration(&subset,local,store);
         else CalendarExceptionIntegration(&subset,local,store);
       }
       @finally { server=[manager clientWithIdentifier:subset.clientIdentifier]; }
@@ -1696,10 +1698,10 @@ int main(int argc,char **argv)
       CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
       ContactCreationPolicyTests(YES); status=0; goto done;
     }
-    if (argc==2 && (!strcmp(argv[1],"--calendars") || !strcmp(argv[1],"--calendar-exceptions") || !strcmp(argv[1],"--calendar-time"))) {
+    if (argc==2 && (!strcmp(argv[1],"--calendars") || !strcmp(argv[1],"--calendar-exceptions") || !strcmp(argv[1],"--calendar-time") || !strcmp(argv[1],"--calendar-recurrence") || !strcmp(argv[1],"--calendar-recurrence-refresh"))) {
       marker=[@"RetroCloudTwoWay-" stringByAppendingString:[[NSProcessInfo processInfo] globallyUniqueString]];
       CHECK([marker writeToFile:@"fixture-marker.txt" atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
-      CalendarTests(!strcmp(argv[1],"--calendar-time") ? 2 : !strcmp(argv[1],"--calendar-exceptions")); status=0; goto done;
+      CalendarTests(!strcmp(argv[1],"--calendar-recurrence-refresh") ? 4 : !strcmp(argv[1],"--calendar-recurrence") ? 3 : !strcmp(argv[1],"--calendar-time") ? 2 : !strcmp(argv[1],"--calendar-exceptions")); status=0; goto done;
     }
     marker=[NSString stringWithContentsOfFile:@"fixture-marker.txt" encoding:NSUTF8StringEncoding error:NULL];
     if (argc==2 && !strcmp(argv[1],"--cleanup")) {

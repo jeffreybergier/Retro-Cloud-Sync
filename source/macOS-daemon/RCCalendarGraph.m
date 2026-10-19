@@ -1,5 +1,6 @@
 #import "RCPlatformDate.h"
 #import "RCRecordGraph.h"
+#import "RCSyncBackend.h"
 #import "RCAutorelease.h"
 #import "RCLogger.h"
 #import "RCCalendarGraph.h"
@@ -244,7 +245,22 @@ static int Recurrence(RCCalendarStore *store, icalcomponent *root, icalcomponent
     RCErrorSet(error, 1, "Recurrence rule is outside the Tiger schema");
     return 0;
   }
-  id = Identity(store, eventID, @"recurrence", error);
+  NSString *identityKey=@"recurrence";
+  if (!strcmp(RCCurrentSyncBackend()->name,"mac-syncservices")) {
+    /* iCal can retain an old rule after a child-only Sync Services update.
+       Version the child by its normalized rule so the event's relationship
+       changes too. The event itself keeps its identity. The new namespace also
+       refreshes rules already published by versions using a fixed child ID.
+       EventKit keeps its existing child identity policy. */
+    char *normalized=icalrecurrencetype_as_string_r(&r);
+    if (!normalized) {
+      RCErrorSet(error,1,"Could not normalize recurrence identity");
+      return 0;
+    }
+    identityKey=[@"recurrence-v2:" stringByAppendingString:String(normalized)];
+    free(normalized);
+  }
+  id = Identity(store, eventID, identityKey, error);
   if (!id)
     return 0;
   rule = Record(@"Recurrence");

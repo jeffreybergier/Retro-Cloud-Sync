@@ -105,6 +105,42 @@ APPLESCRIPT
 export_phase empty empty
 ./RetroCloudCalendarClientRegistrationTests CalendarTestSyncClient.plist
 ./RetroCloudCalendarSyncServicesVerifier snapshot Calendar-baseline.plist
+if [ "${1:-}" = --recurrence-update ]; then
+  export_phase recurrence-bounded recurrence-bounded
+  /usr/bin/osascript <<'APPLESCRIPT'
+tell application "iCal"
+  repeat 30 times
+    set cs to every calendar whose name starts with "RCS Calendar Test"
+    if (count cs) is 1 then
+      set es to every event of item 1 of cs whose summary is "RCS Calendar Test Rule Update"
+      if (count es) is 1 then
+        if recurrence of item 1 of es contains "UNTIL=" then return "Finite rule imported"
+      end if
+    end if
+    delay 1
+  end repeat
+  error "Finite rule did not reach iCal"
+end tell
+APPLESCRIPT
+  export_phase recurrence-unbounded recurrence-unbounded
+  /usr/bin/osascript <<'APPLESCRIPT'
+tell application "iCal"
+  repeat 30 times
+    set c to first calendar whose name starts with "RCS Calendar Test"
+    set es to every event of c whose summary is "RCS Calendar Test Rule Update"
+    if (count es) is 1 then
+      if (recurrence of item 1 of es contains "FREQ=YEARLY") and (recurrence of item 1 of es does not contain "UNTIL=") then return "Open rule imported"
+    end if
+    delay 1
+  end repeat
+  error "Sync Services cleared UNTIL but iCal retained the finite rule"
+end tell
+APPLESCRIPT
+  export_phase empty empty
+  ./RetroCloudCalendarSyncServicesVerifier baseline Calendar-baseline.plist
+  export_status=0
+  exit 0
+fi
 if [ "${1:-}" != --date-bounds ] && [ "${1:-}" != --restoration ]; then
 export_phase initial initial
 echo '[PASS] Calendar, events, recurrence, exception, attendee, and alarm imported'
