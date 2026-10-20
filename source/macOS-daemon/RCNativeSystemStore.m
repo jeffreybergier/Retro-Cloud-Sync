@@ -625,10 +625,40 @@ failed:
   id container=[self container:calendar create:NO error:error];
   if(!container) { if(!error->code) RCErrorSet(error,1,"Managed Calendar is missing"); return nil; }
   id event=[(EKEventStore *)events_ eventWithIdentifier:[ids objectForKey:root]];
+  NSString *observedCalendar=calendar;
   if(event && ![[[event valueForKey:@"calendar"] valueForKey:@"calendarIdentifier"] isEqual:[container valueForKey:@"calendarIdentifier"]]) {
-    RCErrorSet(error,1,"Calendar association differs from saved receipt; preserving the event (record=%.120s)",[root UTF8String]); return nil;
+    /* Resolve by this account's durable container identities, never by title.
+       An unrelated or missing destination cannot authorize a cloud move. */
+    observedCalendar=nil;
+    for(NSString *candidate in context_->graph) {
+      NSDictionary *record=[context_->graph objectForKey:candidate];
+      if(![[record objectForKey:RCRecordEntityNameKey]
+          isEqual:@"com.apple.calendars.Calendar"] ||
+          [[record objectForKey:@"read only"] boolValue]) continue;
+      id destination=[self container:candidate create:NO error:error];
+      if(error->code) return nil;
+      if(destination && [[[event calendar] calendarIdentifier]
+          isEqual:[destination calendarIdentifier]] &&
+          [destination allowsContentModifications]) {
+        if(observedCalendar) {
+          RCErrorSet(error,1,"Moved event has an ambiguous managed calendar");
+          return nil;
+        }
+        observedCalendar=candidate;
+      }
+    }
+    if(!observedCalendar) {
+      RCErrorSet(error,1,"Moved event is outside writable managed calendars; preserving the event (record=%.120s)",[root UTF8String]); return nil;
+    }
   }
   NSDictionary *raw=EKRead(event,saved,NO,error); if(!raw) return nil;
+  if(event && observedCalendar && ![observedCalendar isEqual:calendar]) {
+    NSMutableDictionary *graph=[NSMutableDictionary dictionaryWithDictionary:raw];
+    NSMutableDictionary *record=[NSMutableDictionary dictionaryWithDictionary:
+        [raw objectForKey:root]];
+    [record setObject:[NSArray arrayWithObject:observedCalendar] forKey:@"calendar"];
+    [graph setObject:record forKey:root]; raw=graph;
+  }
   NSDictionary *base=[saved objectForKey:@"graph"], *snapshot=[saved objectForKey:@"_snapshot"];
   for(NSString *key in snapshot) {
     NSDictionary *old=[snapshot objectForKey:key], *now=[raw objectForKey:key];

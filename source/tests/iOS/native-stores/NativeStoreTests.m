@@ -526,6 +526,7 @@ static void Dates(void) {
   CHECK([[copy rc_descriptionWithCalendarFormat:@"%Y%m%dT%H%M%S" timeZone:[NSTimeZone localTimeZone] locale:nil] isEqual:@"20250309T123456"]);
   puts("PASS: iOS calendar dates retain wall time and floating marker across journal restart");
 }
+#import "../../macOS/native-stores/CalendarMoveTests.h"
 int RCIOSNativeTests(const char *path) {
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init]; setbuf(stdout,NULL); int result=1;
   RCContactStore *contacts=NULL; RCCalendarStore *calendars=NULL; NSData *baseline=nil;
@@ -579,7 +580,7 @@ int RCIOSNativeTests(const char *path) {
     CHECK(Count(cj,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
     CHECK(Count(ej,"SELECT count(*) FROM native_store_resources WHERE root NOT LIKE '@%'")==0);
     puts("PASS: remote deletion removes only owned native records");
-    CalendarDateRangeTests(directory); CalendarDiscoveryTests(directory); ContactRecoveryTests(directory); ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES); SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2); InvitationTests(directory);
+    CalendarMoveTests(directory); CalendarDateRangeTests(directory); CalendarDiscoveryTests(directory); ContactRecoveryTests(directory); ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES); SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2); InvitationTests(directory);
     result=0;
   } @catch(NSException *exception) {
     fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]);

@@ -2,6 +2,7 @@
 #import "RCTwoWayInternal.h"
 #import "RCAutorelease.h"
 #import "RCLogger.h"
+#import "RCCalendarOperations.h"
 static BOOL Accept(void *receiver,long long operation,NSDictionary *receipt,NSDictionary *scopes,
     BOOL deletion,NSDictionary **newer,RCError *error)
 {
@@ -38,6 +39,22 @@ static BOOL RCNativeQueue(RCTwoWayContext *c,NSDictionary *base,NSDictionary *tr
   if(creating && deleting) { RCErrorSet(error,1,"Unowned native deletion has no publication base"); return NO; }
   if([c->rootEntity isEqual:@"com.apple.calendars.Event"] &&
       !RCNativeParticipantsUnchanged(base,truth,root,error)) return NO;
+  if(base && !deleting && [c->rootEntity isEqual:@"com.apple.calendars.Event"] &&
+      ![[[[base objectForKey:@"graph"] objectForKey:root] objectForKey:@"calendar"]
+          isEqual:[[truth objectForKey:root] objectForKey:@"calendar"]]) {
+    NSDictionary *record=[[base objectForKey:@"graph"] objectForKey:root];
+    /* Move the exact published bytes first. Independent edits remain native
+       differences after acknowledgement; invitations and series stay deferred. */
+    if([[record objectForKey:@"recurrences"] count] ||
+        [[record objectForKey:@"main event"] count] ||
+        [[record objectForKey:@"detached events"] count] ||
+        [[record objectForKey:@"attendees"] count] ||
+        [[record objectForKey:@"organizer"] count]) return NO;
+    NSMutableSet *busy=[NSMutableSet set];
+    if(!RCCalendarCollectOperations(j,truth,c->graph,
+        [NSArray arrayWithObject:base],busy,error)) return NO;
+    return [busy containsObject:root];
+  }
   NSMutableDictionary *desired=deleting ? RCTwoWayDeletion(base,truth) :
       RCTwoWayEncodeFields(c->encode,c->context,base,truth,root,error);
   if(!desired) { if(!error->code) RCErrorSet(error,1,"Native edit cannot be represented safely"); return NO; }
@@ -182,6 +199,10 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
     while((resource=[it nextObject])) [byHref setObject:resource forKey:[resource objectForKey:@"href"]];
     if(twoWay && !RCTwoWayComplete(c,byHref,aliases,Accept,native,error)) goto done;
     NSDictionary *saved=[native savedResources:error]; if(!saved) goto done;
+    NSMutableSet *calendarBusy=[NSMutableSet set];
+    if([c->rootEntity isEqual:@"com.apple.calendars.Event"] &&
+        !RCCalendarProtectOperations(j,c->resources,c->graph,calendarBusy,error))
+      goto done;
     NSMutableSet *present=[NSMutableSet set];
     it=[c->resources objectEnumerator];
     while((resource=[it nextObject])) {
@@ -190,6 +211,14 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
         if(RCCheckCancellation(error)) goto done;
         NSDictionary *r=RCTwoWayMapResource(resource,aliases); NSString *root=[r objectForKey:@"root"];
         [present addObject:root]; NSDictionary *old=[saved objectForKey:root];
+        if(twoWay && old && [calendarBusy containsObject:root]) {
+          /* A failed MOVE may be cancelled by an explicit destination change.
+             Queued/uncertain moves remain pinned to their original target. */
+          NSDictionary *truth=[native readResource:old error:error];
+          if(!truth || !RCCalendarCollectOperations(j,truth,c->graph,
+              [NSArray arrayWithObject:old],calendarBusy,error)) goto done;
+        }
+        if([calendarBusy containsObject:root]) { all=NO; continue; }
         BOOL busy=NO; if(!RCNativeBusy(j,[r objectForKey:@"href"],&busy,error)) goto done;
         if(busy) { all=NO; continue; }
         /* A new cloud series has no native occurrences to protect. Publish it
@@ -280,6 +309,9 @@ BOOL RCNativeExchange(RCTwoWayContext *c,BOOL twoWay,RCCreateNativeStore create,
     it=[saved objectEnumerator];
     while((resource=[it nextObject])) if(![present containsObject:[resource objectForKey:@"root"]]) {
       if(RCCheckCancellation(error)) goto done;
+      if([calendarBusy containsObject:[resource objectForKey:@"root"]]) {
+        all=NO; continue;
+      }
       /* A mapper omission or history exclusion is not remote deletion. */
       sqlite3_stmt *retained=NULL;
       const char *retainSQL=[c->rootEntity isEqual:@"com.apple.contacts.Contact"] ?

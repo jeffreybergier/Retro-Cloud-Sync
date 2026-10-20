@@ -954,6 +954,7 @@ static void UploadReconciliationTests(NSString *directory)
   } @finally { Cleanup(j,NO); RCCalendarStoreClose(store); }
 }
 #import "ReceiptTests.h"
+#import "CalendarMoveTests.h"
 /* Release each scenario's EventKit stores and observers before the next one.
    Retaining every autoreleased store until suite exit can exhaust Mavericks'
    dispatch workers with synchronous EventKit/TCC change notifications. */
@@ -1111,6 +1112,7 @@ static int RunTests(int argc,char **argv)
     puts("PASS: Locally created contacts/events queue once across repeated exchanges");
     RunNativeCase(^{ UploadReconciliationTests(directory); });
     RunNativeCase(^{ CalendarDateRangeTests(directory); });
+    RunNativeCase(^{ CalendarMoveTests(directory); });
     for (int scenario=0;scenario<3;scenario++)
       RunNativeCase(^{ SeriesOccurrenceTests(directory,scenario); });
     RunNativeCase(^{ InvitationTests(directory); });

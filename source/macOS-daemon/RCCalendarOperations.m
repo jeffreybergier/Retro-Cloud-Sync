@@ -123,6 +123,100 @@ static NSString *EscapeXML(NSString *text)
   [s replaceOccurrencesOfString:@"<" withString:@"&lt;" options:0 range:NSMakeRange(0,[s length])];
   [s replaceOccurrencesOfString:@">" withString:@"&gt;" options:0 range:NSMakeRange(0,[s length])]; return s;
 }
+static BOOL CheckpointNativeMove(RCWriteJournal *j,NSString *root,
+    NSString *source,NSString *target,NSString *etag,NSData *body,
+    NSString *collection,RCError *error)
+{
+  sqlite3_stmt *q=NULL;
+  if(sqlite3_prepare_v2(j->db,"SELECT 1 FROM sqlite_master WHERE type='table' "
+      "AND name='native_store_resources'",-1,&q,NULL)!=SQLITE_OK) return NO;
+  int step=sqlite3_step(q); sqlite3_finalize(q);
+  if(step==SQLITE_DONE) return YES; /* Sync Services has no native receipts. */
+  if(step!=SQLITE_ROW) return NO;
+  if(sqlite3_prepare_v2(j->db,"SELECT resource,snapshot,pending FROM "
+      "native_store_resources WHERE account_id=? AND root=?",-1,&q,NULL)!=SQLITE_OK)
+    return NO;
+  sqlite3_bind_int64(q,1,j->account);
+  sqlite3_bind_text(q,2,[root UTF8String],-1,SQLITE_TRANSIENT);
+  step=sqlite3_step(q); NSDictionary *resource=nil,*snapshot=nil; BOOL pending=NO;
+  if(step==SQLITE_ROW) {
+    resource=[NSKeyedUnarchiver unarchiveObjectWithData:
+        [NSData dataWithBytes:sqlite3_column_blob(q,0) length:sqlite3_column_bytes(q,0)]];
+    snapshot=[NSKeyedUnarchiver unarchiveObjectWithData:
+        [NSData dataWithBytes:sqlite3_column_blob(q,1) length:sqlite3_column_bytes(q,1)]];
+    pending=sqlite3_column_int(q,2)!=0;
+  }
+  sqlite3_finalize(q);
+  if(step==SQLITE_DONE) return YES;
+  if(step!=SQLITE_ROW || pending || ![[resource objectForKey:@"href"] isEqual:source] ||
+      ![[resource objectForKey:@"body"] isEqual:body] ||
+      ![[resource objectForKey:@"root"] isEqual:root] ||
+      ![snapshot objectForKey:root]) {
+    RCErrorSet(error,1,"Verified calendar move awaits matching native receipt");
+    return NO;
+  }
+  /* Use the destination's account-owned mirror identity, not its display name.
+     Native IDs remain untouched, so later native edits cannot be swallowed. */
+  if(sqlite3_prepare_v2(j->db,"SELECT COALESCE(a.native_id,'calendar-'||c.sync_id) "
+      "FROM calendars c LEFT JOIN two_way_aliases a ON a.account_id=c.account_id "
+      "AND a.imported_id='calendar-'||c.sync_id WHERE c.account_id=? AND c.url=? "
+      "AND c.remote_missing=0",-1,&q,NULL)!=SQLITE_OK) return NO;
+  sqlite3_bind_int64(q,1,j->account);
+  sqlite3_bind_text(q,2,[collection UTF8String],-1,SQLITE_TRANSIENT);
+  step=sqlite3_step(q);
+  NSString *calendar=step==SQLITE_ROW ? String((const char *)sqlite3_column_text(q,0)) : nil;
+  sqlite3_finalize(q); if(!calendar) return NO;
+  NSMutableDictionary *updated=[NSMutableDictionary dictionaryWithDictionary:resource];
+  NSMutableDictionary *graph=[NSMutableDictionary dictionaryWithDictionary:
+      [resource objectForKey:@"graph"]];
+  NSMutableDictionary *observed=[NSMutableDictionary dictionaryWithDictionary:snapshot];
+  NSMutableDictionary *graphs[]={graph,observed}; int index;
+  for(index=0;index<2;index++) {
+    NSMutableDictionary *g=graphs[index];
+    NSMutableDictionary *record=[NSMutableDictionary dictionaryWithDictionary:
+        [g objectForKey:root]];
+    [record setObject:[NSArray arrayWithObject:calendar] forKey:@"calendar"];
+    [g setObject:record forKey:root];
+  }
+  [updated setObject:graph forKey:@"graph"];
+  [updated setObject:target forKey:@"href"]; [updated setObject:etag forKey:@"etag"];
+  NSData *r=[NSKeyedArchiver archivedDataWithRootObject:updated];
+  NSData *s=[NSKeyedArchiver archivedDataWithRootObject:observed];
+  if(sqlite3_prepare_v2(j->db,"UPDATE native_store_resources SET resource=?,"
+      "snapshot=? WHERE account_id=? AND root=? AND pending=0",-1,&q,NULL)!=SQLITE_OK)
+    return NO;
+  sqlite3_bind_blob(q,1,[r bytes],(int)[r length],SQLITE_TRANSIENT);
+  sqlite3_bind_blob(q,2,[s bytes],(int)[s length],SQLITE_TRANSIENT);
+  sqlite3_bind_int64(q,3,j->account);
+  sqlite3_bind_text(q,4,[root UTF8String],-1,SQLITE_TRANSIENT);
+  BOOL ok=sqlite3_step(q)==SQLITE_DONE && sqlite3_changes(j->db)==1;
+  sqlite3_finalize(q); return ok;
+}
+BOOL RCCalendarCommitVerifiedMove(RCWriteJournal *j,NSString *root,
+    NSString *source,NSString *target,NSString *etag,NSData *body,RCError *error)
+{
+  NSRange slash=[target rangeOfString:@"/" options:NSBackwardsSearch];
+  if(slash.location==NSNotFound || !RCWriteETagIsStrong([etag UTF8String]) ||
+      !sqlite3_get_autocommit(j->db)) return NO;
+  NSString *collection=[target substringToIndex:slash.location+1];
+  if(!RCTwoWaySQL(j,error,"BEGIN IMMEDIATE")) return NO;
+  BOOL ok=CheckpointNativeMove(j,root,source,target,etag,body,collection,error) &&
+      RCTwoWaySQL(j,error,"UPDATE calendar_resources SET href=%Q,"
+      "calendar_id=(SELECT id FROM calendars WHERE account_id=%lld AND url=%Q "
+      "AND remote_missing=0),etag=%Q,export_etag=%Q WHERE href=%Q "
+      "AND calendar_id IN(SELECT id FROM calendars WHERE account_id=%lld)",
+      [target UTF8String],j->account,[collection UTF8String],[etag UTF8String],
+      [etag UTF8String],[source UTF8String],j->account) && sqlite3_changes(j->db)==1;
+  if(ok) ok=RCTwoWaySQL(j,error,"DELETE FROM calendar_actions WHERE account_id=%lld "
+      "AND native_id=%Q;DELETE FROM two_way_attention WHERE account_id=%lld AND "
+      "record_id=%Q AND reason IN ('calendar-move-conflict','unsupported-native-edit');COMMIT",
+      j->account,[root UTF8String],j->account,[root UTF8String]);
+  if(!ok) {
+    RCTwoWaySQL(j,NULL,"ROLLBACK");
+    if(!error->code) RCErrorSet(error,1,"Moved calendar resource requires mirror recovery");
+  }
+  return ok;
+}
 static BOOL Get(RCHTTPClient *http,NSString *url,RCHTTPResponse *response,RCError *error)
 {
   return RCHTTPClientRequest(http,"GET",[url UTF8String],NULL,NULL,NULL,0,response,error) && response->effectiveURL && [String(response->effectiveURL) isEqual:url];
@@ -172,8 +266,9 @@ static BOOL Created(RCHTTPClient *http,NSString *url,NSString *marker,RCError *e
   if(!calendar || !owned) RCErrorSet(error,1,"Calendar verification lacks resource type or ownership marker");
   RCHTTPResponseClear(&response); return calendar && owned;
 }
-BOOL RCCalendarRunOperations(RCWriteJournal *j,RCHTTPClient *http,RCError *error)
+BOOL RCCalendarRunOperations(RCWriteJournal *j,RCHTTPClient *http,long *verified,RCError *error)
 {
+  if(verified) *verified=0;
   if(!Initialize(j,error) || !sqlite3_get_autocommit(j->db)) return NO;
   sqlite3_stmt *q=NULL; NSMutableArray *actions=[NSMutableArray array];
   if(sqlite3_prepare_v2(j->db,"SELECT native_id,kind,source,target,etag,body,title,marker,notes FROM calendar_actions WHERE account_id=? AND state='queued'",-1,&q,NULL)!=SQLITE_OK) return NO;
@@ -215,13 +310,8 @@ BOOL RCCalendarRunOperations(RCWriteJournal *j,RCHTTPClient *http,RCError *error
           }
         }
         if(read && before.statusCode==404 && response.statusCode==200 && RCWriteETagIsStrong(response.etag) && response.bodyLength==[body length] && !memcmp(response.body,[body bytes],[body length])) {
-          NSRange slash=[target rangeOfString:@"/" options:NSBackwardsSearch];
-          NSString *collection=[[target substringToIndex:slash.location+1] copy];
-          done=RCTwoWaySQL(j,error,"BEGIN IMMEDIATE;UPDATE calendar_resources SET href=%Q,calendar_id=(SELECT id FROM calendars WHERE account_id=%lld AND url=%Q),etag=%Q,export_etag=%Q WHERE href=%Q AND calendar_id IN(SELECT id FROM calendars WHERE account_id=%lld)",[target UTF8String],j->account,[collection UTF8String],response.etag,response.etag,[source UTF8String],j->account);
-          if(done && sqlite3_changes(j->db)==1)
-            done=RCTwoWaySQL(j,error,"DELETE FROM calendar_actions WHERE account_id=%lld AND native_id=%Q;COMMIT",j->account,[native UTF8String]);
-          else { done=NO; RCTwoWaySQL(j,NULL,"ROLLBACK"); RCErrorSet(error,1,"Moved calendar resource requires mirror recovery"); }
-          [collection release];
+          done=RCCalendarCommitVerifiedMove(j,native,source,target,
+              String(response.etag),body,error);
         } else if(read && response.statusCode==200 && before.statusCode==200) conflict=YES;
         RCHTTPResponseClear(&before);
       }
@@ -229,6 +319,7 @@ BOOL RCCalendarRunOperations(RCWriteJournal *j,RCHTTPClient *http,RCError *error
       if(!sqlite3_get_autocommit(j->db)) RCTwoWaySQL(j,NULL,"ROLLBACK");
       if(conflict) RCTwoWaySQL(j,error,"UPDATE calendar_actions SET state='conflict' WHERE account_id=%lld AND native_id=%Q;INSERT OR REPLACE INTO two_way_attention VALUES(%lld,%Q,'calendar-move-conflict')",j->account,[native UTF8String],j->account,[native UTF8String]);
       if(!done) all=NO;
+      else if(verified) ++*verified;
     } @catch(id exception) {
       RCDrainPoolPreservingException(&resourcePool,exception); @throw;
     } @finally { [resourcePool release]; }

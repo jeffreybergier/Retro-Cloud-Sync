@@ -181,7 +181,8 @@ static BOOL RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
     RCStatusFailure(service,@"Upload");
     RCLogger(RCLogWarning, NULL, "Upload", @"Outgoing pass failed; queued changes remain pending: %s",error.message);
   }
-  if (http && calendars && !RCCalendarRunOperations(journal,http,&error)) {
+  long verifiedCalendar=0;
+  if (http && calendars && !RCCalendarRunOperations(journal,http,&verifiedCalendar,&error)) {
     RCStatusFailure(service,@"Upload");
     RCLogger(RCLogWarning,"Calendars","Upload",@"Calendar operation pending: %s",error.message);
   }
@@ -190,7 +191,7 @@ static BOOL RCRunAccountWrites(RCWriteJournal *journal, RCSyncWorker *worker,
     RCLogger(RCLogWarning,"Contacts","Upload",@"Uploaded photo verification pending: %s",error.message);
   }
   RCHTTPClientDestroy(http);
-  return RCVerifiedWriteCount(journal)>verifiedBefore;
+  return verifiedCalendar>0 || RCVerifiedWriteCount(journal)>verifiedBefore;
 }
 
 /* Changing back to one-way must not publish over a still-journaled local edit.

@@ -237,7 +237,15 @@ registered app identity, runs as mobile, refuses simultaneous production/test
 jobs, and restores the installed executable on completion. A timed-out test is
 left intact for inspection; do not replace its executable while it is running.
 Fixtures use `.invalid` DAV URLs and simulated write confirmations, with no live
-network calls or account credentials. A unique synthetic Keychain item is saved,
+network calls or account credentials.
+The shared EventKit calendar-move regression moves a real synthetic reservation
+between managed calendars, verifies one durable MOVE and stable native identity,
+rejects a same-named unmanaged destination, and protects queued moves in one-way
+mode. It tests explicit reversion after a rejected move and preserves a later
+notes edit across the production verified-move checkpoint and acknowledgement.
+The Mac native-store suite runs the same case; the Tiger mapper suite separately
+checks the MOVE transport with lost responses, occupied targets and replay.
+An isolated synthetic Keychain item is saved,
 read, updated and removed to verify daemon credential access. Cleanup is restricted to journal-owned fixtures;
 the contact snapshot must match its pre-test value. Retain failed-run journals
 for targeted cleanup. The suite enables DEBUG query-window logging (no event

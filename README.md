@@ -112,8 +112,13 @@ deleting a local invitation remains pending rather than deleting it from iCloud.
 Detached occurrences, non-recurring exception structures, non-Monday recurrence week starts, and mail/repeating alarms remain
 cached for attention if they cannot be represented safely. Pending writes and
 conflicts preserve local edits; the native backend does not invoke the obsolete
-Sync Services conflict UI. Native calendar renames/moves require attention;
-retired calendar containers are retained. New local events are discovered from
+Sync Services conflict UI. Native calendar renames require attention. Ordinary
+non-recurring events can move between this account's managed calendars: rCloud
+verifies the destination identity, conditionally moves the original cloud bytes,
+and checkpoints only the calendar change. Later content edits remain separate.
+Moves to unmanaged calendars, recurring-series moves and invitation moves remain
+protected rather than guessed. Retired calendar containers are retained.
+New local events are discovered from
 1970 through 2101 (existing mapped events use direct identity lookups). Interrupted ambiguous native saves stop replay to
 avoid duplicates. Use the recovery inspection/export commands before recovery.
 Pending calendar saves recover only when an existing event in the managed
