@@ -49,6 +49,10 @@ static NSArray *KnownFields(NSDictionary *record)
   NSString *entity=[record objectForKey:RCRecordEntityNameKey];
   NSMutableSet *fields=[NSMutableSet setWithArray:Writable(nil,record)];
   [fields addObjectsFromArray:[record allKeys]];
+  /* Recognize formerly pending iCal timestamps so their old attention receipts
+     can clear without treating any other opaque native field as acknowledged. */
+  if ([entity isEqual:@"com.apple.calendars.Event"])
+    [fields addObjectsFromArray:Fields(@"com.apple.ical.creationdate|com.apple.ical.datestamp")];
   if ([entity isEqual:@"com.apple.calendars.Recurrence"])
     [fields addObjectsFromArray:Fields(@"owner|frequency|interval|count|until|bymonth|bymonthday|byyearday|byweeknumber|bysetpos|bydaydays|bydayfreq|weekstartday")];
   if ([entity isEqual:@"com.apple.calendars.Attendee"] || [entity isEqual:@"com.apple.calendars.Organizer"])

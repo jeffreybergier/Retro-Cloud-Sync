@@ -79,7 +79,9 @@ int RCUnorderedField(const char *field)
 }
 int RCIgnoredNativeField(const char *entity,const char *field)
 {
-  return Is(entity,"com.apple.calendars.Event") && RCFieldListContains("com.apple.ical.uid|com.apple.ical.sequence|invitationId|invitationSequence|invitationTimestamp",field);
+  /* Ignore iCal's native timestamps when comparing local edits. This does not
+     remove or rewrite CREATED, DTSTAMP or LAST-MODIFIED in the wire body. */
+  return Is(entity,"com.apple.calendars.Event") && RCFieldListContains("com.apple.ical.uid|com.apple.ical.sequence|com.apple.ical.creationdate|com.apple.ical.datestamp|invitationId|invitationSequence|invitationTimestamp",field);
 }
 RCFieldDefault RCSyncFieldDefault(const char *entity,const char *field)
 {

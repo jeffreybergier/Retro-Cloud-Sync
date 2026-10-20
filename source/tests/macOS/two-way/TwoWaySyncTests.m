@@ -839,6 +839,29 @@ static void MapperTests(void)
   [event setObject:[NSNumber numberWithInt:2] forKey:@"com.apple.ical.sequence"];
   [event setObject:[NSNumber numberWithInt:2] forKey:@"invitationSequence"];
   [event setObject:[NSDate dateWithTimeIntervalSince1970:1234567] forKey:@"invitationTimestamp"];
+  [event setObject:[NSDate dateWithTimeIntervalSince1970:1234567]
+           forKey:@"com.apple.ical.creationdate"];
+  [event setObject:[NSDate dateWithTimeIntervalSince1970:2345678]
+           forKey:@"com.apple.ical.datestamp"];
+  partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,cal,r,truth,id,&error);
+  CHECK(partial && ![[partial objectForKey:@"pendingFields"] count]);
+  CHECK([[[[partial objectForKey:@"graph"] objectForKey:id]
+      objectForKey:@"summary"] isEqual:@"Edited"]);
+  [event setObject:@"Original" forKey:@"summary"];
+  partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,cal,r,truth,id,&error);
+  CHECK(partial && ![[partial objectForKey:@"pendingFields"] count]);
+  CHECK([[partial objectForKey:@"body"] isEqual:ics]);
+  CHECK(RCTwoWayInitialize(&j,&error));
+  NSDictionary *oldPending=[NSDictionary dictionaryWithObject:
+      [NSArray arrayWithObjects:@"com.apple.ical.creationdate",
+          @"com.apple.ical.datestamp",nil] forKey:id];
+  CHECK(RCTwoWaySavePendingFields(&j,id,
+      [NSDictionary dictionaryWithObject:oldPending forKey:@"pendingFields"],
+      &error));
+  CHECK(RCTwoWaySavePendingFields(&j,id,partial,&error));
+  CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==0);
+  CHECK(Scalar(&j,"SELECT count(*) FROM two_way_attention")==0);
+  [event setObject:@"Edited" forKey:@"summary"];
   CHECK(RCCalendarEncodeLocal(cal,nil,truth,id,&error));
   [event setObject:@"unsupported" forKey:@"unknown-editable-property"];
   CHECK(!RCCalendarEncodeLocal(cal,nil,truth,id,&error));
