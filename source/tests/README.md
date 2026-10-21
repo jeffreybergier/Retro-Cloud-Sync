@@ -16,6 +16,22 @@ Linux tests run synthetic fixtures without credentials or external servers. The
 HTTP suite starts an ephemeral loopback TLS server. Use `BUILD_ROOT=/tmp/rc-tests`
 for an independent build. Artifacts normally live in `build/tests/host`.
 
+For an interactive iOS Calendar.app move check, unload the installed rCloud
+daemon and run:
+
+```sh
+NATIVE_TEST_MODE=calendar-move-manual make test-ios-native-stores TEST_HOST=koolphone5
+```
+
+At `READY`, move **rCloud manual
+move test** on October 22, 2026, 12:00 UTC from **rCloud Move Source** to
+**rCloud Move Target** using Calendar's Edit screen. The probe waits ten minutes,
+reports whether the native identifier changed, checks that exactly one move
+is queued, simulates verified server completion, and checks repeated syncs
+leave one destination event and no source event. It uses no live DAV requests;
+its calendars are removed on completion or failure. The runner restores the
+installed executable. Results apply to the tested iOS version only.
+
 The Mac suites cross-compile PPC/i386 binaries on Linux and execute on the target
 Mac. Use a disposable test account, stop the production daemon, and keep the
 desktop logged in with Accessibility enabled. Business integration can invoke

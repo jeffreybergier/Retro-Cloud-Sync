@@ -527,10 +527,85 @@ static void Dates(void) {
   puts("PASS: iOS calendar dates retain wall time and floating marker across journal restart");
 }
 #import "../../macOS/native-stores/CalendarMoveTests.h"
+/* Opt-in Calendar.app probe. Only fixture-owned calendars are observed or
+   removed; remote completion is simulated without credentials or DAV traffic. */
+static void ManualCalendarMove(NSString *directory)
+{
+  RCCalendarStore *store=RCCalendarStoreOpen(
+      [[directory stringByAppendingPathComponent:@"manual-move.sqlite"]
+          fileSystemRepresentation],"offline-manual-move",&error);
+  CHECK(store); RCWriteJournal j=RCCalendarStoreWriteJournal(store);
+  EKEventStore *events=[[EKEventStore alloc] init];
+  @try {
+    NSData *body=Data(@"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n"
+        "UID:offline-manual-move\r\nDTSTART:20261022T120000Z\r\n"
+        "DTEND:20261022T130000Z\r\nSUMMARY:rCloud manual move test\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n");
+    MoveSeed(store,body,NO,"\"manual-original\"");
+    SyncCalendar(store,NO,YES);
+    NSDictionary *row=FirstRow(j);
+    NSString *identifier=[row objectForKey:@"id"];
+    NSString *root=[[row objectForKey:@"resource"] objectForKey:@"root"];
+    NSString *destination=MoveContainerID(j,"https://fixture.invalid/destination/");
+    EKEvent *initial=[events eventWithIdentifier:identifier]; CHECK(initial);
+    NSDate *start=[initial startDate],*end=[initial endDate];
+    printf("READY: In Calendar, move 'rCloud manual move test' on October 22, "
+        "2026 (12:00 UTC) from rCloud Move Source to rCloud Move Target. "
+        "Waiting up to 10 minutes. Original identifier: %s\n",
+        [identifier UTF8String]);
+    BOOL moved=NO; NSString *observed=nil;
+    for(int attempt=0;attempt<120 && !moved;attempt++) {
+      [NSThread sleepForTimeInterval:5]; [events reset];
+      EKCalendar *target=[events calendarWithIdentifier:destination];
+      CHECK(target);
+      NSPredicate *predicate=[events predicateForEventsWithStartDate:start
+          endDate:end calendars:[NSArray arrayWithObject:target]];
+      NSArray *matches=[events eventsMatchingPredicate:predicate];
+      if([matches count]==1) {
+        observed=[[matches objectAtIndex:0] eventIdentifier]; moved=YES;
+      }
+    }
+    CHECK(moved);
+    printf("OBSERVED: Calendar.app move identifier %s; original lookup %s\n",
+        [observed isEqual:identifier] ? "unchanged" : "changed",
+        [events eventWithIdentifier:identifier] ? "found" : "missing");
+    SyncCalendar(store,YES,NO); SyncCalendar(store,YES,NO);
+    printf("OBSERVED: queued moves=%ld, ordinary writes=%ld\n",
+        Count(j,"SELECT count(*) FROM calendar_actions WHERE kind='move'"),
+        Count(j,"SELECT count(*) FROM write_operations"));
+    CHECK(Count(j,"SELECT count(*) FROM calendar_actions WHERE kind='move'")==1);
+    CHECK(Count(j,"SELECT count(*) FROM write_operations")==0);
+    CHECK(RCCalendarCommitVerifiedMove(&j,root,
+        @"https://fixture.invalid/calendar/event.ics",
+        @"https://fixture.invalid/destination/event.ics",
+        @"\"manual-verified\"",body,&error));
+    MoveSeed(store,body,YES,"\"manual-verified\"");
+    SyncCalendar(store,YES,YES); SyncCalendar(store,YES,YES);
+    [events reset];
+    CHECK([[FirstRow(j) objectForKey:@"id"] isEqual:observed]);
+    for(int index=0;index<2;index++) {
+      NSString *containerID=MoveContainerID(j,index ?
+          "https://fixture.invalid/destination/" : "https://fixture.invalid/calendar/");
+      EKCalendar *container=[events calendarWithIdentifier:containerID]; CHECK(container);
+      NSPredicate *predicate=[events predicateForEventsWithStartDate:start
+          endDate:end calendars:[NSArray arrayWithObject:container]];
+      CHECK([[events eventsMatchingPredicate:predicate] count]==(NSUInteger)index);
+    }
+    puts("PASS: Calendar.app move retains one destination event through repeated sync");
+  } @finally {
+    Cleanup(j,NO); [events release]; RCCalendarStoreClose(store);
+  }
+}
 int RCIOSNativeTests(const char *path) {
   NSAutoreleasePool *pool=[[NSAutoreleasePool alloc] init]; setbuf(stdout,NULL); int result=1;
   RCContactStore *contacts=NULL; RCCalendarStore *calendars=NULL; NSData *baseline=nil;
   @try {
+    if(getenv("NATIVE_TEST_MODE") &&
+        !strcmp(getenv("NATIVE_TEST_MODE"),"calendar-move-manual")) {
+      CHECK(getuid()==501); CHECK(RCIOSWaitForAccess(NO,&error));
+      ManualCalendarMove([NSString stringWithUTF8String:path]);
+      result=0;
+    } else {
     CHECK(getuid()==501); CHECK(RCIOSWaitForAccess(YES,&error)); CHECK(RCIOSWaitForAccess(NO,&error));
     Dates(); Credentials(); baseline=[ContactsSnapshot() retain];
     NSString *directory=[NSString stringWithUTF8String:path];
@@ -582,6 +657,7 @@ int RCIOSNativeTests(const char *path) {
     puts("PASS: remote deletion removes only owned native records");
     CalendarMoveTests(directory); CalendarDateRangeTests(directory); CalendarDiscoveryTests(directory); ContactRecoveryTests(directory); ExcludedOccurrenceTests(directory,NO); ExcludedOccurrenceTests(directory,YES); SeriesOccurrenceTests(directory,0); SeriesOccurrenceTests(directory,1); SeriesOccurrenceTests(directory,2); InvitationTests(directory);
     result=0;
+    }
   } @catch(NSException *exception) {
     fprintf(stderr,"FAIL: %s\n",[[exception reason] UTF8String]);
   } @finally {

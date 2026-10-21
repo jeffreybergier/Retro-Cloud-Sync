@@ -17,6 +17,9 @@ root = Path(os.environ['PROJECT_ROOT'])
 build = Path(os.environ['BUILD_ROOT'])
 app = '/Applications/rCloud.app/rCloud'
 label = 'com.altivecintelligence.rcloud.native-tests'
+mode = os.environ.get('NATIVE_TEST_MODE', '')
+if mode not in ('', 'calendar-move-manual'):
+    raise SystemExit('Unknown NATIVE_TEST_MODE: ' + mode)
 remote = '/var/mobile/Library/Caches/RetroCloudIOS-' + time.strftime('%Y%m%d-%H%M%S', time.gmtime())
 logs = build / 'tests/iOS' / Path(remote).name
 logs.mkdir(parents=True, exist_ok=False)
@@ -43,7 +46,8 @@ try:
             'Label': label, 'ProgramArguments': [app, '--native-tests', remote],
             'UserName': 'mobile', 'GroupName': 'mobile', 'RunAtLoad': True,
             'WorkingDirectory': remote,
-            'EnvironmentVariables': {'RETROCLOUDSYNC_LOG_LEVEL': 'DEBUG'},
+            'EnvironmentVariables': {'RETROCLOUDSYNC_LOG_LEVEL': 'DEBUG',
+                                     'NATIVE_TEST_MODE': mode},
             'StandardOutPath': remote + '/test.log', 'StandardErrorPath': remote + '/error.log',
         }))
         copy(build / 'tests/iOS/native-stores/release/rCloud/rCloud.app/rCloud', app + '-test-new')
