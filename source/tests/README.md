@@ -380,3 +380,11 @@ owned records, pending fields/uploads, incomplete discovery, cancellation and
 lost access. Direct identifier lookup protects events outside discovery windows.
 The iOS discovery fixture deletes rejected synthetic events and verifies that
 only their warnings clear, without creating additional upload operations.
+
+The mapper suite (`make test-mac-mappers TEST_HOST=x4-vm`) also checks stale
+legacy iCal floating-time warnings. Absent `floatingGMTDate`/`floatingOffset`
+metadata clears only for non-floating, timed events whose start and end match
+both the saved cloud projection and the encoder round trip. Present metadata,
+real time differences, floating dates and unrelated opaque fields remain
+protected. This regression uses synthetic graphs and a local test database;
+it does not modify native calendars or contact iCloud.

@@ -861,6 +861,59 @@ static void MapperTests(void)
   CHECK(RCTwoWaySavePendingFields(&j,id,partial,&error));
   CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==0);
   CHECK(Scalar(&j,"SELECT count(*) FROM two_way_attention")==0);
+  /* Stale floating metadata clears only after an explicit-time correction
+     agrees with the saved cloud body. Present metadata and real edits remain
+     pending; unrelated opaque fields must survive the same cleanup. */
+  NSArray *floatingFields=[NSArray arrayWithObjects:@"floatingGMTDate",
+      @"floatingOffset",nil];
+  NSDictionary *floatingPending=[NSDictionary dictionaryWithObject:
+      [NSDictionary dictionaryWithObject:floatingFields forKey:id]
+      forKey:@"pendingFields"];
+  CHECK(RCTwoWaySavePendingFields(&j,id,floatingPending,&error));
+  NSDate *correctStart=[event objectForKey:@"start date"];
+  [event setObject:[NSDate dateWithTimeIntervalSinceReferenceDate:
+      [correctStart timeIntervalSinceReferenceDate]-9*3600] forKey:@"start date"];
+  partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,cal,r,truth,id,&error);
+  CHECK(partial);
+  CHECK(![[[partial objectForKey:@"knownFields"] objectForKey:id]
+      containsObject:@"floatingGMTDate"]);
+  CHECK(RCTwoWaySavePendingFields(&j,id,partial,&error));
+  CHECK(Scalar(&j,"SELECT count(*) FROM two_way_attention")==1);
+  [event setObject:correctStart forKey:@"start date"];
+  [event setObject:[NSNumber numberWithInt:32400] forKey:@"floatingOffset"];
+  partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,cal,r,truth,id,&error);
+  CHECK(partial && [[[partial objectForKey:@"pendingFields"] objectForKey:id]
+      containsObject:@"floatingOffset"]);
+  CHECK(RCTwoWaySavePendingFields(&j,id,partial,&error));
+  CHECK(Scalar(&j,"SELECT count(*) FROM two_way_attention")==1);
+  [event removeObjectForKey:@"floatingOffset"];
+  RCCalendarDate *floating=[RCCalendarDate dateWithYear:2026 month:9 day:7
+      hour:10 minute:0 second:0 timeZone:[NSTimeZone localTimeZone]];
+  [event setObject:floating forKey:@"start date"];
+  partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,cal,r,truth,id,&error);
+  CHECK(partial && ![[[partial objectForKey:@"knownFields"] objectForKey:id]
+      containsObject:@"floatingGMTDate"]);
+  CHECK([[[partial objectForKey:@"pendingFields"] objectForKey:id]
+      containsObject:@"start date"]);
+  [event setObject:correctStart forKey:@"start date"];
+  partial=RCTwoWayEncodeFields(RCCalendarEncodeLocal,cal,r,truth,id,&error);
+  CHECK(partial && [[partial objectForKey:@"body"] isEqual:ics]);
+  CHECK(RCTwoWaySavePendingFields(&j,id,partial,&error));
+  CHECK(Scalar(&j,"SELECT count(*) FROM two_way_pending_fields")==0);
+  CHECK(Scalar(&j,"SELECT count(*) FROM two_way_attention")==0);
+  CHECK(RCTwoWaySavePendingFields(&j,id,[NSDictionary dictionaryWithObject:
+      [NSDictionary dictionaryWithObject:[floatingFields arrayByAddingObject:
+      @"opaque calendar flag"] forKey:id] forKey:@"pendingFields"],&error));
+  CHECK(RCTwoWaySavePendingFields(&j,id,partial,&error));
+  sqlite3_stmt *pendingQuery=NULL;
+  CHECK(sqlite3_prepare_v2(j.db,"SELECT fields FROM two_way_pending_fields",
+      -1,&pendingQuery,NULL)==SQLITE_OK);
+  CHECK(sqlite3_step(pendingQuery)==SQLITE_ROW);
+  CHECK([[RCTwoWayUnarchive(pendingQuery,0) objectForKey:id] isEqual:
+      [NSArray arrayWithObject:@"opaque calendar flag"]]);
+  sqlite3_finalize(pendingQuery);
+  CHECK(RCTwoWaySQL(&j,&error,"DELETE FROM two_way_pending_fields; DELETE FROM two_way_attention"));
+  puts("PASS: Corrected explicit calendar times clear absent floating metadata; wrong times, floating dates and opaque edits remain protected");
   [event setObject:@"Edited" forKey:@"summary"];
   CHECK(RCCalendarEncodeLocal(cal,nil,truth,id,&error));
   [event setObject:@"unsupported" forKey:@"unknown-editable-property"];

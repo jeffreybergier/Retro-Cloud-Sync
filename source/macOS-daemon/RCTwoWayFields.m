@@ -60,6 +60,30 @@ static NSArray *KnownFields(NSDictionary *record)
   return [[fields allObjects] sortedArrayUsingSelector:@selector(compare:)];
 }
 
+/* An explicit-time event no longer needs iCal's floating-time bookkeeping.
+   Only retire absent metadata after both dates match the existing wire base
+   and the encoder's round trip. Never interpret opaque values, acknowledge a
+   newly proposed time edit, or relax floating/absolute date equality. */
+static BOOL ResolvedFloatingMetadata(NSDictionary *record,
+    NSDictionary *base, NSDictionary *represented)
+{
+  if (![[record objectForKey:RCRecordEntityNameKey]
+      isEqual:@"com.apple.calendars.Event"] || !base || !represented ||
+      [[record objectForKey:@"all day"] boolValue] ||
+      [record objectForKey:@"floatingGMTDate"] ||
+      [record objectForKey:@"floatingOffset"]) return NO;
+  NSEnumerator *keys=[Fields(@"start date|end date") objectEnumerator];
+  NSString *key;
+  while ((key=[keys nextObject])) {
+    id date=[record objectForKey:key];
+    if (![date isKindOfClass:[NSDate class]] || RCNativeFloatingDate(date) ||
+        !FieldEqual(record,base,key) ||
+        !FieldEqual(record,represented,key)) return NO;
+  }
+  return FieldEqual(record,base,@"all day") &&
+      FieldEqual(record,represented,@"all day");
+}
+
 static NSArray *IndependentGroups(NSDictionary *record)
 {
   const char *entity=[[record objectForKey:RCRecordEntityNameKey] UTF8String], *names;
@@ -242,7 +266,10 @@ NSMutableDictionary *RCTwoWayEncodeFields(RCTwoWayEncoder encoder, void *context
     NSDictionary *record=[truth objectForKey:identifier], *represented=[graph objectForKey:identifier];
     if (represented) {
       [usedScopes setObject:[scopes objectForKey:identifier] ?: [NSArray array] forKey:identifier];
-      [knownFields setObject:KnownFields(represented) forKey:identifier];
+      NSMutableArray *known=[NSMutableArray arrayWithArray:KnownFields(represented)];
+      if (ResolvedFloatingMetadata(record,[base objectForKey:identifier],represented))
+        [known addObjectsFromArray:Fields(@"floatingGMTDate|floatingOffset")];
+      [knownFields setObject:known forKey:identifier];
     }
     NSMutableSet *keys=[NSMutableSet setWithArray:[record allKeys] ?: [NSArray array]];
     [keys addObjectsFromArray:[represented allKeys] ?: [NSArray array]];
