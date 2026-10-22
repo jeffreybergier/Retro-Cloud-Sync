@@ -211,7 +211,6 @@ int RCCardDAVMirrorFetch(const RCCardDAVMirrorConfig *config,
   httpConfig.password = config->password;
   httpConfig.certificatePath = config->certificatePath;
   httpConfig.allowedHostSuffix = config->allowedHostSuffix;
-  httpConfig.userAgent = "RetroCloudSync-CardDAV/0.1";
   client = RCHTTPClientCreate(&httpConfig, error);
   if (!sqlite3_get_autocommit(RCContactStoreDAVSyncState(store).db)) {
     RCErrorSet(error, 1, "Contact download requires an idle mirror transaction"); goto finished;

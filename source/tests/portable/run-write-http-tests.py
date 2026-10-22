@@ -2,6 +2,7 @@
 """Exercise the production HTTP client against an ephemeral local TLS server."""
 import http.server
 import os
+import plistlib
 from pathlib import Path
 import ssl
 import subprocess
@@ -13,6 +14,7 @@ import time
 
 class Handler(http.server.BaseHTTPRequestHandler):
     received = []
+    user_agents = []
 
     def log_message(self, *_):
         pass
@@ -25,6 +27,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
 
     def handle_request(self):
+        self.user_agents.append(self.headers.get("User-Agent"))
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         match = self.headers.get("If-Match")
         none = self.headers.get("If-None-Match")
@@ -85,6 +88,13 @@ def main():
             env = dict(os.environ, NO_PROXY="localhost,127.0.0.1", no_proxy="localhost,127.0.0.1")
             subprocess.run([sys.argv[1], f"https://localhost:{server.server_port}",
                             str(root / "server.pem"), str(root / "untrusted.pem")], check=True, env=env, timeout=30)
+            plist = Path(__file__).resolve().parents[2] / "macOS-app/Resources/Info.plist"
+            with plist.open("rb") as stream:
+                version = plistlib.load(stream)["CFBundleShortVersionString"]
+            expected_agent = f"jeffreybergier/Retro-Cloud-Sync/{version}"
+            assert Handler.user_agents and all(
+                agent == expected_agent for agent in Handler.user_agents
+            ), Handler.user_agents
             paths = [request[1] for request in Handler.received]
             assert paths == ["/create", "/update", "/delete", "/move", "/move", "/calendar-move", "/calendar-create", "/discovery", "/principal", "/foreign", "/slow"], paths
         finally:

@@ -95,7 +95,6 @@ int RCCalDAVMirrorFetchSince(const RCCardDAVMirrorConfig *config, RCCalendarStor
   http.password = config->password;
   http.certificatePath = config->certificatePath;
   http.allowedHostSuffix = config->allowedHostSuffix;
-  http.userAgent = "RetroCloudSync-CalDAV/0.1";
   client = RCHTTPClientCreate(&http, error);
   if (!sqlite3_get_autocommit(store->db)) {
     RCErrorSet(error, 1, "Calendar download requires an idle mirror transaction"); goto done;

@@ -4,7 +4,8 @@ ifeq ($(_altivec_relocated),)
 PROJECT_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))/../..)
 DEPENDENCIES = libical libvc
 SOURCE_DIRS = ../shared ../macOS-daemon
-BUILD_FLAGS = -I../shared -I../macOS-daemon
+include ../make/app-version.mk
+BUILD_FLAGS = -I../shared -I../macOS-daemon $(RC_VERSION_FLAGS)
 PRODUCTS = rCloud rcloudd RetroCloudShared
 PACKAGE_PRODUCTS = rCloud
 RetroCloudShared_TYPE = static

@@ -21,10 +21,11 @@ WRITE_HTTP_OUTPUT := $(WRITE_TEST_ROOT)/RetroCloudWriteHTTPTests
 WRITE_HTTP_SOURCES := $(SOURCE_ROOT)/tests/portable/WriteHTTPTests.c \
 	$(SHARED_SOURCE_ROOT)/RCHTTPClient.c $(SHARED_SOURCE_ROOT)/RCWriteJournal.c \
 	$(SHARED_SOURCE_ROOT)/RCError.c
-$(WRITE_HTTP_OUTPUT): $(WRITE_HTTP_SOURCES) $(SHARED_SOURCE_ROOT)/RCHTTPClient.h
+$(WRITE_HTTP_OUTPUT): $(WRITE_HTTP_SOURCES) \
+	$(SHARED_SOURCE_ROOT)/RCHTTPClient.h $(RC_VERSION_PLIST) $(RC_VERSION_SCRIPT)
 	@mkdir -p "$(dir $@)"
 	@$(HOST_CC) -std=c99 -D_XOPEN_SOURCE=600 -Wall -Wextra -Werror -Wno-deprecated-declarations \
-		-I$(SHARED_SOURCE_ROOT) $(WRITE_HTTP_SOURCES) \
+		$(RC_VERSION_FLAGS) -I$(SHARED_SOURCE_ROOT) $(WRITE_HTTP_SOURCES) \
 		-lcurl -lsqlite3 -o "$@"
 test-host-writes: test-host-write-http
 test-host-write-http: $(WRITE_HTTP_OUTPUT)

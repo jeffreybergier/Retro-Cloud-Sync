@@ -232,7 +232,7 @@ RCHTTPClient *RCHTTPClientCreate(const RCHTTPClientConfig *config,
   client->certificatePath = RCCopyString(config->certificatePath);
   client->allowedHostSuffix = RCCopyString(config->allowedHostSuffix);
   client->userAgent = RCCopyString(config->userAgent != NULL ?
-                                   config->userAgent : "RetroCloudSync/0.1");
+      config->userAgent : "jeffreybergier/Retro-Cloud-Sync/" RC_APP_VERSION);
   client->maximumResponseBytes = config->maximumResponseBytes != 0 ?
       config->maximumResponseBytes : RC_HTTP_DEFAULT_RESPONSE_LIMIT;
   if (client->username == NULL || client->password == NULL ||

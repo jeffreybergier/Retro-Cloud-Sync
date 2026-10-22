@@ -1,6 +1,7 @@
 # Offline harness orchestration; production builds live in platform Makefiles.
 PROJECT_ROOT := $(abspath $(dir $(firstword $(MAKEFILE_LIST)))/../..)
 SOURCE_ROOT := $(PROJECT_ROOT)/source
+include $(SOURCE_ROOT)/make/app-version.mk
 BUILD_ROOT ?= $(PROJECT_ROOT)/build
 override BUILD_ROOT := $(abspath $(if $(filter /%,$(BUILD_ROOT)),$(BUILD_ROOT),$(PROJECT_ROOT)/$(BUILD_ROOT)))
 ALTIVEC_ROOT ?= /altivec
